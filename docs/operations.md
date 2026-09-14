@@ -27,7 +27,7 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 | POST | `/api/ops/observability/model-pool/probe` | 单目标真实探测 |
 | PUT | `/api/ops/observability/model-pool/routing` | 调整 fallback 顺序 / 权重 |
 | PUT | `/api/ops/observability/model-pool/replace` | 替换上游目标（需 confirm:REPLACE） |
-| POST | `/api/ops/observability/external-probe` | 外部探针数据回传（独立 token） |
+| POST | `/api/health/external-probe-report` | 外部探针数据回传（独立 token：`x-rdk-external-probe-token` 头，64-hex 文件） |
 | GET/POST | `/api/ops/observability/actions/*` | 证据化行动环（提案/审批/执行/验收） |
 | POST | `/api/ops/observability/remediation` | 自愈（10 返回 action_proposal_required 引导走行动环） |
 
@@ -90,6 +90,8 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 | 通知没发出 | 工作台→通知模板：webhook 配置、降噪窗口、恢复通知设置；`test-notification` 实测 |
 | Agent Trace 面板提示未配置 | `STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL` 未设置或看板未设 Public |
 | 表预览/AI 查询失败 | `RDK_CHAT_CREDITS_DB_URL` 指向的库里没有 `ops_ai` 脱敏视图（上游迁移未跑） |
+| 探针上报 401 | token 文件不是 64-hex，或 d-obs 的 `RDK_EXTERNAL_PROBE_TOKEN_PATH` 与探针侧 `RDK_RL_PROBE_TOKEN_FILE` 不一致 |
+| 探针上报 503 | `studio_external_probe_status`/`studio_alert_checks`/`studio_alert_incidents` 建表失败：重跑 `tools/init-schema.sql`（幂等） |
 
 ## 6. 数据与 schema
 

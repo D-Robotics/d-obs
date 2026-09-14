@@ -33,16 +33,20 @@ npm start
 导航：左侧分组（处置与证据 / 数据与资产 / 学习与进化 / 系统配置），模型池在
 “系统配置”分组；⌘K / `/` 唤起命令面板；移动端用底部 tab。
 
-### 接入步骤（新环境）
+### 接入步骤（新环境，已实测）
 
-1. **数据面**：配置中心 PostgreSQL 连接（可观测数据、事故、审计、运营指标都存这里）：
+以下步骤已在真实环境完整验证过（以强化学习平台 sim2real-web 为被观测目标）。
+
+1. **数据面**：建库并初始化 schema：
 
    ```bash
-   export RDK_CHAT_CREDITS_DB_URL='postgres://user:pass@host:5432/db'
+   createdb d_obs
+   psql -h localhost -d d_obs -f tools/init-schema.sql   # 幂等，可重复执行
+   export RDK_CHAT_CREDITS_DB_URL='postgres://user@localhost:5432/d_obs'
    ```
 
-   首次启动会自动建表（幂等 `create table if not exists`）；告警状态、事故活动、
-   行动审计、外部拨测、run/trace 投影都会自动入库。
+   告警状态、事故、审计、外部拨测、run/trace 投影都会自动入库（worker 首轮也会
+   自动补齐全部表）。
 
 2. **运营鉴权**（必配，否则所有 API fail-closed）：
 
@@ -53,33 +57,48 @@ npm start
    浏览器 API 调用会带 `x-admin-token`（timing-safe 比对）。不配置该变量时
    token 通道直接关闭（不允许匿名 admin）。
 
-3. **告警投递**（可选，不配则只评估入库不外发）：在工作台“告警策略→通知模板”里
+3. **外部探针接入**（把第三方服务的健康状态接进来，以强化学习平台为例）：
+
+   ```bash
+   # 生成探针 token（64 hex），并让 d-obs 指向它
+   openssl rand -hex 32 > /path/to/external-probe-token
+   export RDK_EXTERNAL_PROBE_TOKEN_PATH=/path/to/external-probe-token
+
+   # 上报（RL 平台探针，检查 /healthz 和入口页）
+   RDK_RL_PROBE_TARGET=http://127.0.0.1:18102 \
+   RDK_RL_PROBE_REPORT_URL=http://127.0.0.1:47110 \
+   RDK_RL_PROBE_TOKEN_FILE=/path/to/external-probe-token \
+   node tools/rl-platform-probe.mjs
+   # → [rl-probe] healthz=ok entry=ok report=202
+
+   # 然后在工作台“告警策略→告警对象”里就能看到 external-health /
+   # external-entry-asset 的状态与趋势（active 检查项自动生成事故记录）
+   ```
+
+   持续观测：把探针脚本挂到 systemd timer 或 cron（每次一条上报，状态在 d-obs 侧
+   持久化并进入告警评估）。改观测目标只需覆盖 `RDK_RL_PROBE_TARGET`。
+
+4. **告警投递**（可选，不配则只评估入库不外发）：在工作台“告警策略→通知模板”里
    配置飞书 Webhook 或通用 Webhook；或用 shadow 模式先影子验证。
 
-4. **告警 worker**（独立进程，持续评估）：
+5. **告警 worker**（独立进程，持续评估）：
 
    ```bash
    npm run worker                # 前台持续运行（每 60s 评估一轮）
    npm run worker:check-config   # 只校验配置
    ```
 
-5. **模型池（可选）**：如果模型网关（D-Robotics 模型路由网关）与 d-obs 同机或可达：
+   独立部署时用 `RDK_ALERT_CONFIG_PATH` 指定配置文件（默认 production 路径
+   `/var/lib/rdstudio-alert-worker/config.json`，本地开发 `~/.rdk-studio/alert-config.json`）。
+
+6. **模型池（可选）**：如果模型网关（D-Robotics 模型路由网关）与 d-obs 同机或可达：
 
    ```bash
    export RDK_GATEWAY_ADMIN_URL='http://127.0.0.1:3100'
    export GATEWAY_ADMIN_KEY='<网关 admin key>'
    ```
 
-   之后工作台“模型池”里的探测/路由/替换才可用；不配则模型池面板只读降级。
-
-6. **外部拨测接入（可选）**：在异地机器跑探针，把数据回传：
-
-   ```bash
-   POST /api/ops/observability/external-probe
-   Authorization: Bearer <RDK_EXTERNAL_PROBE_TOKEN_PATH 里的 token>
-   ```
-
-### 配置参考
+   之后工作台“模型池”里的探测/路由/替换才可用；不配则模型池面板只读降级。### 配置参考
 
 | 变量 | 必填 | 作用 |
 | --- | --- | --- |
