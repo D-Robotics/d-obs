@@ -2,15 +2,20 @@
  * d-obs standalone entry.
  *
  * Mounts the full observability workbench without the RDK Studio composition
- * root. Access control keeps the Studio semantics from D-010: admin token via
- * RDK_CREDITS_ADMIN_TOKEN, and (when shared with Studio) SSO session headers.
+ * root. Access control keeps the upstream semantics from D-010: admin token
+ * via RDK_CREDITS_ADMIN_TOKEN (x-admin-token header, timing-safe, fail-closed)
+ * plus an optional SSO admin allowlist in RDK_FLYWHEEL_ADMIN_USER_IDS.
  */
 import express from 'express';
 import { createOpsObservabilityRouter } from './monitoring/observability-routes.js';
+import { SESSION_TRACE_HTML } from './agent-observability/session-trace-page.js';
 
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
+app.get('/session-trace', (_request, response) => {
+  response.type('html').send(SESSION_TRACE_HTML);
+});
 app.use(createOpsObservabilityRouter());
 
 const port = Number(process.env.PORT ?? 47110);

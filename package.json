@@ -6,6 +6,8 @@
   "description": "RDK observability platform — ops workbench, alerting, traces, model-pool control (extracted from RDK Studio per D-010)",
   "scripts": {
     "start": "tsx server/main.ts",
+    "worker": "tsx server/monitoring/studio-alert-worker.ts",
+    "worker:check-config": "tsx server/monitoring/studio-alert-worker.ts --check-config",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
