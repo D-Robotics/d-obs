@@ -18,7 +18,7 @@
 | **运营指标** | 工作台“运营指标” | 按天 token 消耗、新增用户、DAU、对话次数、Agent Run |
 | **数据库资产** | 工作台“数据库” | PostgreSQL 运行状态、表目录/关系图、分页预览、整表 CSV 导出、**AI 自然语言→只读脱敏 SQL**（仅 `ops_ai` 视图） |
 | **模型池控制面** | 工作台“模型池” | 3100/3101 网关目标健康（成功率/P95/并发/冷却）、单目标真实探测、路由优先级（fallback 顺序+权重）、目标替换（Agent 主路由受保护） |
-| **外部拨测接入** | `POST /api/ops/observability/external-probe` | 异地探针把 TLS/入口/健康数据回传，计入告警评估 |
+| **外部拨测接入** | `POST /api/health/external-probe-report` | 异地探针把 DNS/TLS/健康/入口数据回传，计入告警评估 |
 | **公共可观测 API** | `/api/ops/observability/*` | 全部能力均有 JSON API；访问受运营鉴权保护 |
 
 ## 快速开始
@@ -32,6 +32,20 @@ npm start
 打开 `http://127.0.0.1:47110/ops-observability`，默认进“当前态势”。
 导航：左侧分组（处置与证据 / 数据与资产 / 学习与进化 / 系统配置），模型池在
 “系统配置”分组；⌘K / `/` 唤起命令面板；移动端用底部 tab。
+
+## 已验证的告警状态机（端到端实测）
+
+以下闭环在真实环境驱动过一轮（RL 平台探针 + worker 双进程 + shadow 通知）：
+
+- **worker 内部规则**：连续 2 轮失败（`openAfter=2`）→ incident `open` + 通知落库
+  （影子模式 `delivered=false, channel=unconfigured`）→ 连续 2 轮成功
+  （`resolveAfter=2`）→ incident `resolved` + 恢复通知记录。
+- **external 拨测规则**：探针上报 `active=true` 检查项 → ingest 即刻 `open`
+  critical 事故；恢复上报后事故 `resolved`。worker 不参与 external 状态机，
+  探针侧自算 ok/active。
+- **心跳降级**：external 检查项超过 3 分钟未上报 → 总览上该检查降级为
+  critical（“异地拨测心跳超过 3 分钟未上报”）；worker 超 3 分钟未运行 →
+  看板顶部 Telemetry 状态变“可能过期”。
 
 ### 接入步骤（新环境，已实测）
 
@@ -98,7 +112,22 @@ npm start
    export GATEWAY_ADMIN_KEY='<网关 admin key>'
    ```
 
-   之后工作台“模型池”里的探测/路由/替换才可用；不配则模型池面板只读降级。### 配置参考
+   之后工作台“模型池”里的探测/路由/替换才可用；不配则模型池面板只读降级。
+
+### 浏览器打开（独立部署）
+
+独立部署没有业务站点的 SSO 会话，用带 token 的入口地址打开工作台：
+
+```text
+http://<host>:<port>/ops-observability?ops-token=<RDK_CREDITS_ADMIN_TOKEN 的值>
+```
+
+token 会一次性写入 sessionStorage（随后从地址栏移除），后续 API 请求自动带上
+`x-admin-token`。注意：行动环（evidence-proof 行动队列）要求 SSO 账号身份，
+admin-token 直连下该模块显示"当前账号没有运营配置权限"，属预期降级——
+告警、事故、规则、模型池、数据库面板不受影响。
+
+### 配置参考
 
 | 变量 | 必填 | 作用 |
 | --- | --- | --- |
@@ -119,7 +148,8 @@ npm start
 - token 缺失或错误：多用户部署一律拒绝；单用户本地部署允许匿名本地运营
   （`deploymentAllowsAnonymousLocalOperator`）。
 - 变更类端点额外要求 `x-rdk-ops-action: observability` 头（误用浏览器直发会被 400 拦截）。
-- 浏览器工作台 401/403 时会展示“需要运营账号登录”引导。
+- 浏览器工作台 401/403 时会展示“需要运营账号登录”引导；admin-token 直连模式下
+  行动域的 403 只降级行动模块，不再遮蔽整个看板。
 
 ### 运维命令
 

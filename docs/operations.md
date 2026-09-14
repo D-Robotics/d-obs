@@ -92,6 +92,10 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 | 表预览/AI 查询失败 | `RDK_CHAT_CREDITS_DB_URL` 指向的库里没有 `ops_ai` 脱敏视图（上游迁移未跑） |
 | 探针上报 401 | token 文件不是 64-hex，或 d-obs 的 `RDK_EXTERNAL_PROBE_TOKEN_PATH` 与探针侧 `RDK_RL_PROBE_TOKEN_FILE` 不一致 |
 | 探针上报 503 | `studio_external_probe_status`/`studio_alert_checks`/`studio_alert_incidents` 建表失败：重跑 `tools/init-schema.sql`（幂等） |
+| 自愈面板 500 `remediation_schema_unavailable` | `studio_remediation_runs` 缺失：`init-schema.sql` 已含同源 DDL（含 RLS 与 environment check），重跑即可 |
+| 行动队列显示“当前账号没有运营配置权限” | 预期行为：行动域要求 SSO 账号身份，admin-token 直连（`?ops-token=`）下模块级降级，其余面板不受影响 |
+| 总览 external 检查变 critical“心跳未上报” | 探针超过 3 分钟没有上报（timer 停了或 `RDK_RL_PROBE_TARGET` 指向变了）；重新上报即恢复 |
+| worker 开了告警但 `studio_alert_incidents` 空表 | 事故表缺 `acknowledged_at`/`silence_until` 等列，upsert 失败被静默吞掉：重跑 `init-schema.sql`（幂等补列） |
 
 ## 6. 数据与 schema
 

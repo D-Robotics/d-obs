@@ -302,6 +302,34 @@ async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
       action text not null,
       summary text not null
     )`,
+    `create table if not exists public.studio_alert_checks (
+      alert_key text primary key,
+      title text not null,
+      category text not null default 'metric',
+      enabled boolean not null default true,
+      severity text not null,
+      unhealthy boolean not null,
+      active boolean not null,
+      summary text null,
+      checked_at timestamptz not null,
+      failure_streak int not null default 0,
+      success_streak int not null default 0
+    )`,
+    `create index if not exists studio_alert_checks_checked_idx
+       on public.studio_alert_checks (checked_at desc)`,
+    `create table if not exists public.studio_alert_notifications (
+      id uuid primary key default gen_random_uuid(),
+      occurred_at timestamptz not null default now(),
+      alert_key text not null,
+      transition text not null,
+      severity text not null,
+      delivered boolean not null,
+      channel text not null,
+      error text null,
+      attempt_count int not null default 1
+    )`,
+    `create index if not exists studio_alert_notifications_occurred_idx
+       on public.studio_alert_notifications (occurred_at desc)`,
       ]) {
         await p.query(statement);
       }
@@ -482,7 +510,12 @@ export async function getOpsObservabilityOverview(
               count(*) filter (where outcome = 'cancelled')::int cancelled
        from latest`,
       [hours],
-    ),
+    ).catch((error) => {
+      // agent_run_records 属于被观测系统的业务表，独立部署/全新库可能没有；
+      // 缺表时返回空结果而不是让整个看板 500。
+      if ((error as { code?: string }).code === '42P01') return { rows: [] };
+      throw error;
+    }),
     p.query(
       `with latest as (
          select distinct on (run_id) run_id, outcome, started_at
@@ -497,7 +530,10 @@ export async function getOpsObservabilityOverview(
        from latest
        group by 1 order by 1`,
       [hours],
-    ),
+    ).catch((error) => {
+      if ((error as { code?: string }).code === '42P01') return { rows: [] };
+      throw error;
+    }),
     p.query(
       `select count(*)::int total_events,
               count(*) filter (
@@ -716,7 +752,12 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
        ) actor on true
        order by e.occurred_at desc`,
       [hours],
-    ),
+    ).catch((error) => {
+      // recent_events 联查 agent_run_records / conversation_turns 补上下文；
+      // 被观测系统未提供这些业务表时返回空事件流，不影响告警面板。
+      if ((error as { code?: string }).code === '42P01') return { rows: [] };
+      throw error;
+    }),
     getEvolutionOverview(p),
   ]);
 
