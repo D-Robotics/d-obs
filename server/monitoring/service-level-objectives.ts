@@ -1,5 +1,5 @@
 /**
- * RDK Studio 服务等级策略与滚动错误预算。
+ * d-obs 服务等级策略与滚动错误预算。
  *
  * SLO 是内部工程目标；slaReferencePercent 只是运营参考线，不构成对外合同承诺。
  * 所有计算只使用低敏感聚合计数，不读取或返回用户身份、会话正文、工具参数或结果。
@@ -40,7 +40,7 @@ export const SERVICE_LEVEL_OBJECTIVES = [
   {
     key: 'public-availability',
     title: '公网服务可用性',
-    userJourney: '用户能够打开 RDK Studio 并访问健康接口',
+    userJourney: '用户能够打开主站入口并访问健康接口',
     sliDescription: '每分钟公网健康拨测成功数 / 有效拨测总数',
     source: '独立告警 Worker → 公网 /api/health',
     goodEvent: 'HTTP 成功且健康响应包含 ok=true',
@@ -96,7 +96,7 @@ export const SERVICE_LEVEL_OBJECTIVES = [
   {
     key: 'login-reliability',
     title: '登录基础设施可靠性',
-    userJourney: '有效账号可以完成 RDK Studio 登录',
+    userJourney: '有效账号可以完成主站登录',
     sliDescription: '成功登录数 /（成功登录数 + 基础设施失败数）',
     source: 'studio_ops_events / sso_login_attempt',
     goodEvent: '登录请求返回 2xx/3xx',

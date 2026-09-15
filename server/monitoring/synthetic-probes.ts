@@ -213,7 +213,7 @@ export async function runSyntheticProbeCycle(config: AlertConfig): Promise<Synth
       sessionId: login.sessionId,
       key: 'synthetic-tool-call',
       message:
-        '这是 RDK Studio 系统拨测。你必须调用只读 device_list_all 工具查看当前设备列表，然后简短结束；不要调用其他工具。',
+        '这是 d-obs 系统拨测。你必须调用只读 device_list_all 工具查看当前设备列表，然后简短结束；不要调用其他工具。',
       expectedTool: 'device_list_all',
     });
     if (config.rules['synthetic-ai-chat'].enabled) {
@@ -232,7 +232,7 @@ export async function runSyntheticProbeCycle(config: AlertConfig): Promise<Synth
         config,
         sessionId: login.sessionId,
         key: 'synthetic-ai-chat',
-        message: '这是 RDK Studio 系统拨测。请不要调用工具，只回复固定字符串 RDK_PROBE_OK。',
+        message: '这是 d-obs 系统拨测。请不要调用工具，只回复固定字符串 RDK_PROBE_OK。',
         expectedTool: null,
       }),
     );

@@ -229,7 +229,7 @@ function signalSpecificity(failureTag: string): number {
 export function buildEvolutionTask(signal: EvolutionSignal): string {
   const failureTag = sanitizeOpsSummary(signal.failureTag, 80) || 'unknown-quality-signal';
   return [
-    '你正在 RDK Studio 的一次隔离式每日自我进化任务中。',
+    '你正在 d-obs 的一次隔离式每日自我进化任务中。',
     '',
     '只实现一个小而可验证的代码质量改进；直接检查当前仓库并完成代码与测试。',
     `匿名质量信号：${failureTag}`,

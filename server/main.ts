@@ -1,7 +1,7 @@
 /**
  * d-obs standalone entry.
  *
- * Mounts the full observability workbench without the RDK Studio composition
+ * Mounts the full d-obs observability workbench standalone
  * root. Access control keeps the upstream semantics from D-010: admin token
  * via RDK_CREDITS_ADMIN_TOKEN (x-admin-token header, timing-safe, fail-closed)
  * plus an optional SSO admin allowlist in RDK_FLYWHEEL_ADMIN_USER_IDS.

@@ -539,7 +539,7 @@ function buildPostgresRelationshipGraph(
       id: 'database:current',
       kind: 'database',
       label: normalizedDatabaseName,
-      description: 'RDK Studio 中心 PostgreSQL；按 schema、业务表与外键关系展示。',
+      description: '中心 PostgreSQL；按 schema、业务表与外键关系展示。',
     },
     ...schemaNames.map((schemaName) => ({
       id: `schema:${schemaName}`,

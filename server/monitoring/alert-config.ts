@@ -1,5 +1,5 @@
 /**
- * RDK Studio 生产告警的单一配置真源。
+ * d-obs 生产告警的单一配置真源。
  *
  * 配置文件包含通知 Webhook 和合成拨测账号，因此只允许写入仓库外的 0600 文件。
  * 任何发给浏览器的响应都必须先经过 toPublicAlertConfig()，不能直接序列化 AlertConfig。
@@ -182,7 +182,7 @@ export const ALERT_RULE_DEFINITIONS = [
     key: 'external-dns',
     category: 'probe',
     title: '异地 DNS 拨测',
-    description: '从 106.53 独立主机解析生产域名并测量耗时。',
+    description: '从异地独立主机解析生产域名并测量耗时。',
     fields: ['threshold', 'criticalThreshold'],
   },
   {
@@ -196,14 +196,14 @@ export const ALERT_RULE_DEFINITIONS = [
     key: 'external-health',
     category: 'probe',
     title: '异地健康接口拨测',
-    description: '从 106.53 访问生产公网健康接口并校验响应。',
+    description: '从异地访问生产公网健康接口并校验响应。',
     fields: ['threshold', 'criticalThreshold'],
   },
   {
     key: 'external-entry-asset',
     category: 'probe',
     title: '异地前端入口拨测',
-    description: '从 106.53 访问首页及其入口 JavaScript 资源。',
+    description: '从异地访问首页及其入口 JavaScript 资源。',
     fields: ['threshold', 'criticalThreshold'],
   },
   // 北极星指标（越低越糟）：观测来自 server/monitoring/north-star-metrics.ts 的日级快照，
@@ -326,7 +326,7 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
   updatedAt: null,
   global: {
     enabled: true,
-    environmentLabel: 'production / 47.110',
+    environmentLabel: 'production',
     cooldownMinutes: 30,
     remindersEnabled: true,
     notifyOnRecovery: true,
@@ -339,10 +339,10 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
     shadowMode: true,
     channel: 'feishu',
     minSeverity: 'warning',
-    titlePrefix: 'RDK Studio',
+    titlePrefix: 'd-obs',
     messageTemplate: DEFAULT_ALERT_MESSAGE_TEMPLATE,
     actionGuide: '查看可观测看板、服务日志、中心遥测和依赖健康状态。',
-    dashboardUrl: 'https://rdkstudio.d-robotics.cc/rdkstudio/ops-observability#rules',
+    dashboardUrl: 'http://127.0.0.1:47110/ops-observability#alerts',
     feishuWebhookUrl: '',
     webhookUrl: '',
     bearerSecret: '',

@@ -1023,7 +1023,7 @@ async function runWorker(): Promise<void> {
   observations.push(
     ruleObservation(config, {
       key: 'internal-health',
-      title: 'RDK Studio 主服务不可用',
+      title: '主服务健康检查不可用',
       severity: !internalHealth.ok
         ? 'critical'
         : ruleSeverity(config, 'internal-health', internalHealth.elapsedMs),
@@ -1033,7 +1033,7 @@ async function runWorker(): Promise<void> {
     }),
     ruleObservation(config, {
       key: 'public-health',
-      title: 'RDK Studio 公网入口不可用',
+      title: '公网入口不可用',
       severity: !publicHealth.ok
         ? 'critical'
         : ruleSeverity(config, 'public-health', publicHealth.elapsedMs),

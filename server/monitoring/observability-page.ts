@@ -53,7 +53,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>RDK Studio · 可观测中心</title>
+  <title>d-obs · 可观测中心</title>
   <script>
     // 这是唯一的可观测工作台入口；无 hash 时只补上默认总览锚点，不再跳回第二套 UI。
     (function () {
@@ -67,16 +67,13 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
 <body class="ops-observability">
   <a class="skip-link" href="#mainContent">跳到主要内容</a>
   <header>
-    <div class="brand"><div class="brand-mark" aria-hidden="true">R</div><div class="brand-copy">可观测中心<small>Reliability Operations</small></div></div>
-    <nav class="product-nav" aria-label="运营产品入口"><a href="./">工作台</a><a href="./?ops=overview">运营总览</a><a href="./?ops=evaluation">质量评测</a><a href="./?ops=growth">用户增长</a><span>可观测中心</span></nav>
-    <div class="header-context" aria-hidden="true"><span class="header-product">RDK STUDIO</span><span class="header-divider"></span><span>生产可靠性工作区</span></div>
+    <div class="brand"><div class="brand-mark" aria-hidden="true">d</div><div class="brand-copy">可观测中心<small>d-obs · Reliability Operations</small></div></div>
     <div id="headerTelemetryStatus" class="header-live unknown" role="status" aria-live="polite">Telemetry 未确认</div>
   </header>
   <div class="app-shell">
     <aside class="side-nav">
-      <nav class="global-nav" aria-label="运营控制台模块">
+      <nav class="global-nav" aria-label="可观测中心入口">
         <a class="global-tab active" href="./ops-observability#overview" aria-current="page">可观测中心</a>
-        <a class="global-tab" href="./">返回工作台</a>
       </nav>
       <nav class="module-tabs" aria-label="可观测中心模块">
         <div class="nav-primary">
@@ -117,8 +114,8 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     </aside>
     <main id="mainContent" tabindex="-1">
     <div class="page-head">
-      <div class="page-head-copy"><div id="pageKicker" class="page-kicker">运营 / 可观测中心</div><h1 id="pageTitle">生产可观测与告警</h1><p id="pageIntro" class="page-intro">先判断生产影响，再处理事故、维护告警，最后下钻到链路证据。</p><p id="fresh" role="status" aria-live="polite">正在读取策略与巡检状态…</p></div>
-      <div class="page-head-actions"><span class="env-pill">production · 47.110</span><button id="runChecks" class="btn" type="button">立即评估</button><button id="refresh" class="btn" type="button">刷新数据</button></div>
+      <div class="page-head-copy"><div id="pageKicker" class="page-kicker">可观测中心 / 总览</div><h1 id="pageTitle">生产可观测与告警</h1><p id="pageIntro" class="page-intro">先判断生产影响，再处理事故、维护告警，最后下钻到链路证据。</p><p id="fresh" role="status" aria-live="polite">正在读取策略与巡检状态…</p></div>
+      <div class="page-head-actions"><span class="env-pill">production</span><button id="runChecks" class="btn" type="button">立即评估</button><button id="refresh" class="btn" type="button">刷新数据</button></div>
     </div>
     <div id="overviewScopeBar" class="scope-bar" role="region" aria-label="总览与 Trace 共用观察范围">
       <div class="scope-copy"><strong>可靠性证据范围</strong><span>production</span><small>仅总览 / Trace 继承</small></div>
@@ -134,7 +131,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div id="overviewContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在汇总生产态势</strong><small>读取检查、事故、通知与审计数据…</small></div></div>
     </section>
     <section id="view-service-levels" class="view hidden" aria-labelledby="serviceLevelsHeading">
-      <div class="view-head"><div><div class="eyebrow">可靠性治理 / 服务等级</div><h2 id="serviceLevelsHeading">SLO 与错误预算</h2><p>用 28 天用户旅程定义目标；内部参考线只用于运营判断，不构成合同 SLA。</p></div><div class="right" id="serviceLevelPolicyVersion">策略版本由服务端返回</div></div>
+      <div class="view-head"><div><div class="eyebrow">可观测中心 / SLO</div><h2 id="serviceLevelsHeading">SLO 与错误预算</h2><p>用 28 天用户旅程定义目标；内部参考线只用于运营判断，不构成合同 SLA。</p></div><div class="right" id="serviceLevelPolicyVersion">策略版本由服务端返回</div></div>
       <div id="serviceLevelContent" class="overview-stack" aria-live="polite"></div>
     </section>
     <section id="view-data-health" class="view hidden" aria-labelledby="dataHealthHeading">
@@ -159,7 +156,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div id="evolutionContent" class="overview-stack hidden"></div>
     </section>
     <section id="view-investigate" class="view hidden" aria-labelledby="investigationHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 事故调查</div><h2 id="investigationHeading">异常、证据与影响范围</h2><p>形成可复核的根因假设；只读调查，不直接执行处置。</p></div><div class="right">Evidence first · DSH-native</div></div>
+      <div class="view-head"><div><div class="eyebrow">可观测中心 / 事故调查</div><h2 id="investigationHeading">异常、证据与影响范围</h2><p>形成可复核的根因假设；只读调查，不直接执行处置。</p></div><div class="right">证据先行 · 只读调查</div></div>
       <div id="investigationContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在建立调查视图</strong><small>关联异常趋势、代表事件与影响范围…</small></div></div>
     </section>
     <section id="view-traces" class="view hidden" aria-labelledby="tracesHeading">

@@ -15,7 +15,7 @@ export const SESSION_TRACE_HTML = String.raw`<!doctype html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>RDK Studio · 会话 Trace</title>
+  <title>d-obs · 会话 Trace</title>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
@@ -60,8 +60,8 @@ export const SESSION_TRACE_HTML = String.raw`<!doctype html>
 </head>
 <body>
   <header>
-    <div class="brand"><div class="brand-mark">T</div><div>RDK Studio<small>SESSION TRACE</small></div></div>
-    <nav class="product-nav"><a href="./">工作台</a><a href="./ops-observability#overview">可观测中心</a></nav>
+    <div class="brand"><div class="brand-mark">T</div><div>d-obs<small>SESSION TRACE</small></div></div>
+    <nav class="product-nav"><a href="./ops-observability#overview">可观测中心</a></nav>
   </header>
   <main>
     <div class="kicker">质量治理 / 会话追踪</div>
@@ -202,7 +202,7 @@ export const SESSION_TRACE_HTML = String.raw`<!doctype html>
         try {
           var res = await fetch(url, { credentials: 'include' });
           if (res.status === 401 || res.status === 403) {
-            notice('尚未登录或无权限：请先在 RDK Studio 工作台登录后再查看。', true);
+            notice('尚未登录或无权限：请先登录或使用带 token 的入口地址后再查看。', true);
             return;
           }
           if (res.status === 404) { notice('设备不存在或不属于当前账号。', true); return; }
