@@ -127,19 +127,95 @@ token 会一次性写入 sessionStorage（随后从地址栏移除），后续 A
 admin-token 直连下该模块显示"当前账号没有运营配置权限"，属预期降级——
 告警、事故、规则、模型池、数据库面板不受影响。
 
+## 多团队租户（自助接入 + 数据隔离）
+
+一支团队 = 一个租户：自带探针 token（库里只存 sha256 哈希，明文只在创建响应里
+出现一次）、独立的 external 检查/事故/通知数据（`tenant_id` 列过滤，检查 key
+命名空间化为 `t.<tenantId>.<checkKey>`）、只读的工作台视图。平台管理员
+（admin token）看全部租户数据并管理租户生命周期。
+
+### 接入流程（团队自助）
+
+1. 平台管理员在部署环境配置注册 token（不配 = 自助注册关闭，fail-closed）：
+
+   ```bash
+   export RDK_TENANT_REGISTRATION_TOKEN='<任意强随机串>'
+   ```
+
+2. 团队自助注册租户（一次性拿到探针 token，请立即保存）：
+
+   ```bash
+   curl -X POST http://<d-obs-host>:<port>/api/ops/tenants/register \
+     -H 'content-type: application/json' \
+     -H 'x-registration-token: <注册 token>' \
+     -d '{"tenantId":"team-alpha","displayName":"强化学习平台组"}'
+   # → {"ok":true,"tenant":{...},"probeToken":"<64-hex>","probe":{...}}
+   ```
+
+3. 部署探针（以 `tools/rl-platform-probe.mjs` 为例，租户模式加
+   `RDK_RL_PROBE_AS_TENANT=1`，token 文件里放探针 token）：
+
+   ```bash
+   RDK_RL_PROBE_TARGET=http://<被观测服务> \
+   RDK_RL_PROBE_REPORT_URL=http://<d-obs-host>:<port> \
+   RDK_RL_PROBE_TOKEN_FILE=/path/to/tenant-token \
+   RDK_RL_PROBE_AS_TENANT=1 \
+   node tools/rl-platform-probe.mjs
+   ```
+
+   请求头自动切换为 `x-rdk-tenant-probe-token`；探针上报走
+   `/api/health/external-probe-report`，租户身份命中的检查项写入
+   `t.<tenantId>.<key>` 命名空间，故障直接 open 事故、恢复即 resolved。
+
+4. 团队用只读工作台（token 一次性注入 sessionStorage）：
+
+   ```text
+   http://<host>:<port>/ops-observability?tenant-token=<探针 token>
+   ```
+
+   租户视图收敛到总览：只显示本租户的检查/事故/通知；平台业务信号
+   （events/runs/SLO/Trace/进化面板）不进入租户视图；变更类端点一律 403
+   （`tenant_read_only`）。
+
+### 平台管理员租户管理
+
+```bash
+# 列出租户（含最近上报时间）
+curl http://<host>:<port>/api/ops/observability/tenants -H 'x-admin-token: <admin token>'
+
+# 创建（也可走自助注册）、轮换探针 token、停用/启用
+curl -X POST .../tenants -d '{"tenantId":"x","displayName":"y"}'
+curl -X POST .../tenants/<tenantId>/token
+curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
+```
+
+停用后该租户 token 立即失效（上报 401、工作台 401）；轮换后旧 token 失效、
+新 token 立即可用。所有租户管理操作进入配置审计流。
+
+### 隔离语义（已实测）
+
+- 探针上报：平台探针（token 文件）与租户探针（库内哈希）两个凭证域互不
+  通用；无效/停用 token 一律 401。
+- 数据：`studio_alert_checks/incidents/notifications` 按 `tenant_id` 过滤；
+  租户 A 故障不污染租户 B 视图；平台业务表（agent_run_records、
+  studio_ops_events 等）不按租户查询，租户视图恒为空。
+- 事故操作：租户视图只读；管理员对命名空间 key 的操作按
+  `t.<tenantId>.` 前缀推导归属校验。
+
 ### 配置参考
 
 | 变量 | 必填 | 作用 |
 | --- | --- | --- |
 | `RDK_CHAT_CREDITS_DB_URL` | ✅ | 中心 PostgreSQL 连接串（数据面真源） |
 | `RDK_CREDITS_ADMIN_TOKEN` | ✅ | 运营 token（`x-admin-token` 头） |
+| `RDK_TENANT_REGISTRATION_TOKEN` |  | 租户自助注册 token（`x-registration-token` 头；不配 = 注册端点关闭，fail-closed） |
 | `PORT` |  | HTTP 端口，默认 `47110` |
 | `RDK_DATA_DIR` |  | 本地状态/配置目录（默认数据布局） |
 | `RDK_GATEWAY_ADMIN_URL` / `GATEWAY_ADMIN_KEY` |  | 模型池网关 admin API 地址与密钥（默认 `127.0.0.1:3100`） |
 | `RDK_ALERT_INTERNAL_HEALTH_URL` |  | internal-health 检查目标 |
 | `STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL` |  | Langfuse 公开看板 URL，配置后 Agent Trace 面板嵌入它 |
 | `RDK_OBSERVABILITY_ENVIRONMENT` |  | 环境标注（production/dev），写入事件投影 |
-| `RDK_EXTERNAL_PROBE_TOKEN_PATH` |  | 外部探针 token 文件路径（默认 `/var/lib/rdstudio-alert-worker/external-probe-token`） |
+| `RDK_EXTERNAL_PROBE_TOKEN_PATH` |  | 平台外部探针 token 文件路径（默认 `/var/lib/rdstudio-alert-worker/external-probe-token`） |
 | `RDK_FLYWHEEL_ADMIN_USER_IDS` |  | SSO admin 用户 ID 逗号表（与业务站共用身份时用） |
 
 ### 鉴权语义（与上游同源，独立部署可用）

@@ -139,6 +139,9 @@ function eventContextFromRow(row: Record<string, unknown>): OpsEventContextSumma
 export interface OpsObservabilityOverview {
   generatedAt: string;
   windowHours: number;
+  /** null = 平台全局视图；否则为本视图归属（'platform' 或租户 tenantId）。 */
+  tenantScope: string | null;
+  tenantLabel: string | null;
   alerting: {
     enabled: boolean;
     webhookConfigured: boolean;
@@ -252,8 +255,54 @@ type OpsIncidentAction = 'acknowledge' | 'assign' | 'silence' | 'reopen';
 
 function incidentKey(value: string): string {
   const key = String(value ?? '').trim();
-  if (!/^[a-z0-9][a-z0-9-]{0,127}$/.test(key)) throw new Error('invalid_incident_key');
+  // 命名空间化的租户 key 形如 t.<tenantId>.<checkKey>，点是分隔符。
+  if (!/^[a-z0-9][a-z0-9.-]{0,127}$/.test(key) || !key.split('.').every(Boolean)) {
+    throw new Error('invalid_incident_key');
+  }
   return key;
+}
+
+export function tenantScopeFilter(
+  scope: OpsTenantScope | undefined,
+): string {
+  // null scope = 平台管理员看全部；platform/tenant id = 只看该归属。
+  if (!scope) return '';
+  return scope;
+}
+
+export type OpsTenantScope = string | null;
+
+/** 租户视图的空进化面板：每日自我进化属于平台域，不向租户暴露。 */
+function emptyEvolutionOverview(): EvolutionOverview {
+  return {
+    enabled: false,
+    cadence: '',
+    mode: 'candidate_only',
+    workerVersion: '',
+    lastRunAt: null,
+    nextRunAt: null,
+    currentStage: '',
+    lastStatus: 'never',
+    lastSummary: '租户视图不包含平台自我进化数据',
+    evidenceCount: 0,
+    readyCandidates: 0,
+    gatePassRate: null,
+    runs: [],
+  };
+}
+
+/**
+ * 从命名空间化 alert_key 推导归属：t.<tenantId>.* → tenantId；其余 → platform。
+ * 只在调用方没有更权威的 scope（如 admin 全局视图操作指定 key）时使用。
+ */
+export function tenantScopeFromAlertKey(alertKey: string): string {
+  const parts = String(alertKey ?? '').split('.');
+  if (parts.length >= 3 && parts[0] === 't' && parts[1]) return parts[1];
+  return 'platform';
+}
+
+function coalesceTenant(alertKey: string): string {
+  return tenantScopeFromAlertKey(alertKey);
 }
 
 function auditActor(value: string): string {
@@ -285,6 +334,12 @@ async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
     `alter table public.studio_alert_incidents add column if not exists assignee text null`,
     `alter table public.studio_alert_incidents add column if not exists silence_until timestamptz null`,
     `alter table public.studio_alert_incidents add column if not exists silence_reason text null`,
+    `alter table public.studio_alert_incidents add column if not exists tenant_id text not null default 'platform'`,
+    `create index if not exists studio_alert_incidents_tenant_idx on public.studio_alert_incidents (tenant_id)`,
+    `alter table public.studio_alert_checks add column if not exists tenant_id text not null default 'platform'`,
+    `create index if not exists studio_alert_checks_tenant_idx on public.studio_alert_checks (tenant_id)`,
+    `alter table public.studio_alert_notifications add column if not exists tenant_id text not null default 'platform'`,
+    `create index if not exists studio_alert_notifications_tenant_idx on public.studio_alert_notifications (tenant_id)`,
     `create index if not exists studio_alert_incidents_silence_idx on public.studio_alert_incidents (silence_until) where status = 'silenced'`,
     `create table if not exists public.studio_alert_incident_activity (
       id bigserial primary key,
@@ -358,6 +413,7 @@ export async function recordOpsConfigurationAudit(input: {
 export async function updateOpsIncident(
   keyInput: string,
   input: { action: OpsIncidentAction; actor: string; assignee?: string; minutes?: number; reason?: string },
+  tenantScope: OpsTenantScope = null,
 ): Promise<void> {
   const key = incidentKey(keyInput);
   const p = await pool();
@@ -372,17 +428,19 @@ export async function updateOpsIncident(
       `update public.studio_alert_incidents
        set status = case when status = 'resolved' then status else 'acknowledged' end,
            acknowledged_at = now(), acknowledged_by = $2
-       where alert_key = $1
+       where alert_key = $1 and coalesce(tenant_id, 'platform') = $3
        returning alert_key`,
-      [key, actor],
+      [key, actor, tenantScope ?? coalesceTenant(key)],
     );
   } else if (action === 'assign') {
     const assignee = text(input.assignee, 160);
     if (!assignee) throw new Error('incident_assignee_required');
     summary = `已指派给 ${assignee}`;
     result = await p.query(
-      `update public.studio_alert_incidents set assignee = $2 where alert_key = $1 returning alert_key`,
-      [key, assignee],
+      `update public.studio_alert_incidents set assignee = $2
+        where alert_key = $1 and coalesce(tenant_id, 'platform') = $3
+        returning alert_key`,
+      [key, assignee, tenantScope ?? coalesceTenant(key)],
     );
   } else if (action === 'silence') {
     const minutes = Math.max(5, Math.min(7 * 24 * 60, Math.floor(Number(input.minutes) || 0)));
@@ -393,9 +451,9 @@ export async function updateOpsIncident(
       `update public.studio_alert_incidents
        set status = case when status = 'resolved' then status else 'silenced' end,
            silence_until = now() + make_interval(mins => $2::int), silence_reason = $3
-       where alert_key = $1
+       where alert_key = $1 and coalesce(tenant_id, 'platform') = $4
        returning alert_key`,
-      [key, minutes, reason],
+      [key, minutes, reason, tenantScope ?? coalesceTenant(key)],
     );
   } else {
     summary = '已重新打开事故';
@@ -403,9 +461,9 @@ export async function updateOpsIncident(
       `update public.studio_alert_incidents
        set status = 'open', acknowledged_at = null, acknowledged_by = null,
            silence_until = null, silence_reason = null, resolved_at = null
-       where alert_key = $1
+       where alert_key = $1 and coalesce(tenant_id, 'platform') = $2
        returning alert_key`,
-      [key],
+      [key, tenantScope ?? coalesceTenant(key)],
     );
   }
   if (!result.rowCount) throw new Error('incident_not_found');
@@ -418,12 +476,20 @@ export async function updateOpsIncident(
 
 export async function getOpsObservabilityOverview(
   hoursInput = 24,
+  tenantScope: OpsTenantScope = null,
 ): Promise<OpsObservabilityOverview> {
   const hours = Math.max(1, Math.min(168, Math.floor(Number(hoursInput) || 24)));
   await ensureOpsEventSchema();
   const p = await pool();
   await ensureIncidentOperationsSchema(p);
   const alertConfig = await loadAlertConfig();
+  // 作用域 where 片段：admin（null）不加过滤；platform/租户视图只看本归属行。
+  // 巡检/事故/通知表都带 tenant_id 列（缺省 'platform'），探针写入时已填好。
+  const tWhere = tenantScope ? `where coalesce(tenant_id, 'platform') = $1::text` : '';
+  const tIdx = tenantScope ? [tenantScope] : [];
+  // 租户视图只看拨测检查，业务信号面板（events/runs/flywheel）不适用，
+  // 直接跳过这些查询，避免租户误读平台全局业务数据。
+  const tenantScoped = Boolean(tenantScope);
   const [
     checksResult,
     workerStatusResult,
@@ -443,7 +509,9 @@ export async function getOpsObservabilityOverview(
       `select alert_key, title, category, enabled, severity, unhealthy, active, summary, checked_at,
               failure_streak, success_streak
        from public.studio_alert_checks
+       ${tenantScope ? 'where coalesce(tenant_id, $1::text) = $2::text' : ''}
        order by active desc, unhealthy desc, severity desc, alert_key`,
+      tenantScope ? ['platform', tenantScope] : [],
     ),
     p
       .query(
@@ -458,43 +526,57 @@ export async function getOpsObservabilityOverview(
     p.query(
       `select count(*) filter (where status in ('open', 'acknowledged', 'silenced'))::int open_incidents,
               count(*) filter (where status in ('open', 'acknowledged', 'silenced') and severity = 'critical')::int critical_incidents
-       from public.studio_alert_incidents`,
+       from public.studio_alert_incidents
+       ${tWhere}`,
+      tIdx,
     ),
     p.query(
       `select alert_key, title, severity, status, summary, first_seen_at, last_seen_at,
               resolved_at, occurrence_count, acknowledged_at, acknowledged_by, assignee,
               silence_until, silence_reason
        from public.studio_alert_incidents
-       where last_seen_at >= now() - make_interval(hours => $1::int) or status = 'open'
+       ${tenantScope ? 'where (last_seen_at >= now() - make_interval(hours => $1::int) or status = \'open\') and coalesce(tenant_id, $3::text) = $2::text' : 'where last_seen_at >= now() - make_interval(hours => $1::int) or status = \'open\''}
        order by (status = 'open') desc, last_seen_at desc
        limit 50`,
-      [hours],
+      tenantScope ? [hours, tenantScope, 'platform'] : [hours],
     ),
     p.query(
-      `select occurred_at, alert_key, action, actor, summary
-       from public.studio_alert_incident_activity
-       where occurred_at >= now() - make_interval(hours => $1::int)
-       order by occurred_at desc
+      `select a.occurred_at, a.alert_key, a.action, a.actor, a.summary
+       from public.studio_alert_incident_activity a
+       where a.occurred_at >= now() - make_interval(hours => $1::int)
+         and a.alert_key in (
+           select i.alert_key from public.studio_alert_incidents i
+            ${tenantScope ? 'where coalesce(i.tenant_id, $2::text) = $3::text' : ''}
+         )
+       order by a.occurred_at desc
        limit 50`,
-      [hours],
+      tenantScope ? [hours, 'platform', tenantScope] : [hours],
     ),
     p.query(
-      `select occurred_at, actor, action, summary
-       from public.studio_alert_configuration_audit
-       where occurred_at >= now() - make_interval(hours => $1::int)
-       order by occurred_at desc
-       limit 25`,
-      [hours],
+      tenantScope
+        ? // 租户视图不返回平台配置审计流（含管理员操作记录）。
+          `select occurred_at, actor, action, summary
+           from public.studio_alert_configuration_audit where false`
+        : `select occurred_at, actor, action, summary
+           from public.studio_alert_configuration_audit
+           where occurred_at >= now() - make_interval(hours => $1::int)
+           order by occurred_at desc
+           limit 25`,
+      tenantScope ? [] : [hours],
     ),
     p.query(
       `select occurred_at, alert_key, transition, severity, delivered, channel, error
        from public.studio_alert_notifications
        where occurred_at >= now() - make_interval(hours => $1::int)
+         ${tenantScope ? 'and coalesce(tenant_id, $2::text) = $3::text' : ''}
        order by occurred_at desc
        limit 50`,
-      [hours],
+      tenantScope ? [hours, 'platform', tenantScope] : [hours],
     ),
-    p.query(
+    // 运行/事件/进化面板是平台全局业务数据，租户视图不读取也不返回。
+    tenantScope
+      ? Promise.resolve({ rows: [] })
+      : p.query(
       `with latest as (
          select distinct on (run_id) run_id, outcome
          from public.agent_run_records
@@ -516,7 +598,9 @@ export async function getOpsObservabilityOverview(
       if ((error as { code?: string }).code === '42P01') return { rows: [] };
       throw error;
     }),
-    p.query(
+    tenantScope
+      ? Promise.resolve({ rows: [] })
+      : p.query(
       `with latest as (
          select distinct on (run_id) run_id, outcome, started_at
          from public.agent_run_records
@@ -534,7 +618,9 @@ export async function getOpsObservabilityOverview(
       if ((error as { code?: string }).code === '42P01') return { rows: [] };
       throw error;
     }),
-    p.query(
+    tenantScope
+      ? Promise.resolve({ rows: [] })
+      : p.query(
       `select count(*)::int total_events,
               count(*) filter (
                 where event_code = 'tool_call' and outcome = 'error'
@@ -594,7 +680,9 @@ export async function getOpsObservabilityOverview(
          and coalesce(metadata->>'client_type', '') <> 'local-dev'`,
       [hours, [...CLIENT_ERROR_NON_ACTIONABLE_API_CODES]],
     ),
-    p.query(
+    tenantScope
+      ? Promise.resolve({ rows: [] })
+      : p.query(
       `select date_trunc('hour', occurred_at) bucket,
               count(*) filter (
                 where event_code = 'tool_call' and outcome = 'error'
@@ -652,7 +740,9 @@ export async function getOpsObservabilityOverview(
        group by 1 order by 1`,
       [hours, [...CLIENT_ERROR_NON_ACTIONABLE_API_CODES]],
     ),
-    p.query(
+    tenantScope
+      ? Promise.resolve({ rows: [] })
+      : p.query(
       `with recent_events as (
          select id, occurred_at, component, event_code, outcome, severity_hint,
                 safe_summary, metadata, correlation
@@ -758,7 +848,7 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
       if ((error as { code?: string }).code === '42P01') return { rows: [] };
       throw error;
     }),
-    getEvolutionOverview(p),
+    tenantScope ? Promise.resolve(null) : getEvolutionOverview(p),
   ]);
 
   const checks = checksResult.rows.map((row) => {
@@ -768,8 +858,11 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
     const severity = text(row.severity, 24) || 'warning';
     const key = text(row.alert_key, 120);
     const checkedAt = iso(row.checked_at);
+    // 平台裸 key `external-*` 与租户命名空间 key `t.<tid>.external-*` 都要做
+    // 心跳过期判定，取实际 check 名（最后一段）识别拨测检查。
+    const checkName = key.split('.').at(-1) ?? key;
     const externalStale =
-      key.startsWith('external-') &&
+      checkName.startsWith('external-') &&
       (!checkedAt || Date.now() - Date.parse(checkedAt) > 3 * 60_000);
     return {
       key,
@@ -802,7 +895,11 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
       .at(-1) ?? null;
   const workerStatus = (workerStatusResult.rows[0] ?? {}) as Record<string, unknown>;
   const workerLastRunAt = iso(workerStatus.last_run_at);
-  const effectiveLastCheckedAt = workerLastRunAt ?? lastCheckedAt;
+  // 租户视图看不到平台 worker 心跳（那是 d-obs 自身的巡检循环），staleness
+  // 只由本租户拨测检查的 checked_at 决定；平台视图沿用 worker 优先。
+  const effectiveLastCheckedAt = tenantScope
+    ? lastCheckedAt
+    : workerLastRunAt ?? lastCheckedAt;
   const isStale =
     !effectiveLastCheckedAt || Date.now() - Date.parse(effectiveLastCheckedAt) > 3 * 60_000;
   const incidentSummary = incidentSummaryResult.rows[0] ?? {};
@@ -875,6 +972,8 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
   return {
     generatedAt: new Date().toISOString(),
     windowHours: hours,
+    tenantScope,
+    tenantLabel: tenantScope,
     alerting: {
       enabled:
         typeof workerStatus.enabled === 'boolean'
@@ -919,7 +1018,7 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
       processErrors: number(signal.process_errors),
       totalEvents: number(signal.total_events),
     },
-    evolution,
+    evolution: evolution ?? emptyEvolutionOverview(),
     checks,
     trend: [...trendByBucket.values()].sort((a, b) => a.bucket.localeCompare(b.bucket)),
     incidents: incidentsResult.rows.map((row) => ({

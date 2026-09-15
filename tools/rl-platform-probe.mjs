@@ -6,15 +6,21 @@
  *   external-health       GET /healthz 200
  *   external-entry-asset  GET / 入口页可加载
  *
- * 用法：
+ * 用法（平台自带探针）：
  *   RDK_RL_PROBE_TARGET=http://127.0.0.1:18102 \
  *   RDK_RL_PROBE_REPORT_URL=http://127.0.0.1:47110 \
  *   RDK_RL_PROBE_TOKEN_FILE=/path/to/64-hex-token \
  *   node tools/rl-platform-probe.mjs
  *
+ * 租户模式（团队接入）：token 来自租户注册响应的 probeToken，请求头改用
+ *   x-rdk-tenant-probe-token：
+ *   RDK_RL_PROBE_TOKEN_FILE=/path/to/tenant-token \
+ *   RDK_RL_PROBE_AS_TENANT=1 \
+ *   node tools/rl-platform-probe.mjs
+ *
  * 契约：source 固定 '106.53'（探针身份标识）；4 个 check key 必须齐全；
- * token 为 64 位 hex，请求头 x-rdk-external-probe-token。持续运行时由
- * 调用方（systemd timer / cron）驱动，本脚本单次执行一次上报。
+ * token 为 64 位 hex。持续运行时由调用方（systemd timer / cron）驱动，
+ * 本脚本单次执行一次上报。
  */
 import { readFile } from 'node:fs/promises';
 
@@ -22,6 +28,7 @@ const TARGET = String(process.env.RDK_RL_PROBE_TARGET || '').trim() || 'http://1
 const REPORT_URL = String(process.env.RDK_RL_PROBE_REPORT_URL || '').trim() || 'http://127.0.0.1:47110';
 const TOKEN_FILE =
   String(process.env.RDK_RL_PROBE_TOKEN_FILE || '').trim() || '/var/lib/rdstudio-alert-worker/external-probe-token';
+const TENANT_MODE = String(process.env.RDK_RL_PROBE_AS_TENANT || '').trim() === '1';
 
 async function timedGet(url, timeoutMs = 8000) {
   const started = Date.now();
@@ -94,7 +101,8 @@ async function main() {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-rdk-external-probe-token': token,
+      // 租户探针用租户 token 头；平台探针沿用原头。同一 64-hex token 格式。
+      [TENANT_MODE ? 'x-rdk-tenant-probe-token' : 'x-rdk-external-probe-token']: token,
       'user-agent': 'd-obs-rl-platform-probe/1',
     },
     body: JSON.stringify({
@@ -103,7 +111,9 @@ async function main() {
       checks,
     }),
   });
-  console.log(`[rl-probe] healthz=${health.ok ? 'ok' : 'FAIL'} entry=${entry.ok ? 'ok' : 'FAIL'} report=${response.status}`);
+  console.log(
+    `[rl-probe]${TENANT_MODE ? ' tenant' : ''} healthz=${health.ok ? 'ok' : 'FAIL'} entry=${entry.ok ? 'ok' : 'FAIL'} report=${response.status}`,
+  );
   if (!response.ok) {
     console.error('[rl-probe] report rejected:', await response.text().catch(() => ''));
     process.exitCode = 1;

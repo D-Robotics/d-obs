@@ -96,6 +96,10 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 | 行动队列显示“当前账号没有运营配置权限” | 预期行为：行动域要求 SSO 账号身份，admin-token 直连（`?ops-token=`）下模块级降级，其余面板不受影响 |
 | 总览 external 检查变 critical“心跳未上报” | 探针超过 3 分钟没有上报（timer 停了或 `RDK_RL_PROBE_TARGET` 指向变了）；重新上报即恢复 |
 | worker 开了告警但 `studio_alert_incidents` 空表 | 事故表缺 `acknowledged_at`/`silence_until` 等列，upsert 失败被静默吞掉：重跑 `init-schema.sql`（幂等补列） |
+| 租户注册 401/503 | 401 = `x-registration-token` 不匹配；503 = 服务端未配置 `RDK_TENANT_REGISTRATION_TOKEN`（fail-closed，自助注册关闭） |
+| 租户探针上报 401 | 租户被停用、token 已轮换（旧 token 立即失效），或注册响应里的明文 token 没保存完整（只出现一次） |
+| 租户工作台 401 | `x-tenant-token` 不匹配任何活跃租户：admin 用 `GET /api/ops/observability/tenants` 核对状态，必要时 `POST .../tenants/<id>/token` 轮换 |
+| 租户视图里平台面板全空 | 预期行为：events/runs/SLO/Trace/进化面板是平台域数据，租户视图恒为空；租户请求变更类端点一律 403 `tenant_read_only` |
 
 ## 6. 数据与 schema
 
@@ -103,3 +107,9 @@ d-obs 不自带独立迁移工具；数据表（`studio_alert_*`、`studio_ops_e
 `agent_run_records`、`studio_observability_actions` 等）由代码启动时幂等建表 +
 上游迁移提供。与主站共用一个中心库时，d-obs 只读写自己域内的表，不碰业务表
 （唯一例外是 `ops_ai` 脱敏视图与只读的运营指标聚合）。
+
+多团队租户相关的表与列同样幂等预置：`studio_obs_tenants`（token 只存 sha256
+哈希）、各告警表的 `tenant_id` 列（缺省 `'platform'`）、
+`studio_external_probe_status` 的 `(tenant_id, source)` 复合主键。老库升级由
+ingest 代码自动迁移（删除单列 source 主键、补复合主键），也可以直接重跑
+`tools/init-schema.sql`。

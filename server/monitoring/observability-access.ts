@@ -75,3 +75,31 @@ export function resolveOpsActorId(req: Request): string {
   if (user) return user.email || user.name || user.id;
   return adminTokenMatches(String(req.header('x-admin-token') ?? '')) ? 'admin-token' : 'ops-admin';
 }
+
+/**
+ * 租户只读访问：x-tenant-token 命中 studio_obs_tenants 的活跃 token（哈希
+ * 查找）。租户身份与运营管理员互斥——带 admin token 的请求按管理员处理，
+ * 不会同时获得租户作用域；租户 token 只授予本租户检查/事故/通知的只读视图。
+ */
+export interface ResolvedTenantAccess {
+  tenantId: string;
+  displayName: string;
+}
+
+export async function resolveTenantTokenAccess(
+  req: Request,
+): Promise<ResolvedTenantAccess | null> {
+  const { findTenantByToken } = await import('./tenant-store.js');
+  const tenant = await findTenantByToken(String(req.header('x-tenant-token') ?? '').trim());
+  return tenant ? { tenantId: tenant.tenantId, displayName: tenant.displayName } : null;
+}
+
+export function hasInvalidTenantToken(req: Request): boolean {
+  const provided = String(req.header('x-tenant-token') ?? '').trim();
+  // 没带租户 token → 不影响；带了格式合法但（此刻）不匹配任何活跃租户的
+  // token → 显式拒绝，不允许退化成匿名/管理员访问。真实匹配判定在
+  // resolveTenantTokenAccess（异步查库）；这里只拦截"带错凭证还期待访问"。
+  return provided.length > 0 && !getSessionSsoUser(req) && !adminTokenMatches(provided)
+    ? true
+    : false;
+}

@@ -3,6 +3,8 @@
 -- 说明：studio_external_probe_status 由 ingest 代码自动建表；本脚本预置探针
 -- 上报写入 studio_alert_checks 所需的最小 schema，让首次上报即可成功（否则
 -- 需要告警 worker 先运行一轮建表）。
+-- 多团队租户：租户表 + 各告警表的 tenant_id 列（缺省 'platform'）也在此
+-- 预置；探针 ingest 代码会做相同的幂等补列，两边保持同源。
 
 create table if not exists public.studio_alert_checks (
   alert_key text primary key,
@@ -15,23 +17,46 @@ create table if not exists public.studio_alert_checks (
   summary text null,
   checked_at timestamptz not null,
   failure_streak int not null default 0,
-  success_streak int not null default 0
+  success_streak int not null default 0,
+  tenant_id text not null default 'platform'
 );
 
 alter table public.studio_alert_checks
   add column if not exists category text not null default 'metric';
 alter table public.studio_alert_checks
   add column if not exists enabled boolean not null default true;
+alter table public.studio_alert_checks
+  add column if not exists tenant_id text not null default 'platform';
 
 create index if not exists studio_alert_checks_checked_idx
   on public.studio_alert_checks (checked_at desc);
+create index if not exists studio_alert_checks_tenant_idx
+  on public.studio_alert_checks (tenant_id);
 
 create table if not exists public.studio_external_probe_status (
-  source text primary key,
+  tenant_id text not null default 'platform',
+  source text not null,
   reported_at timestamptz not null,
   status text not null,
-  checks jsonb not null default '[]'::jsonb
+  checks jsonb not null default '[]'::jsonb,
+  primary key (tenant_id, source)
 );
+
+create index if not exists studio_external_probe_status_tenant_idx
+  on public.studio_external_probe_status (tenant_id);
+
+-- 多团队租户注册表：token 只存 sha256 哈希；明文只在创建响应里出现一次。
+create table if not exists public.studio_obs_tenants (
+  tenant_id text primary key,
+  display_name text not null,
+  probe_token_hash text not null unique,
+  status text not null default 'active' check (status in ('active', 'disabled')),
+  created_at timestamptz not null default now(),
+  created_by text not null default ''
+);
+
+create index if not exists studio_obs_tenants_status_idx
+  on public.studio_obs_tenants (status);
 
 -- 探针上报 active 检查项时会级联 upsert 事故记录
 create table if not exists public.studio_alert_incidents (
@@ -59,9 +84,13 @@ alter table public.studio_alert_incidents
   add column if not exists silence_until timestamptz null;
 alter table public.studio_alert_incidents
   add column if not exists silence_reason text null;
+alter table public.studio_alert_incidents
+  add column if not exists tenant_id text not null default 'platform';
 
 create index if not exists studio_alert_incidents_silence_idx
   on public.studio_alert_incidents (silence_until) where status = 'silenced';
+create index if not exists studio_alert_incidents_tenant_idx
+  on public.studio_alert_incidents (tenant_id);
 
 -- 告警通知投递记录（worker 每轮 transition 落库；测试通知同表）
 create table if not exists public.studio_alert_notifications (
@@ -73,11 +102,17 @@ create table if not exists public.studio_alert_notifications (
   delivered boolean not null,
   channel text not null,
   error text null,
-  attempt_count int not null default 1
+  attempt_count int not null default 1,
+  tenant_id text not null default 'platform'
 );
+
+alter table public.studio_alert_notifications
+  add column if not exists tenant_id text not null default 'platform';
 
 create index if not exists studio_alert_notifications_occurred_idx
   on public.studio_alert_notifications (occurred_at desc);
+create index if not exists studio_alert_notifications_tenant_idx
+  on public.studio_alert_notifications (tenant_id);
 
 -- worker 运行状态单例行（看板“告警基础状态”卡片读取）
 create table if not exists public.studio_alert_worker_status (

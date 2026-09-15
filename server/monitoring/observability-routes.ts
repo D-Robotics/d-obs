@@ -78,8 +78,11 @@ import {
 import { createObservabilityActionRouter } from './observability-action-routes.js';
 import {
   hasInvalidAdminToken,
+  hasInvalidTenantToken,
   isOpsAdminRequest,
   resolveOpsActorId,
+  resolveTenantTokenAccess,
+  type ResolvedTenantAccess,
 } from './observability-access.js';
 
 const execFileAsync = promisify(execFile);
@@ -167,6 +170,61 @@ const requireObservabilityAccess: RequestHandler = (req, res, next) => {
     });
     return;
   }
+  next();
+};
+
+/**
+ * 租户请求的读权限：不走管理员闸门（x-admin-token/SSO 都可能缺席），只要
+ * tenantScopeGate 已经验证出活跃租户身份即放行只读面。管理员请求仍需通过
+ * 原有 requireObservabilityAccess。
+ */
+const requireObservabilityAccessTenantAware: RequestHandler = (req, res, next) => {
+  if (req.opsTenantAccess) {
+    if (!isOpsObservabilityConfigured()) {
+      res.status(503).json({ ok: false, error: 'central_store_disabled' });
+      return;
+    }
+    next();
+    return;
+  }
+  requireObservabilityAccess(req, res, next);
+};
+
+/**
+ * 租户只读作用域解析。三种结果：
+ *  - null：非租户请求（管理员/SSO），走原有逻辑；
+ *  - 'deny'：带了 x-tenant-token 但匹配不到活跃租户 → 401 fail-closed；
+ *  - 租户身份：请求被限制在该租户数据内（只读面）。
+ * 管理员 token 优先于租户 token，两者同带时按管理员处理。
+ */
+declare module 'express-serve-static-core' {
+  interface Request {
+    opsTenantAccess?: ResolvedTenantAccess;
+  }
+}
+
+async function resolveTenantScope(
+  req: Request,
+): Promise<{ deny: true; tenant?: undefined } | { deny: false; tenant: ResolvedTenantAccess } | null> {
+  const header = String(req.header('x-tenant-token') ?? '').trim();
+  if (!header) return null;
+  if (isOpsAdminRequest(req)) return null; // admin token 优先
+  const tenant = await resolveTenantTokenAccess(req);
+  if (tenant) return { deny: false, tenant };
+  return { deny: true };
+}
+
+const tenantScopeGate: RequestHandler = async (req, res, next) => {
+  const scope = await resolveTenantScope(req);
+  if (!scope) {
+    next();
+    return;
+  }
+  if (scope.deny) {
+    res.status(401).json({ ok: false, error: 'invalid_tenant_token' });
+    return;
+  }
+  req.opsTenantAccess = scope.tenant;
   next();
 };
 
@@ -350,9 +408,11 @@ export function createOpsObservabilityRouter(): Router {
 
   router.get(
     '/api/ops/observability/overview',
-    requireObservabilityAccess,
+    tenantScopeGate,
+    requireObservabilityAccessTenantAware,
     async (req: Request, res: Response) => {
       try {
+        const tenantAccess = req.opsTenantAccess ?? null;
         const query = req.query as Record<string, unknown>;
         const hours = queryInteger(query, 'hours', 24, 1, 168);
         const traceEnvironmentRaw = queryText(query, 'traceEnvironment', 24) ?? 'production';
@@ -367,12 +427,18 @@ export function createOpsObservabilityRouter(): Router {
         }
         const traceLimit = queryInteger(query, 'traceLimit', 40, 1, 80);
         const traceCursor = queryText(query, 'traceCursor', 4_096);
+        // 租户身份：SLO / trace 面板属于平台业务数据，不进入租户视图。
+        const tenantScope = tenantAccess
+          ? tenantAccess.tenantId
+          : null;
         const [overview, serviceLevels] = await Promise.all([
-          getOpsObservabilityOverview(hours),
-          getConfiguredServiceLevelOverview().catch(() => null),
+          getOpsObservabilityOverview(hours, tenantScope),
+          tenantScope
+            ? Promise.resolve(null)
+            : getConfiguredServiceLevelOverview().catch(() => null),
         ]);
         let tracePage = emptyRunTraceListPage(hours, traceEnvironment);
-        if (telemetryGovernanceProtectedReadsReady()) {
+        if (!tenantScope && telemetryGovernanceProtectedReadsReady()) {
           try {
             tracePage = await getRunTraceList({
               hours,
@@ -839,10 +905,16 @@ export function createOpsObservabilityRouter(): Router {
 
   router.get(
     '/api/ops/observability/config',
-    requireObservabilityAccess,
-    async (_req: Request, res: Response) => {
+    tenantScopeGate,
+    requireObservabilityAccessTenantAware,
+    async (req: Request, res: Response) => {
       try {
         res.setHeader('Cache-Control', 'no-store');
+        // 租户视图不返回平台告警配置（通道/阈值属于平台运营数据）。
+        if (req.opsTenantAccess) {
+          res.json({ ok: true, config: { tenantReadOnly: true } });
+          return;
+        }
         res.json({ ok: true, config: toPublicAlertConfig(await loadAlertConfig()) });
       } catch (error) {
         res.status(500).json({
@@ -852,6 +924,102 @@ export function createOpsObservabilityRouter(): Router {
       }
     },
   );
+
+  // ---- 租户管理（仅平台管理员） ----
+
+  router.get('/api/ops/observability/tenants', requireObservabilityAccess, async (_req, res) => {
+    try {
+      const { listTenants } = await import('./tenant-store.js');
+      const tenants = await listTenants();
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ ok: true, tenants });
+    } catch (error) {
+      res.status(503).json({
+        ok: false,
+        error: sanitizeOpsSummary(error, 240) || 'tenant_list_unavailable',
+      });
+    }
+  });
+
+  router.post(
+    '/api/ops/observability/tenants',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const { createTenant } = await import('./tenant-store.js');
+        const { tenant, token } = await createTenant({
+          tenantId: req.body?.tenantId,
+          displayName: req.body?.displayName,
+          createdBy: resolveOpsActor(req),
+        });
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'tenant_create',
+          summary: `创建租户 ${tenant.tenantId}（${tenant.displayName}）`,
+        });
+        // token 明文只在创建响应里返回一次；库里只存哈希。
+        res.status(201).json({ ok: true, tenant, probeToken: token });
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          error: sanitizeOpsSummary(error, 240) || 'tenant_create_failed',
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/tenants/:tenantId/token',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const { rotateTenantToken } = await import('./tenant-store.js');
+        const token = await rotateTenantToken(String(req.params.tenantId ?? ''));
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'tenant_token_rotate',
+          summary: `轮换租户探针 token：${String(req.params.tenantId ?? '')}`,
+        });
+        res.json({ ok: true, probeToken: token });
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          error: sanitizeOpsSummary(error, 240) || 'tenant_token_rotate_failed',
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/tenants/:tenantId/status',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const status = String(req.body?.status ?? '').trim();
+      if (status !== 'active' && status !== 'disabled') {
+        res.status(400).json({ ok: false, error: 'invalid_tenant_status' });
+        return;
+      }
+      try {
+        const { setTenantStatus } = await import('./tenant-store.js');
+        await setTenantStatus(String(req.params.tenantId ?? ''), status);
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'tenant_status',
+          summary: `租户 ${String(req.params.tenantId ?? '')} 状态改为 ${status}`,
+        });
+        res.json({ ok: true });
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          error: sanitizeOpsSummary(error, 240) || 'tenant_status_failed',
+        });
+      }
+    },
+  );
+
 
   router.get(
     '/api/ops/observability/model-pool',
@@ -1030,7 +1198,8 @@ export function createOpsObservabilityRouter(): Router {
 
   router.post(
     '/api/ops/observability/incidents/:incidentKey/actions',
-    requireObservabilityAccess,
+    tenantScopeGate,
+    requireObservabilityAccessTenantAware,
     requireOpsMutationGuard,
     async (req: Request, res: Response) => {
       const incidentKey = String(req.params.incidentKey ?? '').trim();
@@ -1041,6 +1210,11 @@ export function createOpsObservabilityRouter(): Router {
       }
       if (!['acknowledge', 'assign', 'silence', 'reopen'].includes(action)) {
         res.status(400).json({ ok: false, error: 'invalid_incident_action' });
+        return;
+      }
+      // 租户只读视图不允许变更事故；只有管理员/SSO 操作者可执行。
+      if (req.opsTenantAccess) {
+        res.status(403).json({ ok: false, error: 'tenant_read_only' });
         return;
       }
       try {
