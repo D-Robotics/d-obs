@@ -4,3 +4,4 @@ dist/
 .env
 .env.*
 dist-server-build/
+node_modules
