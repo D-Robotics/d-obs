@@ -75,19 +75,15 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
   <div class="app-shell">
     <aside class="side-nav">
       <nav class="global-nav" aria-label="运营控制台模块">
-        <div class="nav-section">当前工作台</div>
         <a class="global-tab active" href="./ops-observability#overview" aria-current="page">可观测中心</a>
         <a class="global-tab" href="./">返回工作台</a>
       </nav>
-      <div class="nav-title">先看异常，再下钻</div>
       <nav class="module-tabs" aria-label="可观测中心模块">
-        <div class="nav-section">总览</div>
         <div class="nav-primary">
-          <button class="module-tab" data-view="overview" aria-controls="view-overview" title="判断生产是否影响用户，并查看当前待办">当前态势</button>
+          <button class="module-tab" data-view="overview" aria-controls="view-overview" title="判断生产是否影响用户，并查看当前待办">当前态势<span id="overviewCount" class="tab-count" title="进行中事故数" hidden>—</span></button>
         </div>
-        <div class="nav-title nav-title-secondary">按任务进入</div>
         <details class="nav-group" id="nav-group-core" data-nav-group="core">
-          <summary class="nav-section nav-section-toggle" aria-controls="nav-group-core-items"><span>处置与证据</span><span class="nav-section-meta">4 个模块</span></summary>
+          <summary class="nav-section-toggle" aria-controls="nav-group-core-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">处置与证据</span><span class="nav-group-alert" id="navCoreAlert" hidden></span></summary>
           <div class="nav-group-items" id="nav-group-core-items">
             <button class="module-tab" data-view="investigate" aria-controls="view-investigate" title="从异常、证据和影响范围定位事故">事故调查<span id="incidentCount" class="tab-count" title="进行中事故数">—</span></button>
             <button class="module-tab" data-view="alerts" aria-controls="view-alerts" title="维护告警规则、阈值和通知路由">告警策略<span id="ruleCount" class="tab-count">—</span></button>
@@ -96,7 +92,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           </div>
         </details>
         <details class="nav-group" id="nav-group-data" data-nav-group="data">
-          <summary class="nav-section nav-section-toggle" aria-controls="nav-group-data-items"><span>数据与资产</span><span class="nav-section-meta">3 个模块</span></summary>
+          <summary class="nav-section-toggle" aria-controls="nav-group-data-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">数据与资产</span></summary>
           <div class="nav-group-items" id="nav-group-data-items">
             <button class="module-tab" data-view="operator-metrics" aria-controls="view-operator-metrics" title="按天查看 token、新增用户、DAU、对话和 Agent Run">运营指标</button>
             <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据健康</button>
@@ -104,33 +100,19 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           </div>
         </details>
         <details class="nav-group" id="nav-group-learning" data-nav-group="learning">
-          <summary class="nav-section nav-section-toggle" aria-controls="nav-group-learning-items"><span>学习与进化</span><span class="nav-section-meta">2 个模块</span></summary>
+          <summary class="nav-section-toggle" aria-controls="nav-group-learning-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">学习与进化</span></summary>
           <div class="nav-group-items" id="nav-group-learning-items">
             <button class="module-tab" data-view="skill-loop" aria-controls="view-skill-loop" title="查看 Skill 埋点、运行反馈、候选审核和发布回流">Skill 数据闭环<span id="skillLoopCount" class="tab-count" title="待人工审核数量">—</span></button>
             <button class="module-tab" data-view="evolution" aria-controls="view-evolution" title="查看每日自我进化的证据、质量闸门和候选">每日自我进化<span id="evolutionCount" class="tab-count" title="待审核候选数量">—</span></button>
           </div>
         </details>
         <details class="nav-group" id="nav-group-advanced" data-nav-group="advanced">
-          <summary class="nav-section nav-section-toggle" aria-controls="nav-group-advanced-items"><span>系统配置</span><span class="nav-section-meta">2 个模块</span></summary>
+          <summary class="nav-section-toggle" aria-controls="nav-group-advanced-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">系统配置</span></summary>
           <div class="nav-group-items" id="nav-group-advanced-items">
             <button class="module-tab" data-view="model-pool" aria-controls="view-platform" title="查看模型池目标健康、路由优先级与网关容量">模型池</button>
             <button class="module-tab" data-view="platform" aria-controls="view-platform" title="低频全局配置，改动会影响巡检">系统设置</button>
           </div>
         </details>
-      </nav>
-      <nav class="mobile-module-nav" aria-label="移动端可观测模块">
-        <button class="mobile-module-tab" type="button" data-view="overview">态势</button>
-        <button class="mobile-module-tab" type="button" data-view="investigate">事故</button>
-        <button class="mobile-module-tab" type="button" data-view="alerts">告警</button>
-        <button class="mobile-module-tab" type="button" data-view="traces">Trace</button>
-        <button class="mobile-module-tab" type="button" data-view="service-levels">SLO</button>
-        <button class="mobile-module-tab" type="button" data-view="operator-metrics">运营</button>
-        <button class="mobile-module-tab" type="button" data-view="data-health">数据健康</button>
-        <button class="mobile-module-tab" type="button" data-view="database">数据库</button>
-        <button class="mobile-module-tab" type="button" data-view="skill-loop">Skill</button>
-        <button class="mobile-module-tab" type="button" data-view="evolution">进化</button>
-        <button class="mobile-module-tab" type="button" data-view="model-pool">模型池</button>
-        <button class="mobile-module-tab" type="button" data-view="platform">设置</button>
       </nav>
     </aside>
     <main id="mainContent" tabindex="-1">
@@ -138,7 +120,6 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div class="page-head-copy"><div id="pageKicker" class="page-kicker">运营 / 可观测中心</div><h1 id="pageTitle">生产可观测与告警</h1><p id="pageIntro" class="page-intro">先判断生产影响，再处理事故、维护告警，最后下钻到链路证据。</p><p id="fresh" role="status" aria-live="polite">正在读取策略与巡检状态…</p></div>
       <div class="page-head-actions"><span class="env-pill">production · 47.110</span><button id="runChecks" class="btn" type="button">立即评估</button><button id="refresh" class="btn" type="button">刷新数据</button></div>
     </div>
-    <div class="workflow-guide" role="note" aria-label="可观测中心使用路径"><strong>推荐路径</strong><a href="#overview">1 看态势</a><span aria-hidden="true">→</span><a href="#investigate">2 查事故</a><span aria-hidden="true">→</span><a href="#alerts">3 管策略</a><span aria-hidden="true">→</span><a href="#traces">4 查证据</a><small>数据健康、数据库与系统设置属于低频能力</small></div>
     <div id="overviewScopeBar" class="scope-bar" role="region" aria-label="总览与 Trace 共用观察范围">
       <div class="scope-copy"><strong>可靠性证据范围</strong><span>production</span><small>仅总览 / Trace 继承</small></div>
       <label class="scope-control" for="overviewWindow">时间窗口<select id="overviewWindow" aria-label="选择总览与 Trace 时间窗口"><option value="2">最近 2 小时</option><option value="24" selected>最近 24 小时</option><option value="168">最近 7 天</option></select></label>
@@ -146,7 +127,6 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     </div>
     <div class="global-command-bar" role="region" aria-label="快速导航">
       <button id="globalSearchTrigger" class="global-search-trigger" type="button" aria-haspopup="dialog" aria-controls="commandPaletteBackdrop"><span class="global-search-copy"><strong>快速搜索</strong><small>指标、事故、Trace、SLO 或任意模块</small></span><kbd>⌘ K</kbd></button>
-      <div class="quick-actions" aria-label="常用入口"><button class="quick-action" type="button" data-quick-view="overview">当前态势</button><button class="quick-action" type="button" data-quick-view="investigate">调查事故</button><button class="quick-action" type="button" data-quick-view="alerts">告警规则</button><button class="quick-action" type="button" data-quick-view="traces">Trace 证据</button></div>
       <div class="workspace-facts" aria-label="工作区状态"><span id="globalIncidentFact" class="workspace-fact"><strong>— 个进行中</strong></span><span id="globalFreshnessFact" class="workspace-fact">等待评估</span><span id="globalViewFact" class="workspace-fact">当前视图</span></div>
     </div>
     <section id="view-overview" class="view hidden" aria-labelledby="overviewHeading">

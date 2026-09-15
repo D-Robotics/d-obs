@@ -194,7 +194,9 @@ export const OPS_OBSERVABILITY_SCRIPT_INVESTIGATION = `
         const impactPanel=make('details','panel investigation-side investigation-disclosure');const impactSummary=make('summary','investigation-disclosure-summary');add(impactSummary,'strong','','异常影响范围');add(impactSummary,'span','', '点击维度即可聚焦，再用 Esc 恢复推荐视图');impactPanel.appendChild(impactSummary);renderImpactFacets(impactPanel,events.filter(isInvestigationProblem),o);sideStack.appendChild(impactPanel);grid.appendChild(sideStack);root.appendChild(grid);renderTrendPanel(root,o);
       }
       function updateIncidentNavigationCount(o){
-        const badge=$('incidentCount');if(!badge)return;const incidents=Array.isArray(o&&o.incidents)?o.incidents:[];const active=incidents.filter(item=>['open','acknowledged','silenced'].includes(item.status));badge.textContent=String(active.length);badge.hidden=active.length===0;badge.title=active.length+' 个进行中事故';const button=badge.closest('[data-view="investigate"]');if(button)button.setAttribute('aria-label',active.length?('事故调查，'+active.length+' 个进行中事故'):'事故调查，当前无进行中事故')
+        const incidents=Array.isArray(o&&o.incidents)?o.incidents:[];const active=incidents.filter(item=>['open','acknowledged','silenced'].includes(item.status));
+        const badge=$('incidentCount');if(badge){badge.textContent=String(active.length);badge.hidden=active.length===0;badge.title=active.length+' 个进行中事故';const button=badge.closest('[data-view="investigate"]');if(button)button.setAttribute('aria-label',active.length?('事故调查，'+active.length+' 个进行中事故'):'事故调查，当前无进行中事故')}
+        if(typeof setNavGroupAlerts==='function')setNavGroupAlerts(o)
       }
       function renderInvestigationStatus(toolbar,o){
         if(!state.investigationLoading&&!state.investigationError)return;
