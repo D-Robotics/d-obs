@@ -311,7 +311,8 @@ function auditActor(value: string): string {
 }
 
 let incidentSchemaReady: Promise<void> | null = null;
-async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
+/** 探针 ingest 复用同一份告警域 bootstrap（模块自身不 import ingest，无环）。 */
+export async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
   if (!incidentSchemaReady) {
     incidentSchemaReady = (async () => {
       await p.query(`

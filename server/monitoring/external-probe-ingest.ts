@@ -15,6 +15,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { sanitizeOpsSummary } from './ops-event-store.js';
+import { ensureIncidentOperationsSchema } from './observability-store.js';
 import { findTenantByToken } from './tenant-store.js';
 
 const TOKEN_PATH =
@@ -177,20 +178,29 @@ async function ensureTenantColumns(p: Pool): Promise<void> {
        primary key (tenant_id, source)
      )`,
   );
-  // 旧单列主键部署升级：删除以 source 为唯一键的约束（单列 PK 或唯一
-  // 索引），再建 (tenant_id, source) 复合主键。幂等：已是复合主键时
-  // drop/add 都不生效。
+  // 旧部署升级：表可能以旧形态存在（无 tenant_id 列，主键可能是单列
+  // source、也可能整个没有主键）。先补列，再处理主键，顺序不能反：
+  // 复合 PK 引用 tenant_id，列缺失时 add primary key 会失败。
+  await p.query(
+    `alter table public.studio_external_probe_status
+       add column if not exists tenant_id text not null default 'platform'`,
+  );
   await p
     .query(
-      `select conname from pg_catalog.pg_constraint
+      `select conname, pg_get_constraintdef(oid) as def
+         from pg_catalog.pg_constraint
         where conrelid = 'public.studio_external_probe_status'::regclass
           and contype = 'p'`,
     )
     .then(async (result) => {
-      const names = result.rows.map((row) => String(row.conname));
-      const singleColumnPk = names.length === 1 && /studio_external_probe_status/.test(names[0]);
-      if (!singleColumnPk) return;
-      await p.query(`alter table public.studio_external_probe_status drop constraint ${names[0]}`);
+      for (const row of result.rows) {
+        const name = String(row.conname);
+        const def = String(row.def);
+        // 只删不含 tenant_id 的旧单列主键；复合主键保留。
+        if (/studio_external_probe_status/.test(name) && !def.includes('tenant_id')) {
+          await p.query(`alter table public.studio_external_probe_status drop constraint ${name}`);
+        }
+      }
     })
     .catch(() => {});
   await p
@@ -199,41 +209,24 @@ async function ensureTenantColumns(p: Pool): Promise<void> {
          add primary key (tenant_id, source)`,
     )
     .catch((error) => {
-      // 已存在同名复合主键时忽略（42P10 之前的部署或并发建表）。
-      if ((error as { code?: string }).code === '42P10') return undefined;
-      if ((error as { code?: string }).code === '42P07') return undefined;
+      // 已有主键时忽略：42P10 已建、42P16 multiple primary keys。
+      const code = (error as { code?: string }).code;
+      if (code === '42P10' || code === '42P16' || code === '42P07') return undefined;
       throw error;
     });
   await p.query(
     `create index if not exists studio_external_probe_status_tenant_idx
        on public.studio_external_probe_status (tenant_id)`,
   );
-  await p.query(
-    `alter table public.studio_alert_checks add column if not exists tenant_id text not null default 'platform'`,
-  );
-  await p.query(
-    `create index if not exists studio_alert_checks_tenant_idx
-       on public.studio_alert_checks (tenant_id)`,
-  );
-  await p.query(
-    `alter table public.studio_alert_incidents add column if not exists tenant_id text not null default 'platform'`,
-  );
-  await p.query(
-    `create index if not exists studio_alert_incidents_tenant_idx
-       on public.studio_alert_incidents (tenant_id)`,
-  );
-  await p.query(
-    `alter table public.studio_alert_notifications add column if not exists tenant_id text not null default 'platform'`,
-  );
-  await p.query(
-    `create index if not exists studio_alert_notifications_tenant_idx
-       on public.studio_alert_notifications (tenant_id)`,
-  );
 }
 
 /**
  * 按上报身份写入探针状态/检查/事故行。平台身份保持裸 key（向后兼容），
  * 租户身份写 `t.<tid>.<key>`，同时带 tenant_id 列，读侧按租户过滤。
+ *
+ * 写入前先完成两份 bootstrap：ensureTenantColumns 负责拨测状态表（含旧形态
+ * 升级），ensureIncidentOperationsSchema 负责告警域三表（裸库上探针可能先于
+ * 看板启动，探针自身也写 checks/incidents，不能假定表已存在）。
  */
 export async function recordExternalProbeReport(
   report: ExternalProbeReport,
@@ -242,6 +235,7 @@ export async function recordExternalProbeReport(
   const tenantId = identity.scopeId;
   const p = await pool();
   await ensureTenantColumns(p);
+  await ensureIncidentOperationsSchema(p);
   await p.query(
     `insert into public.studio_external_probe_status (tenant_id, source, reported_at, status, checks)
      values ($1, $2, $3, $4, $5::jsonb)
