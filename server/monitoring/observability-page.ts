@@ -45,6 +45,10 @@ import {
   OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR,
 } from './observability-page-mobile-tour.js';
 import { OPS_OBSERVABILITY_PRODUCT_STYLE } from './observability-page-product-style.js';
+import {
+  OPS_OBSERVABILITY_TENANTS_STYLE,
+  OPS_OBSERVABILITY_SCRIPT_TENANTS,
+} from './observability-page-tenants.js';
 
 /**
  * 独立生产可观测与告警工作台。
@@ -66,7 +70,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       }
     })();
   </script>
-  <style>${OPS_OBSERVABILITY_STYLE + '\n' + OPS_OBSERVABILITY_SLO_STYLE + '\n' + OPS_OBSERVABILITY_UNIFIED_STYLE + '\n' + OPS_OBSERVABILITY_INVESTIGATION_STYLE + '\n' + OPS_OBSERVABILITY_COPILOT_STYLE + '\n' + OPS_OBSERVABILITY_TRACES_STYLE + '\n' + OPS_OBSERVABILITY_DATABASE_STYLE + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_STYLE + '\n' + OPS_OBSERVABILITY_LEARNING_STYLE + '\n' + OPS_OBSERVABILITY_OPERATOR_METRICS_STYLE + '\n' + OPS_OBSERVABILITY_COCKPIT_STYLE + '\n' + OPS_OBSERVABILITY_UX_STYLE + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_STYLE + '\n.detail-sections{margin-top:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}.detail-summary{cursor:pointer;display:flex;align-items:center;gap:9px;padding:12px 16px;color:var(--text);font-size:12px}.detail-summary span{color:var(--muted);font-weight:400}.detail-sections[open]>.detail-summary{border-bottom:1px solid var(--line)}.detail-sections>*:not(.detail-summary){margin:12px}.metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.model-pool-toolbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}.model-pool-toolbar h2{margin:0 0 4px}.model-pool-toolbar p{margin:0;color:var(--muted);font-size:11px}.model-pool-editor{padding:16px}.model-pool-editor .section-head{margin-bottom:12px}.model-pool-editor .fields{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}.model-pool-editor .field.full{grid-column:1/-1}.model-pool-summary{margin-bottom:12px}' + OPS_OBSERVABILITY_PRODUCT_STYLE + '\n' + OPS_OBSERVABILITY_MOBILE_TOUR_STYLE}</style>
+  <style>${OPS_OBSERVABILITY_STYLE + '\n' + OPS_OBSERVABILITY_SLO_STYLE + '\n' + OPS_OBSERVABILITY_UNIFIED_STYLE + '\n' + OPS_OBSERVABILITY_INVESTIGATION_STYLE + '\n' + OPS_OBSERVABILITY_COPILOT_STYLE + '\n' + OPS_OBSERVABILITY_TRACES_STYLE + '\n' + OPS_OBSERVABILITY_DATABASE_STYLE + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_STYLE + '\n' + OPS_OBSERVABILITY_LEARNING_STYLE + '\n' + OPS_OBSERVABILITY_OPERATOR_METRICS_STYLE + '\n' + OPS_OBSERVABILITY_COCKPIT_STYLE + '\n' + OPS_OBSERVABILITY_UX_STYLE + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_STYLE + '\n.detail-sections{margin-top:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}.detail-summary{cursor:pointer;display:flex;align-items:center;gap:9px;padding:12px 16px;color:var(--text);font-size:12px}.detail-summary span{color:var(--muted);font-weight:400}.detail-sections[open]>.detail-summary{border-bottom:1px solid var(--line)}.detail-sections>*:not(.detail-summary){margin:12px}.metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.model-pool-toolbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}.model-pool-toolbar h2{margin:0 0 4px}.model-pool-toolbar p{margin:0;color:var(--muted);font-size:11px}.model-pool-editor{padding:16px}.model-pool-editor .section-head{margin-bottom:12px}.model-pool-editor .fields{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}.model-pool-editor .field.full{grid-column:1/-1}.model-pool-summary{margin-bottom:12px}' + OPS_OBSERVABILITY_PRODUCT_STYLE + '\n' + OPS_OBSERVABILITY_MOBILE_TOUR_STYLE + '\n' + OPS_OBSERVABILITY_TENANTS_STYLE}</style>
 </head>
 <body class="ops-observability">
   <a class="skip-link" href="#mainContent">跳到主要内容</a>
@@ -111,6 +115,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <summary class="nav-section-toggle" aria-controls="nav-group-advanced-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">系统配置</span></summary>
           <div class="nav-group-items" id="nav-group-advanced-items">
             <button class="module-tab" data-view="model-pool" aria-controls="view-platform" title="查看模型池目标健康、路由优先级与网关容量">模型池</button>
+            <button class="module-tab" data-view="tenants" aria-controls="view-tenants" title="注册接入团队、轮换探针 token、停用或启用租户">租户管理</button>
             <button class="module-tab" data-view="platform" aria-controls="view-platform" title="低频全局配置，改动会影响巡检">系统设置</button>
           </div>
         </details>
@@ -169,6 +174,17 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <details id="traces-agent" class="detail-sections"><summary class="detail-summary"><strong>Agent Trace</strong><span>调用树、token 成本与工具调用</span></summary>__LANGFUSE_DASHBOARD_EMBED__</details>
       <details id="traces-session" class="detail-sections"><summary class="detail-summary"><strong>会话 Trace</strong><span>按 sessionId 查看 run、模型、工具与审批</span></summary><div class="right">数据按登录账号隔离 · <a href="./session-trace" target="_blank" rel="noopener" style="color:inherit">新窗口打开</a></div><div id="sessionTraceEmbed"></div></details>
     </section>
+    <section id="view-tenants" class="view hidden" aria-labelledby="tenantsHeading">
+      <div class="view-head"><div><div class="eyebrow">可观测中心 / 租户管理</div><h2 id="tenantsHeading">团队接入与探针凭据</h2><p>注册租户、轮换探针 token、停用或启用团队；操作都会进入审计记录。</p></div><div class="right">token 明文仅展示一次</div></div>
+      <details class="detail-sections" open><summary class="detail-summary"><strong>创建租户</strong><span>接入新团队；token 创建后立即生成一次</span></summary>
+        <div class="tenant-toolbar">
+          <label class="field">租户 ID<input id="newTenantId" type="text" autocomplete="off" spellcheck="false" placeholder="小写字母开头，2–40 字符" /></label>
+          <label class="field">显示名称<input id="newTenantName" type="text" autocomplete="off" placeholder="团队或项目名，可留空" /></label>
+          <button id="createTenantBtn" class="btn primary" type="button">创建租户</button>
+        </div>
+      </details>
+      <details class="detail-sections" open><summary class="detail-summary"><strong>租户列表</strong><span>状态、最近上报时间与凭据操作</span></summary><div id="tenantsContent"></div></details>
+    </section>
     <section id="view-platform" class="view hidden" aria-labelledby="platformHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 系统设置</div><h2 id="platformHeading">全局巡检与运行配置</h2><p>低频高级配置；改动会影响全局巡检、模型路由与通知。</p></div><div class="right">敏感配置只保存在服务器</div></div>
       <details id="platform-model" class="detail-sections"><summary class="detail-summary"><strong>模型池</strong><span>运行状态、容量与模型配置</span></summary><div id="modelPoolContent"></div></details>
@@ -204,6 +220,6 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     <section class="command-palette"><div class="command-palette-head"><div class="command-palette-head-copy"><h2 id="commandPaletteTitle">跳转到可观测模块</h2><p>按任务进入，当前上下文和登录权限保持不变。</p></div><button id="closeCommandPalette" class="btn command-palette-close" type="button">关闭</button></div><label class="command-search-wrap" aria-label="搜索模块"><input id="commandPaletteSearch" class="command-search" type="search" autocomplete="off" placeholder="搜索事故、告警、Trace、SLO…" /></label><div id="commandPaletteResults" class="command-results" role="listbox" aria-label="可观测模块结果"></div><div class="command-palette-foot"><span><kbd>↑</kbd><kbd>↓</kbd>选择</span><span><kbd>Enter</kbd>打开</span><span><kbd>Esc</kbd>关闭</span></div></section>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-  <script>${OPS_OBSERVABILITY_SCRIPT_A + '\n' + OPS_OBSERVABILITY_SCRIPT_INVESTIGATION + '\n' + OPS_OBSERVABILITY_SCRIPT_USABILITY + '\n' + OPS_OBSERVABILITY_SCRIPT_COPILOT + '\n' + OPS_OBSERVABILITY_SCRIPT_TRACES + '\n' + OPS_OBSERVABILITY_SCRIPT_DATABASE + '\n' + OPS_OBSERVABILITY_SCRIPT_DATABASE_GRAPH + '\n' + OPS_OBSERVABILITY_SCRIPT_OVERVIEW + '\n' + OPS_OBSERVABILITY_SCRIPT_MODEL_POOL + '\n' + OPS_OBSERVABILITY_SCRIPT_SLO + '\n' + OPS_OBSERVABILITY_SCRIPT_OBJECTS + '\n' + OPS_OBSERVABILITY_SCRIPT_B + '\n' + OPS_OBSERVABILITY_SCRIPT_OPERATOR_METRICS + '\n' + OPS_OBSERVABILITY_SCRIPT_LEARNING + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_SCRIPT + '\n' + OPS_OBSERVABILITY_COCKPIT_SCRIPT + '\n' + OPS_OBSERVABILITY_SCRIPT_UX + '\n' + OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT + '\n' + OPS_OBSERVABILITY_SCRIPT_C}</script>
+  <script>${OPS_OBSERVABILITY_SCRIPT_A + '\n' + OPS_OBSERVABILITY_SCRIPT_INVESTIGATION + '\n' + OPS_OBSERVABILITY_SCRIPT_USABILITY + '\n' + OPS_OBSERVABILITY_SCRIPT_COPILOT + '\n' + OPS_OBSERVABILITY_SCRIPT_TRACES + '\n' + OPS_OBSERVABILITY_SCRIPT_DATABASE + '\n' + OPS_OBSERVABILITY_SCRIPT_DATABASE_GRAPH + '\n' + OPS_OBSERVABILITY_SCRIPT_OVERVIEW + '\n' + OPS_OBSERVABILITY_SCRIPT_MODEL_POOL + '\n' + OPS_OBSERVABILITY_SCRIPT_SLO + '\n' + OPS_OBSERVABILITY_SCRIPT_OBJECTS + '\n' + OPS_OBSERVABILITY_SCRIPT_B + '\n' + OPS_OBSERVABILITY_SCRIPT_OPERATOR_METRICS + '\n' + OPS_OBSERVABILITY_SCRIPT_LEARNING + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_SCRIPT + '\n' + OPS_OBSERVABILITY_COCKPIT_SCRIPT + '\n' + OPS_OBSERVABILITY_SCRIPT_UX + '\n' + OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR + '\n' + OPS_OBSERVABILITY_SCRIPT_TENANTS + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT + '\n' + OPS_OBSERVABILITY_SCRIPT_C}</script>
 </body>
 </html>`;

@@ -30,6 +30,7 @@ export const OPS_OBSERVABILITY_SCRIPT_UX = `
         {view:'database',label:'数据库',hint:'中心 PG 运行状态与只读资产',icon:'▥',group:'数据'},
         {view:'skill-loop',label:'Skill 数据闭环',hint:'采集、反馈、审核与发布回流',icon:'↻',group:'学习'},
         {view:'evolution',label:'每日自我进化',hint:'候选证据与质量闸门',icon:'✦',group:'学习'},
+        {view:'tenants',label:'租户管理',hint:'团队接入、探针 token 轮换与停启用',icon:'⧉',group:'设置'},
         {view:'model-pool',label:'模型池',hint:'模型目标健康、路由优先级与替换',icon:'◈',group:'设置'},
         {view:'platform',label:'系统设置',hint:'评估器、Canary 与全局运行配置',icon:'⚙',group:'设置'}
       ];
