@@ -1,0 +1,12 @@
+[Unit]
+Description=d-obs tenant probe run for %i (single shot)
+After=network-online.target d-obs.service
+
+[Service]
+Type=oneshot
+# %i 为项目名（sim2real / mujoco-lab / microduck），端口在 EnvironmentFile
+# 中按项目配置；token 文件按项目独立存放在 /var/lib/d-obs/probes/。
+EnvironmentFile=/etc/d-obs/probes/%i.env
+Environment=RDK_RL_PROBE_REPORT_URL=http://127.0.0.1:18093
+Environment=RDK_RL_PROBE_AS_TENANT=1
+ExecStart=/opt/node-v22.19.0-linux-x64/bin/node /opt/d-obs/tools/rl-platform-probe.mjs

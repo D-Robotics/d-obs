@@ -37,6 +37,12 @@ ssh root@47.110.142.255 'cd /opt/d-obs/releases && mkdir <release-id> \
   && systemctl restart d-obs && sleep 3 && systemctl is-active d-obs'
 ```
 
+## 团队接入
+
+线上项目以租户身份接入拨测监控，流程见 [`tenant-onboarding.md`](./tenant-onboarding.md)；
+探针 unit 文件在 `ops/probes/`（`tenant-probe@.service` / `tenant-probe@.timer`），
+env 文件在服务器 `/etc/d-obs/probes/<project>.env`。
+
 ## 验证清单
 
 1. 本机 health：`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18093/ops-observability` = 200

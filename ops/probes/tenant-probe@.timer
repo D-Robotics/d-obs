@@ -1,0 +1,11 @@
+[Unit]
+Description=Run d-obs tenant probe for %i every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+RandomizedDelaySec=0
+Persistent=false
+
+[Install]
+WantedBy=timers.target
