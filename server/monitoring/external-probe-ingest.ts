@@ -177,10 +177,6 @@ async function ensureTenantColumns(p: Pool): Promise<void> {
        primary key (tenant_id, source)
      )`,
   );
-  await p.query(
-    `alter table public.studio_external_probe_status
-       add column if not exists tenant_id text not null default 'platform'`,
-  );
   // 旧单列主键部署升级：删除以 source 为唯一键的约束（单列 PK 或唯一
   // 索引），再建 (tenant_id, source) 复合主键。幂等：已是复合主键时
   // drop/add 都不生效。

@@ -336,10 +336,6 @@ async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
     `alter table public.studio_alert_incidents add column if not exists silence_reason text null`,
     `alter table public.studio_alert_incidents add column if not exists tenant_id text not null default 'platform'`,
     `create index if not exists studio_alert_incidents_tenant_idx on public.studio_alert_incidents (tenant_id)`,
-    `alter table public.studio_alert_checks add column if not exists tenant_id text not null default 'platform'`,
-    `create index if not exists studio_alert_checks_tenant_idx on public.studio_alert_checks (tenant_id)`,
-    `alter table public.studio_alert_notifications add column if not exists tenant_id text not null default 'platform'`,
-    `create index if not exists studio_alert_notifications_tenant_idx on public.studio_alert_notifications (tenant_id)`,
     `create index if not exists studio_alert_incidents_silence_idx on public.studio_alert_incidents (silence_until) where status = 'silenced'`,
     `create table if not exists public.studio_alert_incident_activity (
       id bigserial primary key,
@@ -370,6 +366,8 @@ async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
       failure_streak int not null default 0,
       success_streak int not null default 0
     )`,
+    `alter table public.studio_alert_checks add column if not exists tenant_id text not null default 'platform'`,
+    `create index if not exists studio_alert_checks_tenant_idx on public.studio_alert_checks (tenant_id)`,
     `create index if not exists studio_alert_checks_checked_idx
        on public.studio_alert_checks (checked_at desc)`,
     `create table if not exists public.studio_alert_notifications (
@@ -383,6 +381,8 @@ async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
       error text null,
       attempt_count int not null default 1
     )`,
+    `alter table public.studio_alert_notifications add column if not exists tenant_id text not null default 'platform'`,
+    `create index if not exists studio_alert_notifications_tenant_idx on public.studio_alert_notifications (tenant_id)`,
     `create index if not exists studio_alert_notifications_occurred_idx
        on public.studio_alert_notifications (occurred_at desc)`,
       ]) {

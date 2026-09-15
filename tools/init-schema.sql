@@ -150,3 +150,15 @@ create index if not exists studio_remediation_runs_environment_started_idx
 
 -- 控制面数据：仅服务器连接角色可写；直连自有库的部署至少启用 RLS。
 alter table public.studio_remediation_runs enable row level security;
+
+-- 遥测治理 schema（同源拷贝自 rdstudio-web-master
+-- supabase/migrations/2026-08-26-telemetry-data-governance.sql）：
+-- 提供 run/trace 受保护读取所需的 payload 授权、审计、tombstone
+-- 与保留清理函数 cleanup_expired_studio_telemetry。文件本体在
+-- telemetry-governance-schema.sql，修改须回源仓库同步，禁止单侧漂移。
+\ir telemetry-governance-schema.sql
+
+-- 链路/Run 基础表（spans、receipts、conflicts、backend_mappings、
+-- agent_run_observability）：governance scope discovery 与保留清理函数
+-- 依赖这些表存在（缺失会导致治理 runtime 恢复门失败）。
+\ir unified-observability-schema.sql

@@ -25,6 +25,7 @@ import {
   resolveProbeReportIdentity,
 } from './monitoring/external-probe-ingest.js';
 import { createTenant } from './monitoring/tenant-store.js';
+import { startTelemetryGovernanceRuntime } from './observability/governance-runtime-service.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -102,6 +103,13 @@ app.post('/api/health/external-probe-report', async (req, res) => {
 app.use(createOpsObservabilityRouter());
 
 const port = Number(process.env.PORT ?? 47110);
+
+// Trace / Run 受保护读取要等治理运行时把保留策略与 tombstone 重放完
+// （readiness 'ready'）才放开。standalone 入口此前从不启动它，导致链路追踪
+// 视图永远返回空页。fail-open：启动失败只保持 trace 域关闭，不阻断工作台。
+void startTelemetryGovernanceRuntime().catch((error) => {
+  console.warn('[d-obs] telemetry governance runtime failed to start:', String(error));
+});
 const server = app.listen(port, () => {
   console.log(`[d-obs] observability workbench listening on http://127.0.0.1:${port}/ops-observability`);
 });
