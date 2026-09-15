@@ -70,7 +70,9 @@ export async function externalProbeTokenMatches(provided: unknown): Promise<bool
 
 /**
  * 解析一次上报的身份：平台 token → platform；否则按租户 token 哈希查找。
- * 返回 null 表示两类凭证都不匹配（401）。
+ * 返回 null 表示两类凭证都不匹配（401）。租户查找失败（数据库不可用等）
+ * 视为凭证无法验证，fail-closed 返回 null，不得让异常穿透到 Express 的
+ * async handler 造成进程崩溃。
  */
 export async function resolveProbeReportIdentity(
   platformHeader: unknown,
@@ -80,8 +82,13 @@ export async function resolveProbeReportIdentity(
   if (platform && TOKEN_PATTERN.test(platform) && (await platformTokenMatches(platform))) {
     return { scopeId: 'platform', source: '106.53' };
   }
-  const tenant = await findTenantByToken(String(tenantHeader ?? '').trim());
-  if (tenant) return { scopeId: tenant.tenantId, source: `tenant:${tenant.tenantId}` };
+  try {
+    const tenant = await findTenantByToken(String(tenantHeader ?? '').trim());
+    if (tenant) return { scopeId: tenant.tenantId, source: `tenant:${tenant.tenantId}` };
+  } catch {
+    // 租户 token 校验依赖数据库；数据库不可用时无法区分"错 token"和
+    // "暂时查不到"，一律拒绝该凭证。
+  }
   return null;
 }
 

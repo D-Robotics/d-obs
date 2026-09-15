@@ -90,7 +90,11 @@ export async function resolveTenantTokenAccess(
   req: Request,
 ): Promise<ResolvedTenantAccess | null> {
   const { findTenantByToken } = await import('./tenant-store.js');
-  const tenant = await findTenantByToken(String(req.header('x-tenant-token') ?? '').trim());
+  // 数据库不可用时凭证无法验证，fail-closed 返回 null（调用方按 401 处理），
+  // 不让异常穿透 async handler 造成进程崩溃。
+  const tenant = await findTenantByToken(String(req.header('x-tenant-token') ?? '').trim()).catch(
+    () => null,
+  );
   return tenant ? { tenantId: tenant.tenantId, displayName: tenant.displayName } : null;
 }
 

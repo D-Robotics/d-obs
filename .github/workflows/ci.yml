@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # 冒烟：无数据库环境也能正常启动并响应（优雅降级契约）。
+      - name: Boot smoke test (no database)
+        run: |
+          npx tsx server/main.ts &
+          server_pid=$!
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:47110/ops-observability > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf -o /dev/null http://127.0.0.1:47110/ops-observability
+          kill $server_pid

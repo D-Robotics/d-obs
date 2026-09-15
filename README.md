@@ -231,10 +231,17 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 
 ```bash
 npm run typecheck            # tsc --noEmit 全闭包类型检查
+npm test                     # 核心回归测试（告警状态机、鉴权、租户、探针上报）
 npm start                    # 工作台 + 全部 JSON API（含模型池探测/路由/替换）
 npm run worker               # 告警评估循环（另开一个进程）
 npm run worker:check-config  # 校验告警配置
 ```
+
+测试用 Node 内置 test runner（`node --import tsx --test`），零额外测试框架
+依赖；覆盖告警状态机（Pending→open→escalated/reminder→resolved、unknown
+不误恢复）、运营鉴权 fail-closed 语义、租户 ID/token 规则、探针上报解析，
+以及"数据库不可用时不崩溃"的回归。CI（`.github/workflows/ci.yml`）在每次
+push/PR 时跑 typecheck + test + 无数据库冒烟启动。
 
 进程模型：`npm start`（Web 服务）+ `npm run worker`（评估循环）双进程，共享同一
 数据库。行动环/自愈的执行由 worker 按白名单剧本派生，不阻塞 Web 进程。
