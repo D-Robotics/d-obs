@@ -175,8 +175,8 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <details id="traces-session" class="detail-sections"><summary class="detail-summary"><strong>会话 Trace</strong><span>按 sessionId 查看 run、模型、工具与审批</span></summary><div class="right">数据按登录账号隔离 · <a href="./session-trace" target="_blank" rel="noopener" style="color:inherit">新窗口打开</a></div><div id="sessionTraceEmbed"></div></details>
     </section>
     <section id="view-tenants" class="view hidden" aria-labelledby="tenantsHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 租户管理</div><h2 id="tenantsHeading">团队接入与探针凭据</h2><p>注册租户、轮换探针 token、停用或启用团队；操作都会进入审计记录。</p></div><div class="right">token 明文仅展示一次</div></div>
-      <details class="detail-sections" open><summary class="detail-summary"><strong>创建租户</strong><span>接入新团队；token 创建后立即生成一次</span></summary>
+      <div class="view-head"><div><div class="eyebrow">可观测中心 / 租户管理</div><h2 id="tenantsHeading">团队接入与探针凭据</h2><p>注册租户、签发与轮换探针 token、停用或启用团队；所有操作均写入审计日志。</p></div><div class="right">探针 token 仅显示一次</div></div>
+      <details class="detail-sections" open><summary class="detail-summary"><strong>创建租户</strong><span>为新团队创建租户并签发探针 token</span></summary>
         <div class="tenant-toolbar">
           <label class="field">租户 ID<input id="newTenantId" type="text" autocomplete="off" spellcheck="false" placeholder="小写字母开头，2–40 字符" /></label>
           <label class="field">显示名称<input id="newTenantName" type="text" autocomplete="off" placeholder="团队或项目名，可留空" /></label>

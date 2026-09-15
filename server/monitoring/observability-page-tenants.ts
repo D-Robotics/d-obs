@@ -35,9 +35,9 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         const root=$('tenantsContent');
         if(!root)return;
         root.replaceChildren();
-        if(tenantsState.error){root.appendChild(make('div','empty','租户列表加载失败：'+friendlyError(tenantsState.error)+'；请确认中心库可用后重试。'));return}
+        if(tenantsState.error){root.appendChild(make('div','empty','租户列表加载失败：'+friendlyError(tenantsState.error)+'。'));return}
         const list=Array.isArray(tenantsState.list)?tenantsState.list:null;
-        if(list===null){root.appendChild(make('div','empty','正在读取租户列表…'));return}
+        if(list===null){root.appendChild(make('div','empty','正在加载租户列表…'));return}
         if(tenantsState.tokenResult){
           const box=make('div','tenant-token-result');
           add(box,'strong','',tenantsState.tokenResult.label);
@@ -46,12 +46,12 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
           const copy=add(box,'button','btn','复制 token');
           copy.type='button';
           copy.addEventListener('click',async()=>{
-            try{await navigator.clipboard.writeText(tenantsState.tokenResult.token);toast('租户 token 已复制')}catch{toast('复制失败，请手动选择文本',false)}
+            try{await navigator.clipboard.writeText(tenantsState.tokenResult.token);toast('探针 token 已复制')}catch{toast('复制失败，请手动复制',false)}
           });
-          add(box,'div','hint','token 明文仅本次展示；数据库只保存哈希，离开此面板后无法找回，请立即保存到接入方的凭据管理。');
+          add(box,'div','hint','系统仅保存 token 摘要，本页关闭后无法再次查看；请立即保存至接入方的凭据存储。');
           root.appendChild(box);
         }
-        if(!list.length){root.appendChild(make('div','tenant-empty','还没有注册任何租户。接入新团队时在上方创建；token 会立即生成一次。'));return}
+        if(!list.length){root.appendChild(make('div','tenant-empty','暂无租户。新团队接入时，可通过上方表单创建租户并签发探针 token。'));return}
         const grid=make('div','tenant-grid');
         const head=make('div','tenant-row head');
         ['租户','名称','状态','最近上报','操作'].forEach(label=>add(head,'div','',label));
@@ -69,11 +69,11 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
           const actions=make('div','tenant-actions');
           const rotate=add(actions,'button','btn','轮换 token');
           rotate.type='button';
-          rotate.title='作废旧 token 并生成新 token；接入方探针需同步更新';
+          rotate.title='旧 token 立即失效并签发新 token；接入方需同步更新';
           rotate.addEventListener('click',()=>rotateTenantToken(item.tenantId,rotate));
           const statusToggle=add(actions,'button','btn',item.status==='disabled'?'启用':'停用');
           statusToggle.type='button';
-          statusToggle.title=item.status==='disabled'?'恢复该租户的拨测上报':'暂停该租户的上报与只读视图';
+          statusToggle.title=item.status==='disabled'?'恢复该团队的拨测上报':'暂停该团队的拨测上报与只读视图';
           statusToggle.addEventListener('click',()=>setTenantStatus(item.tenantId,item.status==='disabled'?'active':'disabled',statusToggle));
           row.appendChild(actions);
           grid.appendChild(row);
@@ -98,7 +98,7 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         const button=$('createTenantBtn');
         const id=(idInput&&idInput.value||'').trim();
         const name=(nameInput&&nameInput.value||'').trim();
-        if(!id){toast('请填写租户 ID（小写字母开头，2–40 字符）',false);if(idInput)idInput.focus();return}
+        if(!id){toast('请输入租户 ID：小写字母开头，2–40 字符',false);if(idInput)idInput.focus();return}
         if(!button)return;
         button.disabled=true;button.textContent='创建中…';
         try{
@@ -107,7 +107,7 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
           if(idInput)idInput.value='';
           if(nameInput)nameInput.value='';
           await loadTenants();
-          toast('租户 '+data.tenant.tenantId+' 已创建');
+          toast('租户 '+data.tenant.tenantId+' 已创建，探针 token 已生成');
         }catch(error){
           toast('创建租户失败：'+friendlyError(error.message),false);
         }finally{
@@ -115,13 +115,13 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         }
       }
       async function rotateTenantToken(tenantId,button){
-        if(!confirm('轮换 '+tenantId+' 的 token？旧 token 立即作废，接入方探针会开始 401，直到换上新 token。'))return;
+        if(!confirm('轮换租户 '+tenantId+' 的探针 token？旧 token 将立即失效；接入方完成更新前，其拨测上报将无法通过鉴权。'))return;
         button.disabled=true;
         try{
           const data=await request('/api/ops/observability/tenants/'+encodeURIComponent(tenantId)+'/token',{method:'POST',body:'{}'});
           tenantsState.tokenResult={label:'租户 '+tenantId+' 的新 token（仅显示一次）',token:data.probeToken};
           renderTenantList();
-          toast(tenantId+' 的 token 已轮换');
+          toast('租户 '+tenantId+' 的探针 token 已轮换');
         }catch(error){
           toast('轮换失败：'+friendlyError(error.message),false);
           button.disabled=false;
@@ -129,7 +129,7 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
       }
       async function setTenantStatus(tenantId,status,button){
         const verb=status==='disabled'?'停用':'启用';
-        if(!confirm(verb+'租户 '+tenantId+'？'+(status==='disabled'?'停用后其探针上报会被拒绝、只读视图不可用。':'启用后恢复上报与只读视图。')))return;
+        if(!confirm(verb+'租户 '+tenantId+'？'+(status==='disabled'?'该团队的拨测上报将被拒绝，只读视图同步失效。':'该团队的拨测上报与只读视图将恢复。')))return;
         button.disabled=true;
         try{
           await request('/api/ops/observability/tenants/'+encodeURIComponent(tenantId)+'/status',{method:'POST',body:JSON.stringify({status})});
