@@ -18,6 +18,9 @@
  *   RDK_RL_PROBE_AS_TENANT=1 \
  *   node tools/rl-platform-probe.mjs
  *
+ * 无 /healthz 端点的纯静态服务（如 microduck）：RDK_RL_PROBE_HEALTHZ=0 让
+ * external-health 按停用上报（不适用，不开事故），入口页检查照常。
+ *
  * 契约：source 固定 '106.53'（探针身份标识）；4 个 check key 必须齐全；
  * token 为 64 位 hex。持续运行时由调用方（systemd timer / cron）驱动，
  * 本脚本单次执行一次上报。
@@ -29,6 +32,7 @@ const REPORT_URL = String(process.env.RDK_RL_PROBE_REPORT_URL || '').trim() || '
 const TOKEN_FILE =
   String(process.env.RDK_RL_PROBE_TOKEN_FILE || '').trim() || '/var/lib/rdstudio-alert-worker/external-probe-token';
 const TENANT_MODE = String(process.env.RDK_RL_PROBE_AS_TENANT || '').trim() === '1';
+const HEALTHZ_ENABLED = String(process.env.RDK_RL_PROBE_HEALTHZ ?? '1').trim() !== '0';
 
 async function timedGet(url, timeoutMs = 8000) {
   const started = Date.now();
@@ -49,7 +53,7 @@ async function main() {
     return;
   }
 
-  const health = await timedGet(`${TARGET}/healthz`);
+  const health = HEALTHZ_ENABLED ? await timedGet(`${TARGET}/healthz`) : null;
   const entry = await timedGet(`${TARGET}/`);
 
   const checks = [
@@ -76,14 +80,16 @@ async function main() {
     {
       key: 'external-health',
       title: `RL 平台健康 (${TARGET})`,
-      enabled: true,
-      ok: health.ok,
-      active: !health.ok,
-      failures: health.ok ? 0 : 1,
-      successes: health.ok ? 1 : 0,
-      detail: health.ok
-        ? `/healthz 200 · ${health.ms}ms`
-        : `/healthz ${health.status || 'unreachable'} · ${health.error || health.ms + 'ms'}`,
+      enabled: HEALTHZ_ENABLED,
+      ok: health ? health.ok : true,
+      active: health ? !health.ok : false,
+      failures: health && !health.ok ? 1 : 0,
+      successes: health && health.ok ? 1 : 0,
+      detail: health
+        ? health.ok
+          ? `/healthz 200 · ${health.ms}ms`
+          : `/healthz ${health.status || 'unreachable'} · ${health.error || health.ms + 'ms'}`
+        : '服务未提供 /healthz 端点，健康检查不适用',
     },
     {
       key: 'external-entry-asset',
@@ -112,7 +118,7 @@ async function main() {
     }),
   });
   console.log(
-    `[rl-probe]${TENANT_MODE ? ' tenant' : ''} healthz=${health.ok ? 'ok' : 'FAIL'} entry=${entry.ok ? 'ok' : 'FAIL'} report=${response.status}`,
+    `[rl-probe]${TENANT_MODE ? ' tenant' : ''} healthz=${health ? (health.ok ? 'ok' : 'FAIL') : 'n/a'} entry=${entry.ok ? 'ok' : 'FAIL'} report=${response.status}`,
   );
   if (!response.ok) {
     console.error('[rl-probe] report rejected:', await response.text().catch(() => ''));

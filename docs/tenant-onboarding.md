@@ -11,7 +11,7 @@ d-obs 以独立项目身份为线上项目提供拨测监控：每个项目注�
 | ---------- | ----------------------------- | --------------------------------------- |
 | sim2real   | http://127.0.0.1:18102        | /healthz 200 · 入口 200 · healthy       |
 | mujoco-lab | http://127.0.0.1:18100        | /healthz 200 · 入口 200 · healthy       |
-| microduck  | http://127.0.0.1:18101        | 入口 200；无 /healthz 端点 → 事故跟踪中 |
+| microduck  | http://127.0.0.1:18101        | 入口 200 · healthy（无 /healthz，检查停用） |
 | platform   | 自带异地探针（source 106.53） | 长期运行                                |
 
 studio 不在本表：它走平台级集成（告警 worker 直接巡检 + 共享中心库的
@@ -74,5 +74,6 @@ curl -s -X POST http://127.0.0.1:18093/api/ops/observability/tenants/<tenantId>/
   （不在 release 目录内，升级 d-obs 不影响探针）；源文件在仓内
   `tools/rl-platform-probe.mjs`。
 - timer 每分钟整点触发（`OnCalendar=*-*-* *:*:00`）。
-- 无 /healthz 的纯静态项目（如 microduck）会持续开一条 critical 事故：
-  要么给项目补 /healthz，要么按需要静默该事故。
+- 无 /healthz 的纯静态项目（如 microduck）：在项目 env 文件加
+  `RDK_RL_PROBE_HEALTHZ=0`，健康检查按停用上报（不开事故）；之后给项目
+  补上 /healthz 端点时移除该行即可恢复检查。
