@@ -49,7 +49,22 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
       function renderAccess(){ // admin-token 直连模式下 action/证据域仍要求 SSO 账号身份；
       // 租户 token 模式是只读降级，两种情况都不该把已渲染的看板整体盖住。
       if(opsAdminToken||opsTenantMode){projectTelemetryState('unauthorized');return}
-      projectTelemetryState('unauthorized');if(state.accessRendered)return;state.accessRendered=true;const box=make('section','panel access');box.dataset.accessScreen='true';add(box,'h2','','需要运营账号登录');add(box,'p','','当前浏览器没有可用的运营会话。请使用带 ops-token 参数的入口地址打开本页，或向管理员索取运营访问入口。');const link=add(box,'a','btn primary','运营账号登录');link.href=location.origin+base+'/ops-observability';link.target='_self';link.rel='noopener';document.querySelectorAll('.view').forEach(node=>node.classList.add('hidden'));const main=document.querySelector('main');main.appendChild(box);const fresh=$('fresh');if(fresh)fresh.textContent='真实数据和配置受运营账号权限保护'}
+      projectTelemetryState('unauthorized');if(state.accessRendered)return;state.accessRendered=true;const box=make('section','panel access');box.dataset.accessScreen='true';add(box,'h2','','需要运营账号登录');add(box,'p','','本页数据受运营账号权限保护。输入运营令牌登录，或使用带 ops-token 参数的入口地址打开。');
+      // 独立部署没有 SSO 登录端点，登录必须是真实可用的路径：令牌经
+      // /access 校验通过后写 sessionStorage（与 ?ops-token= 注入同一条通路），
+      // 整页重载让初始化流程带令牌重跑。失败就地报错，不跳转不刷新。
+      const form=make('form');form.className='access-form';form.noValidate=true;
+      const input=field(form,'opsTokenInput','运营令牌','','password',true);input.placeholder='运营令牌（ops-token）';
+      const submit=add(form,'button','btn primary','登录');submit.type='submit';
+      const note=add(form,'div','feedback',' ');
+      form.addEventListener('submit',async event=>{event.preventDefault();const value=String(input.value||'').trim();if(!value){note.textContent='请输入运营令牌';note.className='feedback bad';return}submit.disabled=true;submit.textContent='验证中…';
+        try{const response=await fetch(base+'/api/ops/observability/access',{headers:{'content-type':'application/json','x-admin-token':value}});
+          if(response.ok){sessionStorage.setItem('d_obs_admin_token',value);location.reload();return}
+          note.textContent='令牌无效或权限不足，请核对后重试';note.className='feedback bad';
+        }catch{note.textContent='网络异常，请稍后重试';note.className='feedback bad'}
+        submit.disabled=false;submit.textContent='登录'});
+      box.appendChild(form);
+      document.querySelectorAll('.view').forEach(node=>node.classList.add('hidden'));const main=document.querySelector('main');main.appendChild(box);const fresh=$('fresh');if(fresh)fresh.textContent='真实数据和配置受运营账号权限保护';setTimeout(()=>{try{input.focus()}catch{}},50)}
       function updateViewHeader(source,name){const meta=viewMeta[source]||viewMeta[name]||viewMeta.overview;[['pageKicker',meta[0]],['pageTitle',meta[1]],['pageIntro',meta[2]]].forEach(item=>{const node=$(item[0]);if(node)node.textContent=item[1]});document.title='d-obs · '+meta[1]}
       const navGroupByView={investigate:'core',alerts:'core',traces:'core','operator-metrics':'data','data-health':'data',database:'data','skill-loop':'learning',evolution:'learning',platform:'advanced','service-levels':'core'};
       // 多级收起菜单的统一徽章层：分组收起时把组内关键计数提升到分组头，
