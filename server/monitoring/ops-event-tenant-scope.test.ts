@@ -149,3 +149,31 @@ test('平台侧每个 studio_ops_events 读取点都带平台租户过滤', asyn
   assert.ok(checked >= 6, `应检查到至少 6 个读取点，实际 ${checked}`);
   assert.deepEqual(missing, [], `以下读取点缺少 tenant_id = 'platform' 过滤：${missing.join(', ')}`);
 });
+
+test('物理隔离：平台事件写平台表，租户事件写独立表（含 DDL 建表）', async () => {
+  const { OPS_EVENT_PLATFORM_TABLE, OPS_EVENT_TENANT_TABLE, opsEventTableForTenant } = await import(
+    './ops-event-store.js'
+  );
+  assert.equal(opsEventTableForTenant('platform'), OPS_EVENT_PLATFORM_TABLE);
+  assert.equal(opsEventTableForTenant(undefined), OPS_EVENT_PLATFORM_TABLE);
+  assert.equal(opsEventTableForTenant('sim2real-events'), OPS_EVENT_TENANT_TABLE);
+  // 非法归属收敛到平台（不会被误当成某个租户）。
+  assert.equal(opsEventTableForTenant('BAD ID'), OPS_EVENT_PLATFORM_TABLE);
+
+  const queries: Query[] = [];
+  configureOpsEventPoolForTest(recordingPool(queries));
+  await recordOpsEvent({ tenantId: 'sim2real-events', component: 'sim2real-web', eventCode: 'http_5xx', outcome: 'error' });
+  const ddl = queries.filter((q) => q.text.includes('create table')).map((q) => q.text).join('\n');
+  assert.ok(ddl.includes(OPS_EVENT_TENANT_TABLE), '应幂等建出租户事件表');
+  const insert = queries.find((q) => q.text.includes('insert into'));
+  assert.ok(insert?.text.includes(OPS_EVENT_TENANT_TABLE), `租户事件必须写租户表，实际：${insert?.text.slice(0, 80)}`);
+  assert.equal(insert?.text.includes(`insert into public.${OPS_EVENT_PLATFORM_TABLE} `), false);
+
+  // 平台事件仍走平台表。
+  const platformQueries: Query[] = [];
+  configureOpsEventPoolForTest(recordingPool(platformQueries));
+  await recordOpsEvent({ component: 'sso', eventCode: 'sso_login_attempt', outcome: 'ok' });
+  const platformInsert = platformQueries.find((q) => q.text.includes('insert into'));
+  assert.ok(platformInsert?.text.includes(OPS_EVENT_PLATFORM_TABLE));
+});
+

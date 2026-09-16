@@ -98,6 +98,32 @@ export async function ensureOpsEventSchema(): Promise<void> {
   if (!schemaReady) {
     schemaReady = (async () => {
       const p = await pool();
+      // 租户事件表：结构与平台表一致，多一个非空 tenant_id（不带默认值，避免
+      // 误写平台归属）。它只由 d-obs 的事件摄取写入。
+      await p.query(`
+        create table if not exists public.${OPS_EVENT_TENANT_TABLE} (
+          id uuid primary key default gen_random_uuid(),
+          occurred_at timestamptz not null,
+          component text not null,
+          event_code text not null,
+          outcome text not null,
+          severity_hint text not null default 'warning',
+          fingerprint text not null,
+          safe_summary text null,
+          metadata jsonb not null default '{}'::jsonb,
+          correlation jsonb not null default '{}'::jsonb,
+          tenant_id text not null,
+          created_at timestamptz not null default now()
+        )
+      `);
+      await p.query(
+        `create index if not exists ${OPS_EVENT_TENANT_TABLE}_tenant_time_idx
+         on public.${OPS_EVENT_TENANT_TABLE} (tenant_id, occurred_at desc)`,
+      );
+      await p.query(
+        `create index if not exists ${OPS_EVENT_TENANT_TABLE}_code_outcome_idx
+         on public.${OPS_EVENT_TENANT_TABLE} (event_code, outcome, occurred_at desc)`,
+      );
       await p.query(`
         create table if not exists public.studio_ops_events (
           id uuid primary key default gen_random_uuid(),
@@ -304,6 +330,29 @@ export function resolveOpsEventTenantId(input: Pick<OpsEventInput, 'tenantId'>):
   return OPS_EVENT_TENANT_PATTERN.test(raw) ? raw : 'platform';
 }
 
+/**
+ * 事件物理隔离。
+ *
+ * 平台事件与租户事件**分表存放**，而不是靠每个读取方记得加 `tenant_id` 过滤：
+ * 读 `studio_ops_events` 的消费者不止本仓库——线上告警规则评估跑在主站部署
+ * （`/opt/rdstudio-web-opt/.../studio-alert-worker.js`），它的同一份逻辑没有
+ * 租户过滤，且改动它意味着改主站代码并发布业务站。分表之后，任何既有消费者
+ * （主站 worker、主站看板、flywheel 指标）读到的天然只有平台事件，隔离由存储
+ * 结构保证，不依赖跨仓库协同。README/docs/event-ingest.md 有说明。
+ *
+ * `tenant_id` 列仍然保留并继续写入：平台表里它恒为 'platform'，作为纵深防御
+ * （即使将来有人在平台表里混入租户行，读取侧的过滤仍能挡住）。
+ */
+export const OPS_EVENT_PLATFORM_TABLE = 'studio_ops_events';
+export const OPS_EVENT_TENANT_TABLE = 'studio_ops_events_tenant';
+
+/** 归属决定落到哪张表：platform → 平台表，其它 → 租户表。 */
+export function opsEventTableForTenant(tenantId: unknown): string {
+  return resolveOpsEventTenantId({ tenantId: String(tenantId ?? '').trim() }) === OPS_EVENT_PLATFORM_TENANT
+    ? OPS_EVENT_PLATFORM_TABLE
+    : OPS_EVENT_TENANT_TABLE;
+}
+
 /** 平台归属判定（供平台看板/告警规则复用，避免各处硬编码字面量）。 */
 export const OPS_EVENT_PLATFORM_TENANT = 'platform';
 
@@ -316,6 +365,8 @@ export async function recordOpsEvent(input: OpsEventInput): Promise<boolean> {
     await ensureOpsEventSchema();
     const p = await pool();
     const tenantId = resolveOpsEventTenantId(input);
+    // 租户事件落独立表：平台侧任何消费者（含其它部署）无需过滤即天然隔离。
+    const table = opsEventTableForTenant(tenantId);
     const fingerprint = buildOpsEventFingerprint(input);
     const correlation = sanitizeOpsEventCorrelation(input.correlation);
     const dedupeWithinMs = Math.max(
@@ -325,7 +376,7 @@ export async function recordOpsEvent(input: OpsEventInput): Promise<boolean> {
     if (dedupeWithinMs > 0) {
       const recent = await p.query(
         `select 1
-         from public.studio_ops_events
+         from public.${table}
          where fingerprint = $1
            and occurred_at >= now() - make_interval(secs => $2::double precision)
            and coalesce(correlation->>'user_id', '') = $3
@@ -336,7 +387,7 @@ export async function recordOpsEvent(input: OpsEventInput): Promise<boolean> {
       if (recent.rows.length > 0) return true;
     }
     await p.query(
-      `insert into public.studio_ops_events
+      `insert into public.${table}
          (occurred_at, component, event_code, outcome, severity_hint, fingerprint, safe_summary, metadata, correlation, tenant_id)
        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)`,
       [
