@@ -62,9 +62,13 @@ systemctl list-timers tenant-events-retention.timer      # 核对下次触发
 RDK_CHAT_CREDITS_DB_URL=... node tools/trim-tenant-events.mjs 30
 ```
 
-> 租户事件目前只做归属归档，尚无面向租户的展示面：租户视图不返回事件面板，
-> 平台视图也不再包含租户行。接入租户事件看板时读 `studio_ops_events_tenant`
-> 并按 `tenant_id` 过滤即可。
+### 租户侧展示
+
+租户 overview（`GET /api/ops/observability/overview`，组员/owner 或租户 token 访问）
+会带上本租户自己的「最近事件」面板，数据来自 `studio_ops_events_tenant`，查询按
+**服务端解析出的 tenantScope** 过滤（不接受客户端声明）。平台视图不加这张表——
+平台事件仍在「事故调查」里作为证据查看，避免重复。管理员用 `?tenant=<id>` 切到某
+租户视角时同样会看到该租户的事件。
 
 ## 契约
 

@@ -1182,3 +1182,35 @@ test('403 分级：租户 token 打平台面是模块级收敛，不该提示“
     `租户凭证收敛不应提示权限变化，实际：${JSON.stringify(result.texts.slice(-4))}`,
   );
 });
+
+test('租户 overview 带上本租户事件（且查询按调用方租户过滤）', async () => {
+  const db = fakeCentralDb([{ tenantId: 'team-a' }], [
+    { tenantId: 'team-a', ssoUserId: 'u-0001', role: 'member' },
+  ]);
+  const seen: Array<{ text: string; params?: unknown[] }> = [];
+  const originalQuery = db.query;
+  db.query = async (text: string, params?: unknown[]) => {
+    seen.push({ text, params });
+    return originalQuery(text, params);
+  };
+  const router = await buildRouter({
+    relayFetch: fakeRelayFetch({ sessionUser: { id: 'u-0001' } }),
+    db,
+    env: { RDK_SSO_RELAY_BASE_URL: 'http://127.0.0.1:18090' },
+  });
+  const res = await router.dispatch('GET', '/api/ops/observability/overview?hours=24', {
+    headers: { cookie: `rdk_sso_session=${SID}`, 'x-rdk-obs-tenant': 'team-a' },
+  });
+  assert.equal(res.status, 200);
+  assert.ok(Array.isArray(res.body.overview.events), 'overview 应返回 events 数组');
+  const tenantEventQuery = seen.find((q) => q.text.includes('from public.studio_ops_events_tenant'));
+  assert.ok(tenantEventQuery, '租户视图应查询租户事件表');
+  // 关键隔离断言：查询参数必须是调用方自己的租户，不是客户端能声明的任何值。
+  assert.equal(tenantEventQuery?.params?.[0], 'team-a');
+  // 平台事件表不应在租户请求里被读取。
+  assert.equal(
+    seen.some((q) => /from public\.studio_ops_events\b/.test(q.text)),
+    false,
+    '租户请求不应读取平台事件表',
+  );
+});

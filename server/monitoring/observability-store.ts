@@ -5,7 +5,11 @@
  * 运营管理员通过单事件详情接口按需读取，且必须精确匹配账号 + 会话、限量、截断、再次脱敏。
  * 任何接口都不返回 Cookie、Token、密钥、工具参数/结果或原始堆栈。
  */
-import { ensureOpsEventSchema, sanitizeOpsSummary } from './ops-event-store.js';
+import {
+  ensureOpsEventSchema,
+  listTenantOpsEvents,
+  sanitizeOpsSummary,
+} from './ops-event-store.js';
 import { validTenantId } from './tenant-store.js';
 import { loadAlertConfig } from './alert-config.js';
 import { CLIENT_ERROR_NON_ACTIONABLE_API_CODES } from '../../shared/client-error-telemetry.js';
@@ -754,8 +758,10 @@ export async function getOpsObservabilityOverview(
        group by 1 order by 1`,
       [hours, [...CLIENT_ERROR_NON_ACTIONABLE_API_CODES]],
     ),
+    // 租户视图读取该租户自己的事件表（物理隔离表），列形状与平台视图一致，
+    // 因此下面的映射无需分叉；平台视图仍然只读平台事件。
     tenantScope
-      ? Promise.resolve({ rows: [] })
+      ? listTenantOpsEvents(tenantScope, hours)
       : p.query(
       `with recent_events as (
          select id, occurred_at, component, event_code, outcome, severity_hint,

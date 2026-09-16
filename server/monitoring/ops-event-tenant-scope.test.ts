@@ -177,3 +177,45 @@ test('物理隔离：平台事件写平台表，租户事件写独立表（含 D
   assert.ok(platformInsert?.text.includes(OPS_EVENT_PLATFORM_TABLE));
 });
 
+
+test('租户事件读取：只查本租户、只查租户表，缺表时返回空而非报错', async () => {
+  const { listTenantOpsEvents } = await import('./ops-event-store.js');
+  const queries: Query[] = [];
+  configureOpsEventPoolForTest(recordingPool(queries));
+  const result = await listTenantOpsEvents('mujoco-lab', 24);
+  assert.deepEqual(result.rows, []);
+  const select = queries.find((q) => q.text.includes('select id, occurred_at'));
+  assert.ok(select, '应发起事件查询');
+  assert.ok(select.text.includes('studio_ops_events_tenant'), '必须读租户事件表');
+  assert.equal(select.text.includes('insert into'), false);
+  // 关键：按调用方传入的租户过滤，租户之间不可能互见。
+  assert.equal(select.params?.[0], 'mujoco-lab');
+  assert.equal(select.params?.[1], 24);
+
+  // platform / 非法归属不查租户表（避免把平台视图或伪造值当租户）。
+  for (const bad of ['platform', '', 'BAD ID']) {
+    const q2: Query[] = [];
+    configureOpsEventPoolForTest(recordingPool(q2));
+    const r = await listTenantOpsEvents(bad, 24);
+    assert.deepEqual(r.rows, []);
+    assert.equal(
+      q2.some((q) => q.text.includes('from public.studio_ops_events_tenant')),
+      false,
+      `不应为 ${bad} 查租户事件表`,
+    );
+  }
+
+  // 全新库缺表 → 空列表（租户看板不该 500）。
+  configureOpsEventPoolForTest({
+    query: async (text: string) => {
+      // schema bootstrap（create/alter）放行，只有业务查询模拟缺表。
+      if (/^(create (table|index)|alter table)/.test(text.trim())) return { rows: [] };
+      throw Object.assign(new Error('relation "public.studio_ops_events_tenant" does not exist'), {
+        code: '42P01',
+      });
+    },
+  });
+  const missing = await listTenantOpsEvents('mujoco-lab', 24);
+  assert.deepEqual(missing.rows, []);
+  configureOpsEventPoolForTest(null);
+});

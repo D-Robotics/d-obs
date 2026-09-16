@@ -36,6 +36,44 @@ export interface OpsEventCorrelation {
   environment?: string | null;
 }
 
+/**
+ * 读取某个租户最近的租户事件（`studio_ops_events_tenant`），供租户视图展示。
+ *
+ * 返回的列与平台视图的事件查询保持一致（同为 snake_case 原始行），这样
+ * observability-store 的既有映射可以原样复用，不需要第二套字段转换。
+ * 只按 `tenant_id` 过滤——调用方传入的 tenantScope 来自服务端解析的身份，
+ * 因此租户之间不会互见。
+ */
+export async function listTenantOpsEvents(
+  tenantId: string,
+  hours: number,
+  limit = 50,
+): Promise<{ rows: Array<Record<string, unknown>> }> {
+  const tenant = resolveOpsEventTenantId({ tenantId: String(tenantId ?? '').trim() });
+  if (tenant === OPS_EVENT_PLATFORM_TENANT) return { rows: [] };
+  const windowHours = Math.max(1, Math.min(168, Math.floor(Number(hours) || 24)));
+  const maxRows = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
+  await ensureOpsEventSchema();
+  const p = await pool();
+  try {
+    return await p.query(
+      `select id, occurred_at, component, event_code, outcome, severity_hint,
+              safe_summary, metadata, correlation
+         from public.${OPS_EVENT_TENANT_TABLE}
+        where tenant_id = $1
+          and occurred_at >= now() - make_interval(hours => $2::int)
+          and occurred_at <= now() + interval '5 minutes'
+        order by occurred_at desc
+        limit $3`,
+      [tenant, windowHours, maxRows],
+    );
+  } catch (error) {
+    // 全新库首份租户事件到达前没有这张表：租户看板应显示空事件列表而不是 500。
+    if ((error as { code?: string }).code === '42P01') return { rows: [] };
+    throw error;
+  }
+}
+
 export interface OpsEventInput {
   /**
    * 归属租户：'platform' = 平台自身埋点，其它 = 该租户探针上报。

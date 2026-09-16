@@ -16,6 +16,8 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
       const categoryNames = {metric:'指标',log:'日志',probe:'拨测'};
       const statusNames = {healthy:'正常',observing:'Pending',warning:'告警',critical:'严重',stale:'数据过期',disabled:'已停用',open:'进行中',acknowledged:'已确认',silenced:'已静默',resolved:'已恢复',running:'运行中',no_candidate:'暂无候选',candidate_ready:'待审核',rejected:'已拒绝',blocked:'已阻塞',error:'失败',never:'未运行'};
       const severityNames = {critical:'严重',warning:'警告'};
+      // 事件结果标签（event-ingest 契约：ok | error | rejected | degraded）。
+      const outcomeNames = {ok:'成功',error:'失败',rejected:'被拒',degraded:'降级'};
       const fieldNames = {windowMinutes:'查询窗口（分钟）',minSamples:'最少样本数',threshold:'告警阈值',criticalThreshold:'严重阈值',ratePercent:'失败率阈值（%）',openAfter:'Pending 连续评估次数',resolveAfter:'连续恢复次数'};
       const make = (tag, cls, value) => { const node=document.createElement(tag); if(cls)node.className=cls; if(value!==undefined&&value!==null)node.textContent=String(value); return node; };
       const add = (parent, tag, cls, value) => { const node=make(tag,cls,value); parent.appendChild(node); return node; };
