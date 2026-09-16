@@ -237,22 +237,70 @@ export async function addMember(
   return rowToMember(result.rows[0]);
 }
 
+/**
+ * 同一租户的成员变更串行化。
+ *
+ * 「先数 owner 再写」天然有竞态：两个并发请求可以各自读到 owners=2，然后双双
+ * 把最后一个 owner 降级/移除，租户就此锁死（没有任何人能再管理它）。d-obs 是
+ * 单进程写入者，所以用进程内的每租户串行队列即可把窗口消掉；`fn` 内部再做
+ * owner 计数，计数与写入之间不再有其它请求插入。
+ *
+ * 若将来出现多进程/多实例写入，需要改成数据库侧的事务 + `select … for update`
+ * （或把不变式写成带子查询的单条 update/delete）。
+ */
+const tenantMutationTails = new Map<string, Promise<void>>();
+
+async function withTenantMutationLock<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
+  const key = String(tenantId ?? '').slice(0, 64);
+  const previous = tenantMutationTails.get(key) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  // gate 必须同步创建：release 在 finally 里一定会被调用到，不能在微任务里才赋值。
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  tenantMutationTails.set(key, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+    // 链尾仍是自己时才清理，避免删掉后来者排的队。
+    if (tenantMutationTails.get(key) === tail) tenantMutationTails.delete(key);
+  }
+}
+
+/** 测试专用：清空成员变更串行队列。 */
+export function resetTenantMutationLocksForTest(): void {
+  tenantMutationTails.clear();
+}
+
 export async function setMemberRole(
   tenantId: string,
   ssoUserId: string,
   role: TenantMemberRole,
   injectedPool?: Pool,
 ): Promise<TenantMember> {
+  const tenant = String(tenantId ?? '').trim();
+  const user = String(ssoUserId ?? '').trim();
   const p = injectedPool ?? (await pool());
   await ensureMembersSchema(p);
-  const result = await p.query(
-    `update public.studio_obs_tenant_members set role = $3
-      where tenant_id = $1 and sso_user_id = $2
-      returning tenant_id, sso_user_id, display_name, role, added_by, created_at`,
-    [String(tenantId ?? '').trim(), String(ssoUserId ?? '').trim(), role],
-  );
-  if (!result.rows[0]) throw new Error('member_not_found');
-  return rowToMember(result.rows[0]);
+  return withTenantMutationLock(tenant, async () => {
+    const existing = (await listMembers(tenant, p)).find((member) => member.ssoUserId === user);
+    if (!existing) throw new Error('member_not_found');
+    // 最后一个 owner 不可降级（防租户锁死）；读取与写入在同一临界区内。
+    if (existing.role === 'owner' && role === 'member' && (await countOwners(tenant, p)) <= 1) {
+      throw new Error('last_owner_role_required');
+    }
+    const result = await p.query(
+      `update public.studio_obs_tenant_members set role = $3
+        where tenant_id = $1 and sso_user_id = $2
+        returning tenant_id, sso_user_id, display_name, role, added_by, created_at`,
+      [tenant, user, role],
+    );
+    if (!result.rows[0]) throw new Error('member_not_found');
+    return rowToMember(result.rows[0]);
+  });
 }
 
 export async function removeMember(
@@ -260,14 +308,24 @@ export async function removeMember(
   ssoUserId: string,
   injectedPool?: Pool,
 ): Promise<TenantMember> {
+  const tenant = String(tenantId ?? '').trim();
+  const user = String(ssoUserId ?? '').trim();
   const p = injectedPool ?? (await pool());
   await ensureMembersSchema(p);
-  const result = await p.query(
-    `delete from public.studio_obs_tenant_members
-      where tenant_id = $1 and sso_user_id = $2
-      returning tenant_id, sso_user_id, display_name, role, added_by, created_at`,
-    [String(tenantId ?? '').trim(), String(ssoUserId ?? '').trim()],
-  );
-  if (!result.rows[0]) throw new Error('member_not_found');
-  return rowToMember(result.rows[0]);
+  return withTenantMutationLock(tenant, async () => {
+    const existing = (await listMembers(tenant, p)).find((member) => member.ssoUserId === user);
+    if (!existing) throw new Error('member_not_found');
+    // 最后一个 owner 不可移除（防租户锁死）；读取与删除在同一临界区内。
+    if (existing.role === 'owner' && (await countOwners(tenant, p)) <= 1) {
+      throw new Error('last_owner_required');
+    }
+    const result = await p.query(
+      `delete from public.studio_obs_tenant_members
+        where tenant_id = $1 and sso_user_id = $2
+        returning tenant_id, sso_user_id, display_name, role, added_by, created_at`,
+      [tenant, user],
+    );
+    if (!result.rows[0]) throw new Error('member_not_found');
+    return rowToMember(result.rows[0]);
+  });
 }

@@ -403,6 +403,8 @@ async function collectDatabaseObservations(
              and occurred_at <= now() + interval '5 minutes'
              and event_code = 'tool_call' and outcome = 'error'
              and coalesce(metadata->>'client_type', '') <> 'local-dev'
+             -- 平台规则只看平台自身埋点：租户上报的事件不能打开平台事故。
+             and tenant_id = 'platform'
          )
          select tool_name, count(distinct failure_unit)::int n, count(*)::int event_count
          from tool_errors
@@ -472,7 +474,9 @@ async function collectDatabaseObservations(
            )::int process_errors
          from public.studio_ops_events
          where occurred_at <= now() + interval '5 minutes'
-           and coalesce(metadata->>'client_type', '') <> 'local-dev'`,
+           and coalesce(metadata->>'client_type', '') <> 'local-dev'
+           -- 平台规则只看平台自身埋点（租户事件按 tenant_id 隔离）。
+           and tenant_id = 'platform'`,
         [
           loginRule.windowMinutes,
           apiRule.windowMinutes,
@@ -504,6 +508,8 @@ async function collectDatabaseObservations(
          where occurred_at >= now() - make_interval(mins => $1::int)
            and occurred_at <= now() + interval '5 minutes'
            and event_code = 'client_error' and outcome = 'error'
+           -- 平台规则只看平台自身埋点：租户 token 不能把平台客户端错误率顶爆。
+           and tenant_id = 'platform'
            and metadata->>'operational' = 'true'
            and coalesce(metadata->>'environment', 'production') not in ('development', 'test')
            and not (coalesce(metadata->>'code', '') = any($2::text[]))

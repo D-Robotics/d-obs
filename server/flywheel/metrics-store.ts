@@ -323,6 +323,8 @@ export async function getFlywheelOverview(daysInput = 30): Promise<FlywheelOverv
               max(occurred_at)::text last_at
          from studio_ops_events
         where event_code = 'sso_login_attempt'
+          -- 平台登录指标只统计平台自身埋点，避免租户事件影响平台口径。
+          and tenant_id = 'platform'
           and occurred_at >= now() - make_interval(days => $1::int)
         group by 1
         order by successes desc, rejected desc, errors desc`,

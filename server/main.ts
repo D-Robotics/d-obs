@@ -25,6 +25,7 @@ import {
   resolveProbeReportIdentity,
 } from './monitoring/external-probe-ingest.js';
 import { createTenant } from './monitoring/tenant-store.js';
+import { createOpsEventIngestRouter } from './monitoring/ops-event-ingest.js';
 import { startTelemetryGovernanceRuntime } from './observability/governance-runtime-service.js';
 import { resolveTrustProxySetting } from './trusted-proxy.js';
 
@@ -105,6 +106,8 @@ app.post('/api/health/external-probe-report', async (req, res) => {
     res.status(503).json({ ok: false, error: 'probe_store_unavailable' });
   }
 });
+// 事件级埋点摄取：租户/平台 token 鉴权，逐条消毒去重后写 studio_ops_events。
+app.use(createOpsEventIngestRouter());
 app.use(createOpsObservabilityRouter());
 
 const port = Number(process.env.PORT ?? 47110);

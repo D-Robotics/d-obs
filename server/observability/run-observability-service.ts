@@ -598,6 +598,9 @@ export function createRunObservabilityService(deps: RunObservabilityServiceDepen
           `select id, occurred_at, event_code, outcome, safe_summary
          from public.studio_ops_events
          where correlation->>'run_id' = $2
+           -- 只认平台埋点：租户 token 可以自带 correlation.userId，不过滤就能把
+           -- 伪造事件塞进账号的 Run 证据列表。
+           and tenant_id = 'platform'
            and coalesce(correlation->>'account_scope_id', correlation->>'user_id') = $1
            and coalesce(nullif(correlation->>'environment', ''), 'production') = $3
          order by occurred_at asc, id asc

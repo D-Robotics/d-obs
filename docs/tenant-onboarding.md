@@ -59,6 +59,12 @@ trace/事故数据），无需注册租户。
 - `studio_alert_incidents`：租户检查故障自动开事故（如 microduck 缺
   /healthz → `t.microduck.external-health` open），看板事故工作台直接展示。
 
+## 事件级埋点（可选）
+
+拨测之外，接入方还可以用同一个租户 token 把业务/运维事件批量上报到
+`POST /api/ops/events`，写入 `studio_ops_events` 并点亮工作台的错误率与
+登录统计组件。契约见 [`event-ingest.md`](./event-ingest.md)。
+
 ## token 轮换
 
 ```bash

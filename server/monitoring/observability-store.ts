@@ -6,6 +6,7 @@
  * 任何接口都不返回 Cookie、Token、密钥、工具参数/结果或原始堆栈。
  */
 import { ensureOpsEventSchema, sanitizeOpsSummary } from './ops-event-store.js';
+import { validTenantId } from './tenant-store.js';
 import { loadAlertConfig } from './alert-config.js';
 import { CLIENT_ERROR_NON_ACTIONABLE_API_CODES } from '../../shared/client-error-telemetry.js';
 import type {
@@ -271,14 +272,6 @@ function incidentKey(value: string): string {
   return key;
 }
 
-export function tenantScopeFilter(
-  scope: OpsTenantScope | undefined,
-): string {
-  // null scope = 平台管理员看全部；platform/tenant id = 只看该归属。
-  if (!scope) return '';
-  return scope;
-}
-
 export type OpsTenantScope = string | null;
 
 /** 租户视图的空进化面板：每日自我进化属于平台域，不向租户暴露。 */
@@ -306,7 +299,9 @@ function emptyEvolutionOverview(): EvolutionOverview {
  */
 export function tenantScopeFromAlertKey(alertKey: string): string {
   const parts = String(alertKey ?? '').split('.');
-  if (parts.length >= 3 && parts[0] === 't' && parts[1]) return parts[1];
+  // 回验租户 id 形状：只有 createTenant 会写合法 id，但历史/越权写入的行不该被
+  // 当成某个（可能不存在的）租户归属。
+  if (parts.length >= 3 && parts[0] === 't' && validTenantId(parts[1])) return parts[1];
   return 'platform';
 }
 
@@ -492,7 +487,9 @@ export async function getOpsObservabilityOverview(
   await ensureOpsEventSchema();
   const p = await pool();
   await ensureIncidentOperationsSchema(p);
-  const alertConfig = await loadAlertConfig();
+  // 平台告警配置只服务于平台视图；租户视图不读它，避免把通道/影子模式等
+  // 平台运营配置带进租户响应（与 /config 对租户返回 tenantReadOnly 的收敛一致）。
+  const alertConfig = tenantScope ? null : await loadAlertConfig();
   // 作用域 where 片段：admin（null）不加过滤；platform/租户视图只看本归属行。
   // 巡检/事故/通知表都带 tenant_id 列（缺省 'platform'），探针写入时已填好。
   const tWhere = tenantScope ? `where coalesce(tenant_id, 'platform') = $1::text` : '';
@@ -523,16 +520,20 @@ export async function getOpsObservabilityOverview(
        order by active desc, unhealthy desc, severity desc, alert_key`,
       tenantScope ? ['platform', tenantScope] : [],
     ),
-    p
-      .query(
-        `select last_run_at, enabled, shadow_mode, channel_configured, channel,
-                config_updated_at, check_count, active_count, worker_version
-         from public.studio_alert_worker_status where singleton = true`,
-      )
-      .catch((error) => {
-        if ((error as { code?: string }).code === '42P01') return { rows: [] };
-        throw error;
-      }),
+    // 租户视图不读平台 worker 单例行：那张表是 d-obs 自身的巡检循环状态，
+    // 且承载平台告警配置（通道/影子模式/版本），属于平台运营数据。
+    tenantScope
+      ? Promise.resolve({ rows: [] })
+      : p
+          .query(
+            `select last_run_at, enabled, shadow_mode, channel_configured, channel,
+                    config_updated_at, check_count, active_count, worker_version
+             from public.studio_alert_worker_status where singleton = true`,
+          )
+          .catch((error) => {
+            if ((error as { code?: string }).code === '42P01') return { rows: [] };
+            throw error;
+          }),
     p.query(
       `select count(*) filter (where status in ('open', 'acknowledged', 'silenced'))::int open_incidents,
               count(*) filter (where status in ('open', 'acknowledged', 'silenced') and severity = 'critical')::int critical_incidents
@@ -687,7 +688,9 @@ export async function getOpsObservabilityOverview(
        from public.studio_ops_events
        where occurred_at >= now() - make_interval(hours => $1::int)
          and occurred_at <= now() + interval '5 minutes'
-         and coalesce(metadata->>'client_type', '') <> 'local-dev'`,
+         and coalesce(metadata->>'client_type', '') <> 'local-dev'
+         -- 平台看板只统计平台自身埋点；租户事件按 tenant_id 隔离，不污染平台错误率。
+         and tenant_id = 'platform'`,
       [hours, [...CLIENT_ERROR_NON_ACTIONABLE_API_CODES]],
     ),
     tenantScope
@@ -747,6 +750,7 @@ export async function getOpsObservabilityOverview(
        where occurred_at >= now() - make_interval(hours => $1::int)
          and occurred_at <= now() + interval '5 minutes'
          and coalesce(metadata->>'client_type', '') <> 'local-dev'
+         and tenant_id = 'platform'
        group by 1 order by 1`,
       [hours, [...CLIENT_ERROR_NON_ACTIONABLE_API_CODES]],
     ),
@@ -760,6 +764,7 @@ export async function getOpsObservabilityOverview(
          where occurred_at >= now() - make_interval(hours => $1::int)
            and occurred_at <= now() + interval '5 minutes'
            and coalesce(metadata->>'client_type', '') <> 'local-dev'
+           and tenant_id = 'platform'
            and coalesce(metadata->>'route', '') not like '%://localhost:5173/%'
            and safe_summary !~* '(vite.*(failed to reload|failed to connect)|localhost:5173|requested module [''"]/src/|resource failed to load: /src/)'
            and not (
@@ -933,9 +938,10 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
     typeof workerStatus.channel_configured === 'boolean'
       ? workerStatus.channel_configured
       : Boolean(
-          alertConfig.notification.channel === 'feishu'
-            ? alertConfig.notification.feishuWebhookUrl
-            : alertConfig.notification.webhookUrl,
+          alertConfig &&
+            (alertConfig.notification.channel === 'feishu'
+              ? alertConfig.notification.feishuWebhookUrl
+              : alertConfig.notification.webhookUrl),
         );
 
   const trendByBucket = new Map<
@@ -985,17 +991,19 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
     tenantScope,
     tenantLabel: tenantScope,
     alerting: {
+      // 租户视图：alertConfig 为 null 且 worker 行被跳过，因此这里只会拿到
+      // 默认值（enabled/shadowMode 按“不对外声明平台配置”处理）。
       enabled:
         typeof workerStatus.enabled === 'boolean'
           ? workerStatus.enabled
-          : alertConfig.global.enabled,
+          : Boolean(alertConfig?.global.enabled),
       webhookConfigured,
       shadowMode:
         typeof workerStatus.shadow_mode === 'boolean'
           ? workerStatus.shadow_mode
-          : alertConfig.notification.shadowMode || !alertConfig.notification.enabled,
-      channel: text(workerStatus.channel, 24) || alertConfig.notification.channel,
-      configUpdatedAt: iso(workerStatus.config_updated_at) ?? alertConfig.updatedAt,
+          : Boolean(alertConfig && (alertConfig.notification.shadowMode || !alertConfig.notification.enabled)),
+      channel: text(workerStatus.channel, 24) || alertConfig?.notification.channel || '',
+      configUpdatedAt: iso(workerStatus.config_updated_at) ?? alertConfig?.updatedAt ?? null,
       workerVersion: text(workerStatus.worker_version, 24) || null,
       lastCheckedAt: effectiveLastCheckedAt,
       status,
@@ -1148,6 +1156,9 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
        limit 1
      ) actor on true
      where e.id = $1::uuid
+       -- 事件详情/行动证据校验只认平台事件：租户事件已按 tenant_id 归档，
+       -- 但尚未有面向租户的展示面，不允许它们出现在平台证据链里。
+       and e.tenant_id = 'platform'
      limit 1`,
     [eventId],
   );

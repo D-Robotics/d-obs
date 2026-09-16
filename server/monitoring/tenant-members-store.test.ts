@@ -224,3 +224,77 @@ test('fail-closed：未配置中心库时 store 抛错而非静默返回（由�
     if (saved !== undefined) process.env.RDK_CHAT_CREDITS_DB_URL = saved;
   }
 });
+
+test('并发防锁死：两个 owner 同时被降级/移除，只有一个成功', async () => {
+  const { resetTenantMutationLocksForTest } = await import('./tenant-members-store.js');
+  const reset = () => resetTenantMutationLocksForTest();
+  // 降级：两个并发请求各自把一名 owner 降为 member，若判定与写入之间存在窗口，
+  // 两个都会成功、租户就此没有任何 owner。
+  reset();
+  const demotePool = fakePool([{ tenantId: 'team-a', status: 'active' }]);
+  await addMember(
+    { tenantId: 'team-a', ssoUserId: 'u-owner-1', role: 'owner', addedBy: 'test' },
+    demotePool,
+  );
+  await addMember(
+    { tenantId: 'team-a', ssoUserId: 'u-owner-2', role: 'owner', addedBy: 'test' },
+    demotePool,
+  );
+  const demotions = await Promise.allSettled([
+    setMemberRole('team-a', 'u-owner-1', 'member', demotePool),
+    setMemberRole('team-a', 'u-owner-2', 'member', demotePool),
+  ]);
+  const fulfilled = demotions.filter((r) => r.status === 'fulfilled');
+  const rejected = demotions.filter((r) => r.status === 'rejected');
+  assert.equal(fulfilled.length, 1, '只能有一个 owner 被降级');
+  assert.equal(rejected.length, 1);
+  assert.equal(
+    String((rejected[0] as PromiseRejectedResult).reason?.message),
+    'last_owner_role_required',
+  );
+  assert.equal(await countOwners('team-a', demotePool), 1);
+
+  // 移除：同样的竞态，最后必须还剩一个 owner。
+  reset();
+  const removePool = fakePool([{ tenantId: 'team-a', status: 'active' }]);
+  await addMember(
+    { tenantId: 'team-a', ssoUserId: 'u-owner-1', role: 'owner', addedBy: 'test' },
+    removePool,
+  );
+  await addMember(
+    { tenantId: 'team-a', ssoUserId: 'u-owner-2', role: 'owner', addedBy: 'test' },
+    removePool,
+  );
+  const removals = await Promise.allSettled([
+    removeMember('team-a', 'u-owner-1', removePool),
+    removeMember('team-a', 'u-owner-2', removePool),
+  ]);
+  assert.equal(removals.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(
+    String((removals.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason?.message),
+    'last_owner_required',
+  );
+  assert.equal(await countOwners('team-a', removePool), 1);
+});
+
+test('防锁死边界：非 last owner 的降级/移除照常成功；不存在的成员报 member_not_found', async () => {
+  const { resetTenantMutationLocksForTest } = await import('./tenant-members-store.js');
+  resetTenantMutationLocksForTest();
+  const pool = fakePool([{ tenantId: 'team-a', status: 'active' }]);
+  await addMember({ tenantId: 'team-a', ssoUserId: 'u-owner', role: 'owner', addedBy: 'test' }, pool);
+  await addMember({ tenantId: 'team-a', ssoUserId: 'u-peer', role: 'owner', addedBy: 'test' }, pool);
+  await addMember({ tenantId: 'team-a', ssoUserId: 'u-member', role: 'member', addedBy: 'test' }, pool);
+  // 还有另一个 owner 时可降级。
+  const demoted = await setMemberRole('team-a', 'u-peer', 'member', pool);
+  assert.equal(demoted.role, 'member');
+  // 普通 member 可移除。
+  await removeMember('team-a', 'u-member', pool);
+  // 剩 u-owner（owner）与 u-peer（已降为 member）。
+  assert.equal((await listMembers('team-a', pool)).length, 2);
+  // 不存在 → member_not_found（而不是防锁死错误）。
+  await assert.rejects(
+    () => setMemberRole('team-a', 'u-missing', 'member', pool),
+    /member_not_found/,
+  );
+  await assert.rejects(() => removeMember('team-a', 'u-missing', pool), /member_not_found/);
+});

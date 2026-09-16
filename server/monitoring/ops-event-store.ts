@@ -37,6 +37,11 @@ export interface OpsEventCorrelation {
 }
 
 export interface OpsEventInput {
+  /**
+   * 归属租户：'platform' = 平台自身埋点，其它 = 该租户探针上报。
+   * 由摄取层用 token 解析出的身份填入，**不接受事件正文里的同名声明**。
+   */
+  tenantId?: string;
   component: string;
   eventCode: string;
   outcome: OpsEventOutcome;
@@ -58,7 +63,20 @@ export function isOpsEventStoreConfigured(): boolean {
 }
 
 let poolReady: Promise<Pool> | null = null;
+let testPool: Pool | null = null;
+
+/**
+ * 回归测试注入点：整体替换默认池解析并重置 schema 缓存。
+ * 与 tenant-store / observability-store 同款接缝——没有它，任何走到
+ * `ensureOpsEventSchema` 的集成测试都会去构造真实 pg 池并连库失败。
+ */
+export function configureOpsEventPoolForTest(p: Pool | null): void {
+  testPool = p;
+  schemaReady = null;
+}
+
 async function pool(): Promise<Pool> {
+  if (testPool) return testPool;
   if (!centralDbUrl()) throw new Error('RDK_CHAT_CREDITS_DB_URL 未配置');
   if (!poolReady) {
     poolReady = (async () => {
@@ -92,12 +110,22 @@ export async function ensureOpsEventSchema(): Promise<void> {
           safe_summary text null,
           metadata jsonb not null default '{}'::jsonb,
           correlation jsonb not null default '{}'::jsonb,
+          tenant_id text not null default 'platform',
           created_at timestamptz not null default now()
         )
       `);
       await p.query(
         `alter table public.studio_ops_events
          add column if not exists correlation jsonb not null default '{}'::jsonb`,
+      );
+      // 旧库升级：历史行没有租户归属，一律归 platform（它们确实是平台时期写入的）。
+      await p.query(
+        `alter table public.studio_ops_events
+         add column if not exists tenant_id text not null default 'platform'`,
+      );
+      await p.query(
+        `create index if not exists studio_ops_events_tenant_idx
+         on public.studio_ops_events (tenant_id, occurred_at desc)`,
       );
       await p.query(
         `create index if not exists studio_ops_events_occurred_idx
@@ -253,6 +281,9 @@ export function sanitizeOpsEventCorrelation(
 
 export function buildOpsEventFingerprint(input: OpsEventInput): string {
   const parts = [
+    // 租户进指纹：否则知道目标指纹的租户可以预置一行，把平台/别家的同名事件
+    // 在去重窗口内压掉（跨租户事件压制）。
+    resolveOpsEventTenantId(input),
     safeSlug(input.component, 'unknown'),
     safeSlug(input.eventCode, 'unknown'),
     input.outcome,
@@ -262,6 +293,21 @@ export function buildOpsEventFingerprint(input: OpsEventInput): string {
 }
 
 /**
+ * 事件归属租户。摄取层用探针 token 解析出的身份传入；缺省/非法值一律归
+ * `platform`，保证「没有明确租户身份的事件不会被误算进某个租户」。
+ * 与租户 id 规则保持一致（小写字母开头、字母数字连字符、2-40 字符）。
+ */
+const OPS_EVENT_TENANT_PATTERN = /^[a-z][a-z0-9-]{1,39}$/;
+
+export function resolveOpsEventTenantId(input: Pick<OpsEventInput, 'tenantId'>): string {
+  const raw = String(input?.tenantId ?? '').trim();
+  return OPS_EVENT_TENANT_PATTERN.test(raw) ? raw : 'platform';
+}
+
+/** 平台归属判定（供平台看板/告警规则复用，避免各处硬编码字面量）。 */
+export const OPS_EVENT_PLATFORM_TENANT = 'platform';
+
+/**
  * 写入一条低敏感运维事件。返回值只供测试/诊断；业务调用应 fire-and-forget。
  */
 export async function recordOpsEvent(input: OpsEventInput): Promise<boolean> {
@@ -269,6 +315,7 @@ export async function recordOpsEvent(input: OpsEventInput): Promise<boolean> {
   try {
     await ensureOpsEventSchema();
     const p = await pool();
+    const tenantId = resolveOpsEventTenantId(input);
     const fingerprint = buildOpsEventFingerprint(input);
     const correlation = sanitizeOpsEventCorrelation(input.correlation);
     const dedupeWithinMs = Math.max(
@@ -282,15 +329,16 @@ export async function recordOpsEvent(input: OpsEventInput): Promise<boolean> {
          where fingerprint = $1
            and occurred_at >= now() - make_interval(secs => $2::double precision)
            and coalesce(correlation->>'user_id', '') = $3
+           and tenant_id = $4
          limit 1`,
-        [fingerprint, dedupeWithinMs / 1_000, correlation.user_id ?? ''],
+        [fingerprint, dedupeWithinMs / 1_000, correlation.user_id ?? '', tenantId],
       );
       if (recent.rows.length > 0) return true;
     }
     await p.query(
       `insert into public.studio_ops_events
-         (occurred_at, component, event_code, outcome, severity_hint, fingerprint, safe_summary, metadata, correlation)
-       values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)`,
+         (occurred_at, component, event_code, outcome, severity_hint, fingerprint, safe_summary, metadata, correlation, tenant_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)`,
       [
         input.occurredAt && Number.isFinite(Date.parse(input.occurredAt))
           ? input.occurredAt
@@ -303,6 +351,7 @@ export async function recordOpsEvent(input: OpsEventInput): Promise<boolean> {
         input.safeSummary ? sanitizeOpsSummary(input.safeSummary) : null,
         JSON.stringify(safeMetadata(input.metadata)),
         JSON.stringify(correlation),
+        tenantId,
       ],
     );
     return true;

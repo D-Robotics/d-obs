@@ -160,6 +160,16 @@ function resolveObservabilityAccess(req: Request): {
   if (hasInvalidAdminToken(req)) {
     return { enabled: false, isAdmin: false, reason: 'not_authorized' };
   }
+  // 同理：带了租户凭证却走到非租户面（没有 tenantScopeGate 的路由）时显式拒绝，
+  // 不允许它退化成管理员/匿名访问。租户可达的只读面在 tenantScopeGate 里已验证
+  // 身份并置 req.opsTenantAccess，走 requireObservabilityAccessTenantAware 的快路径，
+  // 不会落到这里。
+  if (hasInvalidTenantToken(req)) {
+    // 注意与 tenantScopeGate 的 401 `invalid_tenant_token` 区分：这里是「凭证只
+    // 在租户面有效，却打到了平台面」，不代表凭证无效。混用会让前端把它当成
+    // 身份变化而误报（见 OBS_IDENTITY_FORBIDDEN_CODES）。
+    return { enabled: false, isAdmin: false, reason: 'tenant_scope_only' };
+  }
   if (!isOpsObservabilityConfigured()) {
     return { enabled: false, isAdmin: false, reason: 'central_store_disabled' };
   }
@@ -1232,22 +1242,9 @@ export function createOpsObservabilityRouter(): Router {
         return;
       }
       try {
-        const { countOwners, findMembership, setMemberRole } = await import(
-          './tenant-members-store.js'
-        );
-        const membership = await findMembership(tenantId, ssoUserId);
-        if (!membership) {
-          res.status(404).json({ ok: false, error: 'member_not_found' });
-          return;
-        }
-        // 最后一个 owner 不可降级（防租户锁死）。
-        if (membership.role === 'owner' && role === 'member') {
-          const owners = await countOwners(tenantId);
-          if (owners <= 1) {
-            res.status(400).json({ ok: false, error: 'last_owner_role_required' });
-            return;
-          }
-        }
+        // 「最后一个 owner 不可降级」由 store 在每租户临界区内判定（并发安全），
+        // 路由层不再先查后写。
+        const { setMemberRole } = await import('./tenant-members-store.js');
         const member = await setMemberRole(tenantId, ssoUserId, role);
         await recordOpsConfigurationAudit({
           actor: resolveOpsActor(req),
@@ -1256,6 +1253,15 @@ export function createOpsObservabilityRouter(): Router {
         });
         res.json({ ok: true, member });
       } catch (error) {
+        const message = String((error as Error)?.message ?? '');
+        if (message === 'member_not_found') {
+          res.status(404).json({ ok: false, error: 'member_not_found' });
+          return;
+        }
+        if (message === 'last_owner_role_required') {
+          res.status(400).json({ ok: false, error: 'last_owner_role_required' });
+          return;
+        }
         res.status(400).json({
           ok: false,
           error: sanitizeOpsSummary(error, 240) || 'tenant_member_role_failed',
@@ -1276,22 +1282,8 @@ export function createOpsObservabilityRouter(): Router {
         return;
       }
       try {
-        const { countOwners, findMembership, removeMember } = await import(
-          './tenant-members-store.js'
-        );
-        const membership = await findMembership(tenantId, ssoUserId);
-        if (!membership) {
-          res.status(404).json({ ok: false, error: 'member_not_found' });
-          return;
-        }
-        // 最后一个 owner 不可移除（防租户锁死）。
-        if (membership.role === 'owner') {
-          const owners = await countOwners(tenantId);
-          if (owners <= 1) {
-            res.status(400).json({ ok: false, error: 'last_owner_required' });
-            return;
-          }
-        }
+        // 「最后一个 owner 不可移除」同样由 store 在临界区内判定。
+        const { removeMember } = await import('./tenant-members-store.js');
         await removeMember(tenantId, ssoUserId);
         await recordOpsConfigurationAudit({
           actor: resolveOpsActor(req),
@@ -1300,6 +1292,15 @@ export function createOpsObservabilityRouter(): Router {
         });
         res.json({ ok: true });
       } catch (error) {
+        const message = String((error as Error)?.message ?? '');
+        if (message === 'member_not_found') {
+          res.status(404).json({ ok: false, error: 'member_not_found' });
+          return;
+        }
+        if (message === 'last_owner_required') {
+          res.status(400).json({ ok: false, error: 'last_owner_required' });
+          return;
+        }
         res.status(400).json({
           ok: false,
           error: sanitizeOpsSummary(error, 240) || 'tenant_member_remove_failed',
