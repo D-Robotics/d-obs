@@ -75,6 +75,18 @@ RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_alert_checks,studio_ops_events
 配置后目录列表、关系图、表详情、整表 CSV 四个面一致收敛；白名单外的表按
 「不存在」（404）返回，不确认其是否存在。不配置 = 保持现状（全部可见）。
 
+**生产已收紧（2026-09-16）**：`/etc/d-obs.env` 里的 `RDK_DB_PANEL_TABLES` 设为本服务
+运行时真正读写的 32 张表，因此面板不再能看到共用中心库里主站的商业/凭据表
+（`credit_user_key`、`credit_account`、`chat_credit_accounts`、`redemption_code`、
+`product_events` 等）。实测：这些表在目录里不出现，按表名直连详情与 CSV 导出均 404，
+而本服务要用的表（如 `conversation_turns`、`studio_alert_incidents`）仍为 200。
+
+名单的生成方式（改代码后重新推导，别靠手写）：从入口做一次可达性遍历（**含动态
+`import()`**——租户 store 就是动态导入的），收集可达模块里所有
+`from|into|update|join public.<table>` 的表名。宁可宽一点：漏一张会让面板功能坏掉，
+多一张只是多暴露一张本服务确实会读的表。放宽或收窄都只改 `/etc/d-obs.env` 这一行后
+`systemctl restart d-obs`，并保留 `RDK_DB_PANEL_TABLES` 为空即可恢复「全部可见」的旧行为。
+
 ## 反代与客户端地址
 
 `app.set('trust proxy', …)` 默认取 `loopback`（见 `server/trusted-proxy.ts`）：
