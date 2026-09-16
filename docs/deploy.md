@@ -52,6 +52,22 @@ env 文件在服务器 `/etc/d-obs/probes/<project>.env`。
 5. `journalctl -u d-obs -p err` 无新条目
 6. 浏览器：登录表单可用，错误令牌就地报错；进入后事故徽章数与库中
    `studio_alert_incidents` 进行中条数一致
+7. **免登**：先在业务站（`https://rdkstudio.d-robotics.cc`）登录，再打开
+   `/dobs/ops-observability`，应当**直接进入**工作台而不再要求输密码；
+   `curl -s -H "Cookie: rdk_sso_session=<sid>" http://127.0.0.1:18093/api/ops/auth/me`
+   应返回该账号（无 Cookie 时返回 `user:null`）。
+8. **真实客户端 IP**：确认 `RDK_TRUST_PROXY` 未关闭（默认 `loopback`），
+   然后从两个不同出口 IP 各失败登录一次并观察限流计数互不影响——若发现
+   `journalctl` 里所有请求都记成 127.0.0.1，说明 nginx 没传
+   `X-Forwarded-For`（检查 `proxy_set_header` 是否仍在）。
+
+## 反代与客户端地址
+
+`app.set('trust proxy', …)` 默认取 `loopback`（见 `server/trusted-proxy.ts`）：
+只有当直连对端是回环地址时才采信 `X-Forwarded-For`。生产 nginx 与本服务同机，
+因此登录限流能按真实客户端 IP 分桶；若进程被意外暴露到公网，外部伪造的 XFF
+不会被采信。反代换到别的机器时用 `RDK_TRUST_PROXY=<该机器 IP/CIDR>` 显式声明。
+
 
 ## nginx 前缀（已上线，改动前备份 rdkstudio-ssl.conf）
 

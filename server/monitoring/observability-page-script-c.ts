@@ -45,38 +45,46 @@ export const OPS_OBSERVABILITY_SCRIPT_C = `      async function runChecks(){cons
       $('filterTrigger').addEventListener('click',event=>{event.stopPropagation();$('ruleFilters').classList.toggle('hidden')});$('ruleFilters').addEventListener('click',event=>event.stopPropagation());$('closeFilters').addEventListener('click',()=>$('ruleFilters').classList.add('hidden'));$('clearFilters').addEventListener('click',()=>{state.category='all';state.statusFilter='all';document.querySelectorAll('[data-category]').forEach(item=>item.classList.toggle('active',item.dataset.category==='all'));document.querySelectorAll('[data-status]').forEach(item=>item.classList.toggle('active',item.dataset.status==='all'));renderRules()});document.addEventListener('click',()=>$('ruleFilters').classList.add('hidden'));
       $('refresh').addEventListener('click',()=>loadAll(true));$('runChecks').addEventListener('click',runChecks);$('runEvolution').addEventListener('click',runEvolution);$('closeEditor').addEventListener('click',closeEditor);$('cancelEditor').addEventListener('click',closeEditor);$('testRule').addEventListener('click',testRule);$('saveRule').addEventListener('click',saveRule);$('closeTemplateEditor').addEventListener('click',()=>{state.templateEditing=false;$('templateEditorZone').classList.add('hidden');$('templateSummary').scrollIntoView({behavior:'smooth',block:'start'})});$('ruleDrawer').addEventListener('click',event=>{if(event.target===$('ruleDrawer'))closeEditor()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeEditor()});window.addEventListener('hashchange',()=>{const raw=location.hash.replace(/^#/,'');if(raw.startsWith('remediate=')){try{state.pendingRemediate=decodeURIComponent(raw.slice(10))}catch{state.pendingRemediate=raw.slice(10)}setView('overview',false);return}const alias=viewAliases[raw]||raw;if(viewNames.includes(raw)||viewNames.includes(alias))setView(raw,false)});
       const hashRaw=location.hash.replace(/^#/,'');if(hashRaw.startsWith('remediate=')){try{state.pendingRemediate=decodeURIComponent(hashRaw.slice(10))}catch{state.pendingRemediate=hashRaw.slice(10)}state.view='overview'}else{const alias=viewAliases[hashRaw]||hashRaw;/* Keep the raw alias for this first call so setView can open its legacy accordion. It canonicalizes state.view before loadAll runs. */state.view=(viewNames.includes(hashRaw)||viewNames.includes(alias))?(hashRaw||'overview'):'overview'}setView(state.view,false);
-      // 启动序列：SSO 会话存在时先恢复登录态（/auth/me），再决定数据加载
-      // 分支。无会话或中继未配置时行为与旧版一致（token 直连/匿名）。
+      // 启动序列：先问一次 /auth/me 恢复登录态（免登时身份由服务端从同源 Cookie
+      // 解析，前端本地可能一个凭证都没有），再决定进入哪个视图分支。
       (async()=>{
-        if(!opsSsoSession){loadAll();return}
+        if(typeof applyAuthMode!=='function'){loadAll();return}
         const me=await obsLoadMe();
-        if(!me||!me.user){
-          // 会话已过期：清掉本地会话，回落到登录屏（renderAccess 会在
-          // loadAll 的 401 路径接管）。token 直连用户不受影响。
-          try{sessionStorage.removeItem('d_obs_sso_session');sessionStorage.removeItem('d_obs_active_tenant')}catch{}
-          if(!opsAdminToken&&!opsTenantMode){renderAccess();return}
-          loadAll();return
+        const user=me&&me.user;
+        if(!user){
+          // 未登录：本地会话可能是真过期（清掉），也可能是网络抖动（obsLoadMe 返回
+          // null 时不要误清，避免把用户踢回登录屏）。
+          if(sessionStorage.getItem('d_obs_sso_session')&&!me){loadAll();return}
+          if(opsAdminToken||opsTenantMode){loadAll();return}
+          const enabled=await obsAccessEnabled();
+          if(enabled===true){loadAll();return}
+          renderAccess();return
         }
         renderObsAccountBar();
-        if(me.admin){
-          // SSO 管理员：完整工作台；已选租户的切换头不生效（admin 优先）。
-          loadAll();return
-        }
-        if(!me.tenants||!me.tenants.length){
-          renderObsNoTenantScreen(me.user);
-          return
-        }
-        // 已加入租户但尚未选择：默认选第一个租户（写回 sessionStorage 后
-        // 需要重建 opsMemberMode 常量所在的作用域——直接整页 reload 一次）。
-        if(!opsSsoActiveTenant){
-          try{sessionStorage.setItem('d_obs_active_tenant',me.tenants[0].tenantId)}catch{}
+        if(me.admin){applyAuthMode(me);loadAll();return}
+        const tenants=me.tenants||[];
+        if(!tenants.length){renderObsNoTenantScreen(user);return}
+        const active=obsActiveTenant();
+        if(!active||!tenants.some(item=>item.tenantId===active)){
+          // 已加入租户但尚未选择（或所选租户已失效）：默认选第一个，整页 reload
+          // 一次以重建 opsMemberMode / 租户头所在的作用域。
+          try{sessionStorage.setItem('d_obs_active_tenant',tenants[0].tenantId)}catch{}
           location.reload();return
         }
-        if(!me.tenants.some(item=>item.tenantId===opsSsoActiveTenant)){
-          try{sessionStorage.setItem('d_obs_active_tenant',me.tenants[0].tenantId)}catch{}
-          location.reload();return
-        }
+        applyAuthMode(me);
+        // #tenants 深链/刷新时 setView 早于本次 /auth/me 解析执行过，组员面板会按
+        // 「未登录」渲染成只读名单；身份到手后重渲染一次，owner 才有管理操作。
+        if(opsMemberMode&&state.view==='tenants'&&typeof renderObsMemberTenantsView==='function')renderObsMemberTenantsView();
         loadAll();
       })();
-      setInterval(()=>loadAll(false),30000);
+      }
+      if(typeof document!=='undefined'&&document.addEventListener){
+        document.addEventListener('visibilitychange',()=>{
+          if(document.visibilityState==='hidden'){obsPollStop();return}
+          // 回到前台：只在数据确实过期时补一次，避免频繁切换标签页放大请求。
+          if(!obsLastOkAt||Date.now()-obsLastOkAt>=OBS_POLL_BASE_MS)loadAll(false);
+          obsPollSchedule();
+        });
+      }
+      obsPollSchedule();
     })();`;

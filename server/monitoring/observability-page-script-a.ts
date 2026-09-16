@@ -22,16 +22,17 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
       const fmt = value => Number(value||0).toLocaleString();
       const pct = value => value==null?'—':(Number(value)*100).toFixed(1)+'%';
       const when = value => {if(!value)return '—';const date=new Date(value);return Number.isFinite(date.getTime())?date.toLocaleString('zh-CN',{hour12:false}):'—'};
-      function studioSessionHeaders(){try{const session=localStorage.getItem('rdk_sso_session_mirror');return session?{'X-RDK-Sso-Session':session}:{}}catch{return {}}}
+      // 主站会话镜像（localStorage）：桌面 / 非 https / 跨源场景下 Cookie 带不到，
+      // 镜像头是唯一凭证通道；同源 https 浏览器走 HttpOnly Cookie，由服务端直接读。
+      // 键名必须与 apiHeaders 的小写会话头一致——大小写不同的两个键会被 fetch 合并
+      // 成一个逗号值，服务端按 64-hex 校验会把整条会话判为无效。
+      function studioSessionHeaders(){try{const headers={};if(!sessionStorage.getItem('d_obs_sso_session')){const session=localStorage.getItem('rdk_sso_session_mirror');if(session)headers['x-rdk-sso-session']=session;const cloud=localStorage.getItem('rdk_sso_session_mirror_cloud');if(cloud)headers['x-rdk-sso-session-cloud']=cloud}return headers}catch{return {}}}
       // 主站 SSO 账号登录（组员/管理员）：/api/ops/auth/login 成功后把主站
       // 会话存 sessionStorage（键名与 Studio 镜像不同，避免互相踩踏）。
       function obsSsoSessionId(){try{return sessionStorage.getItem('d_obs_sso_session')||''}catch{return ''}}
       function obsActiveTenant(){try{return sessionStorage.getItem('d_obs_active_tenant')||''}catch{return ''}}
       const opsSsoSession = obsSsoSessionId();
       const opsSsoActiveTenant = obsActiveTenant();
-      // 组员视图模式：有 SSO 会话、选中了租户、且无 admin token（管理员
-      // token 优先，SSO 管理员靠 /auth/me 的 admin 标记判断）。
-      const opsMemberMode = Boolean(opsSsoSession && opsSsoActiveTenant && !opsAdminToken && !opsTenantToken);
       // /auth/me 的启动结果：{user, tenants, admin, relayConfigured}。
       const obsAuthState = {me:null};
       // 独立部署没有 Studio SSO 会话；用 URL ?ops-token= 一次性注入管理
@@ -45,9 +46,20 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
       function standaloneTenantToken(){try{const url=new URL(location.href);const fromUrl=url.searchParams.get('tenant-token');if(fromUrl){sessionStorage.setItem('d_obs_tenant_token',fromUrl);url.searchParams.delete('tenant-token');history.replaceState(null,'',url)}return sessionStorage.getItem('d_obs_tenant_token')||''}catch{return ''}}
       const opsTenantToken = standaloneTenantToken();
       const opsTenantMode = Boolean(opsTenantToken && !opsAdminToken);
+      // 组员视图模式：由 /auth/me 的结果决定（会话可能来自同源 HttpOnly Cookie 的
+      // 免登通道，此时 sessionStorage 里没有会话 id，不能拿它当判据）。启动时用
+      // token 存在性给一个保守初值，me 解析后由 applyAuthMode 重算——apiHeaders 是
+      // 闭包，按调用时刻读取该变量。声明必须排在两个 token 常量之后（const 暂时性死区）。
+      let opsMemberMode = Boolean(opsSsoSession && opsSsoActiveTenant && !opsAdminToken && !opsTenantToken);
+      function applyAuthMode(me){const user=me&&me.user;const tenants=(me&&me.tenants)||[];opsMemberMode=Boolean(user&&!me.admin&&tenants.length&&!opsAdminToken&&!opsTenantToken&&opsSsoActiveTenant);return opsMemberMode}
       const apiHeaders = mutation => Object.assign({'content-type':'application/json'},studioSessionHeaders(),opsAdminToken?{'x-admin-token':opsAdminToken}:{},opsTenantMode?{'x-tenant-token':opsTenantToken}:{},opsSsoSession?{'x-rdk-sso-session':opsSsoSession}:{},opsMemberMode?{'x-rdk-obs-tenant':opsSsoActiveTenant}:{},mutation?{'X-RDK-Ops-Action':'observability'}:{});
-      async function obsLogout(){try{await fetch(base+'/api/ops/auth/logout',{method:'POST',headers:{'content-type':'application/json','x-rdk-sso-session':opsSsoSession}})}catch{}try{sessionStorage.removeItem('d_obs_sso_session');sessionStorage.removeItem('d_obs_active_tenant')}catch{}location.reload()}
-      async function obsLoadMe(){try{const response=await fetch(base+'/api/ops/auth/me',{headers:apiHeaders(false),credentials:'same-origin'});if(!response.ok)return null;const data=await response.json().catch(()=>null);if(!data||!data.ok||!data.user)return null;obsAuthState.me=data;return data}catch{return null}};
+      // 退出：把四条本地凭证全部清掉。只清 SSO 会话会让同一标签页里的 token 直连
+      // 身份继续生效（刷新后仍是管理员，且会盖掉后续的账号登录）。
+      async function obsLogout(){try{await fetch(base+'/api/ops/auth/logout',{method:'POST',headers:Object.assign({'content-type':'application/json'},apiHeaders(false))})}catch{}try{['d_obs_sso_session','d_obs_active_tenant','d_obs_admin_token','d_obs_tenant_token'].forEach(key=>sessionStorage.removeItem(key))}catch{}location.reload()}
+      // 登录屏判定用公开只读端点（永远 200）：业务端点的 403 既可能是「未登录」，
+      // 也可能是某个模块域的权限降级，不能拿它当判据。
+      async function obsAccessEnabled(){try{const response=await fetch(base+'/api/ops/observability/access',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);return response.ok&&data&&data.ok?Boolean(data.enabled):null}catch{return null}}
+      async function obsLoadMe(){try{const response=await fetch(base+'/api/ops/auth/me',{headers:apiHeaders(false),credentials:'same-origin'});if(!response.ok)return null;const data=await response.json().catch(()=>null);if(!data||!data.ok)return null;obsAuthState.me=data;return data}catch{return null}};
       function toast(message, ok=true){const node=$('toast');node.textContent=message;node.className='toast show '+(ok?'ok':'bad');clearTimeout(toast.timer);toast.timer=setTimeout(()=>{node.className='toast'},3600)}
       function setFeedback(id,message,ok=true){const node=$(id);if(!node)return;node.textContent=message;node.className='feedback '+(ok?'ok':'bad')}
       function projectTelemetryState(kind,label){const next=['live','stale','error','unauthorized'].includes(kind)?kind:'unknown';const header=$('headerTelemetryStatus');if(header){header.className='header-live '+next;header.textContent=label||({live:'Telemetry 已接入',stale:'Telemetry 可能过期',error:'Telemetry 加载失败',unauthorized:'Telemetry 未授权',unknown:'Telemetry 未确认'})[next]}const scope=$('scopeStatus');if(scope){scope.className='scope-status '+next;scope.textContent=next==='live'?'数据持续接入':next==='stale'?'数据可能过期':next==='unauthorized'?'当前账号无权限':next==='error'?'数据加载失败':'等待真实数据'}}

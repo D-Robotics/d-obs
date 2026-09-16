@@ -26,9 +26,14 @@ import {
 } from './monitoring/external-probe-ingest.js';
 import { createTenant } from './monitoring/tenant-store.js';
 import { startTelemetryGovernanceRuntime } from './observability/governance-runtime-service.js';
+import { resolveTrustProxySetting } from './trusted-proxy.js';
 
 const app = express();
 app.disable('x-powered-by');
+// 反代信任：默认只在直连对端是回环时采信 X-Forwarded-For，让登录限流之类按
+// 真实客户端地址计数（生产是 nginx 反代到 127.0.0.1:18093）。取值说明见
+// server/trusted-proxy.ts。
+app.set('trust proxy', resolveTrustProxySetting());
 app.use(express.json({ limit: '2mb' }));
 app.get('/session-trace', (_request, response) => {
   response.type('html').send(SESSION_TRACE_HTML);

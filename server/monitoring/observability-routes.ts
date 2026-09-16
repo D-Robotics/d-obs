@@ -86,17 +86,20 @@ import {
   type ResolvedTenantAccess,
 } from './observability-access.js';
 import {
-  SSO_RELAY_SESSION_HEADER,
   SSO_RELAY_TENANT_HEADER,
   SsoRelayError,
   configureSsoRelayObservabilityAccess,
+  forgetSsoRelaySession,
   hydrateSsoRelaySession,
   loginViaSsoRelay,
   logoutViaSsoRelay,
-  normalizeSsoRelaySessionId,
   ssoRelayConfigured,
   ssoRelayLoginRateAllow,
+  ssoRelayRequestSessionId,
+  ssoRelaySessionCandidates,
+  ssoRelayUpstreamCookieHeader,
 } from './sso-relay.js';
+import { clientAddress } from '../trusted-proxy.js';
 
 const execFileAsync = promisify(execFile);
 let configWriteQueue: Promise<void> = Promise.resolve();
@@ -434,18 +437,25 @@ export function createOpsObservabilityRouter(): Router {
         return;
       }
     }
-    const ip = String(req.socket?.remoteAddress ?? 'unknown');
-    if (!ssoRelayLoginRateAllow(ip)) {
+    // 客户端地址优先取 trust proxy 解析出的真实 IP（配了反代才拿得到），
+    // 否则反代下所有请求共用回环地址、额度退化成全平台共享。账号维度独立限流，
+    // 使攻击者换 IP 也无法持续爆破同一个账号。
+    const ip = clientAddress(req);
+    if (!ssoRelayLoginRateAllow(ip, { userName })) {
       res.status(429).json({ ok: false, error: 'login_rate_limited' });
       return;
     }
     try {
-      const { user, sessionId } = await loginViaSsoRelay({ userName, password });
+      const { user, sessionId, setCookies } = await loginViaSsoRelay({ userName, password });
       await recordOpsConfigurationAudit({
         actor: user.email || user.name || user.id,
         action: 'sso_login',
         summary: `账号 ${userName} 登录可观测工作台`,
       }).catch(() => undefined);
+      // 主站登录成功时会下发 `rdk_sso_session` Cookie；d-obs 与主站同源，原样
+      // 透传给浏览器，使这次登录同时成为主站登录态（免登闭环），也让 iframe /
+      // 整表导出这类没有自定义头的请求重新带上凭证。
+      for (const cookie of setCookies) res.append('Set-Cookie', cookie);
       res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email }, sessionId });
     } catch (error) {
       if (error instanceof SsoRelayError) {
@@ -457,8 +467,14 @@ export function createOpsObservabilityRouter(): Router {
   });
 
   router.post('/api/ops/auth/logout', async (req: Request, res: Response) => {
-    const sid = normalizeSsoRelaySessionId(req.header(SSO_RELAY_SESSION_HEADER));
-    await logoutViaSsoRelay(sid).catch(() => undefined);
+    // 候选链（头 → Cookie）逐个失效：浏览器可能只有 Cookie（免登路径），也可能
+    // 两份镜像同时存在，只清头会留下另一份在 60s 缓存后复活。
+    const candidates = ssoRelaySessionCandidates(req);
+    const sid = ssoRelayRequestSessionId(req) || candidates[0] || '';
+    for (const candidate of candidates) forgetSsoRelaySession(candidate);
+    await logoutViaSsoRelay(sid, { cookieHeader: ssoRelayUpstreamCookieHeader(req) }).catch(
+      () => undefined,
+    );
     if (sid) {
       await recordOpsConfigurationAudit({
         actor: resolveOpsActor(req),
@@ -471,7 +487,8 @@ export function createOpsObservabilityRouter(): Router {
 
   router.get('/api/ops/auth/me', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');
-    const sid = normalizeSsoRelaySessionId(req.header(SSO_RELAY_SESSION_HEADER));
+    // 会话可能来自请求头（登录后前端写入）或同源 HttpOnly Cookie（主站免登）。
+    const sid = ssoRelayRequestSessionId(req);
     const user = sid ? (getSessionSsoUser(req) ?? null) : null;
     if (!user) {
       res.json({ ok: true, user: null, admin: false, relayConfigured: ssoRelayConfigured() });

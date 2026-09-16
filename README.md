@@ -117,16 +117,23 @@ npm start
 
 ### 浏览器打开（独立部署）
 
-独立部署没有业务站点的 SSO 会话，用带 token 的入口地址打开工作台：
+**与业务站同源部署时（推荐）：已在业务站登录的账号直接打开工作台即可**——
+主站会话 Cookie（`rdk_sso_session`，`Path=/; HttpOnly`）会随请求到达 d-obs，
+服务端转发主站 `/api/sso/me` 验证后解析出身份，无需二次输入密码。账号登录
+（`/api/ops/auth/login`）也会把主站下发的 `Set-Cookie` 透传回浏览器，使 d-obs
+登录同时成为主站登录态。详见 [docs/tenant-members.md](./docs/tenant-members.md)。
+
+免登不可用（跨源/桌面/未配中继）时，仍可用带 token 的入口地址打开工作台：
 
 ```text
 http://<host>:<port>/ops-observability?ops-token=<RDK_CREDITS_ADMIN_TOKEN 的值>
 ```
 
 token 会一次性写入 sessionStorage（随后从地址栏移除），后续 API 请求自动带上
-`x-admin-token`。注意：行动环（evidence-proof 行动队列）要求 SSO 账号身份，
-admin-token 直连下该模块显示"当前账号没有运营配置权限"，属预期降级——
-告警、事故、规则、模型池、数据库面板不受影响。
+`x-admin-token`。注意：行动环（evidence-proof 行动队列）要求 SSO 账号身份且在
+`RDK_FLYWHEEL_ADMIN_USER_IDS` 白名单内，admin-token 直连下该模块显示"当前账号没有
+运营配置权限"，属预期降级——告警、事故、规则、模型池、数据库面板不受影响。
+
 
 ## 多团队租户（自助接入 + 数据隔离）
 
@@ -210,6 +217,10 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_CHAT_CREDITS_DB_URL` | ✅ | 中心 PostgreSQL 连接串（数据面真源） |
 | `RDK_CREDITS_ADMIN_TOKEN` | ✅ | 运营 token（`x-admin-token` 头） |
 | `RDK_TENANT_REGISTRATION_TOKEN` |  | 租户自助注册 token（`x-registration-token` 头；不配 = 注册端点关闭，fail-closed） |
+| `RDK_SSO_RELAY_BASE_URL` |  | 主站 SSO 中继地址（生产 `http://127.0.0.1:18090`）。配了才有账号登录与**同源 Cookie 免登**；不配 = 登录端点 503 fail-closed，token 入口不受影响 |
+| `RDK_SSO_RELAY_LOGIN_RATE_MAX` |  | 登录端点**按客户端地址**的限流上限（默认 20 次/15 分钟） |
+| `RDK_SSO_RELAY_LOGIN_ACCOUNT_RATE_MAX` |  | 登录端点**按目标账号**的限流上限（默认 10 次/15 分钟），挡单账号爆破 |
+| `RDK_TRUST_PROXY` |  | 反代信任范围。默认 `loopback`（只在直连对端是回环时采信 X-Forwarded-For，匹配同机 nginx）；`0`/`off` 关闭；也可填 CIDR 列表。影响登录限流按真实客户端 IP 计数 |
 | `PORT` |  | HTTP 端口，默认 `47110` |
 | `RDK_DATA_DIR` |  | 本地状态/配置目录（默认数据布局） |
 | `RDK_GATEWAY_ADMIN_URL` / `GATEWAY_ADMIN_KEY` |  | 模型池网关 admin API 地址与密钥（默认 `127.0.0.1:3100`） |
@@ -217,7 +228,7 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL` |  | Langfuse 公开看板 URL，配置后 Agent Trace 面板嵌入它 |
 | `RDK_OBSERVABILITY_ENVIRONMENT` |  | 环境标注（production/dev），写入事件投影 |
 | `RDK_EXTERNAL_PROBE_TOKEN_PATH` |  | 平台外部探针 token 文件路径（默认 `/var/lib/rdstudio-alert-worker/external-probe-token`） |
-| `RDK_FLYWHEEL_ADMIN_USER_IDS` |  | SSO admin 用户 ID 逗号表（与业务站共用身份时用） |
+| `RDK_FLYWHEEL_ADMIN_USER_IDS` |  | SSO admin 用户 ID 逗号表（与业务站共用身份时用）。**不配 = 任何 SSO 账号都不是管理员，行动环对所有人 403** |
 
 ### 鉴权语义（与上游同源，独立部署可用）
 
