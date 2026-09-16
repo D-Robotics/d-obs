@@ -46,7 +46,10 @@ schema 由服务进程幂等自建（启动后首次访问自动创建，无需�
   `http://127.0.0.1:18090`），返回主站会话 `sessionId`；并把主站下发的
   `Set-Cookie`（白名单：`rdk_sso_session` / `rdk_sso_web_session`）**透传给
   浏览器**，使这次登录同时成为主站登录态（免登闭环），也让 iframe、整表导出
-  这类没有自定义头的请求重新带上凭证。d-obs 不接触 `SSO_DIRECT_AES_KEY`。
+  这类没有自定义头的请求重新带上凭证。**登录中继本身不需要 `SSO_DIRECT_AES_KEY`**
+  （凭据只在回环上转发给主站，AES 由主站处理）；但该密钥在 d-obs 里另有兜底用途：
+  未配置 `RDK_SYNTHETIC_PROBE_HMAC_SECRET` 时它被当作合成探针签名密钥，故并非
+  「完全不接触」。建议显式配置专用密钥，避免复用主站密钥（见 README「密钥与兜底链」）。
 - 会话校验：服务端 `GET /api/sso/me` 验证（要求 `payload.user.id` 非空；本地
   会话必须 `sessionId` 回显一致，云镜像恢复路径接受回显的新会话 id），结果
   缓存 60s（正负都缓存）。转发时只带 SSO 白名单内的 Cookie，不顺带外发同源

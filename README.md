@@ -234,7 +234,31 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL` |  | Langfuse 公开看板 URL，配置后 Agent Trace 面板嵌入它 |
 | `RDK_OBSERVABILITY_ENVIRONMENT` |  | 环境标注（production/dev），写入事件投影 |
 | `RDK_EXTERNAL_PROBE_TOKEN_PATH` |  | 平台外部探针 token 文件路径（默认 `/var/lib/rdstudio-alert-worker/external-probe-token`） |
+| `RDK_ALERT_SHADOW_MODE` |  | 告警通知影子模式（默认 true = 只记录不外发）。仅在告警配置文件尚无通道时作为首次迁移兜底 |
+| `RDK_ALERT_WEBHOOK_URL` / `RDK_ALERT_WEBHOOK_SECRET` / `RDK_ALERT_FEISHU_WEBHOOK` / `RDK_ALERT_FEISHU_SIGN_SECRET` |  | 通用 Webhook / 飞书通道的首次迁移兜底（同上前提） |
+| `RDK_ALERT_STATE_PATH` |  | 告警 worker 状态文件路径 |
+| `RDK_ALERT_DISK_PATH` / `RDK_ALERT_SYSTEMD_SERVICE` / `RDK_ALERT_NGINX_ACCESS_LOG` / `RDK_ALERT_POSTGRES_CONTAINER` / `RDK_ALERT_PUBLIC_HEALTH_URL` / `RDK_ALERT_GATEWAY_TARGET_HEALTH_FILES` |  | 告警 worker 各内置检查的目标与日志路径（磁盘、systemd 服务、nginx 日志、PG 容器、公网健康、网关目标健康文件） |
+| `RDK_ALERT_LOG_ERRORS` |  | `1` = 把告警/事件写入失败打到日志（默认静默） |
+| `RDK_SYNTHETIC_PROBE_HMAC_SECRET` |  | 合成探针签名密钥（≥16 字节）。不配则回落到 `SSO_DIRECT_AES_KEY`；两者都没有时**拒绝执行**未签名探针 |
+| `RDK_OBSERVABILITY_LOCATOR_SECRET` |  | Run locator 的 AEAD 密钥材料。不配则回落 `RDK_CREDITS_ADMIN_TOKEN` → `SSO_CLIENT_SECRET`；生产环境无可用材料会**直接抛错**。轮换上游密钥会让既有 locator 失效 |
+| `RDK_TELEMETRY_AUDIT_REFERENCE_SECRET` |  | 遥测审计引用密钥（≥16 字节）。不配则回落 `SSO_CLIENT_SECRET`；都没有时审计视为未配置，受保护的 Trace 读操作**按 fail-closed 拒绝** |
+| `STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL` 之外的 `STUDIO_LANGFUSE_PROJECT_REF` / `STUDIO_LANGFUSE_TRACE_ORIGIN` / `STUDIO_LANGFUSE_ALLOWED_ORIGINS` |  | Langfuse 看板嵌入的项目标识、Trace 跳转 origin 与允许的 iframe 来源 |
+| `STUDIO_OTEL_COLLECTOR_MODE` / `STUDIO_TRACE_COLLECTOR_EXPORT` |  | Trace 采集/导出模式开关 |
+| `RDK_CENTRAL_TELEMETRY_LOG_ERRORS` |  | `1` = 中央遥测上报失败打日志 |
+| `RDK_STUDIO_AGENT_TTFT_PROBE_ENABLED` / `_URL` / `_MODEL` / `_INTERVAL_MINUTES` / `_TIMEOUT_MS` 与 `RDK_STUDIO_AGENT_TTFT_SLO_MS` |  | Agent 首字延迟（TTFT）探测与 SLO 阈值 |
 | `RDK_FLYWHEEL_ADMIN_USER_IDS` |  | SSO admin 用户 ID 逗号表（与业务站共用身份时用）。**不配 = 任何 SSO 账号都不是管理员，行动环对所有人 403** |
+
+### 密钥与兜底链
+
+几处密钥有「专用变量 → 上游变量」的兜底链，未配置时的后果各不相同，部署时建议显式配置专用变量：
+
+| 用途 | 专用变量 | 回落顺序 | 都没有时 |
+| --- | --- | --- | --- |
+| 合成探针签名 | `RDK_SYNTHETIC_PROBE_HMAC_SECRET` | → `SSO_DIRECT_AES_KEY` | 拒绝执行未签名探针（fail-closed） |
+| Run locator 密封 | `RDK_OBSERVABILITY_LOCATOR_SECRET` | → `RDK_CREDITS_ADMIN_TOKEN` → `SSO_CLIENT_SECRET` | 生产环境抛错；非生产用进程内随机值（重启即失效） |
+| 遥测审计引用 | `RDK_TELEMETRY_AUDIT_REFERENCE_SECRET` | → `SSO_CLIENT_SECRET` | 审计视为未配置，受保护的 Trace 读操作 fail-closed 拒绝 |
+
+注意两点：复用上游密钥意味着**轮换上游密钥会连带失效**既有 locator / 审计引用；`SSO_DIRECT_AES_KEY` 与 `SSO_CLIENT_SECRET` 虽属主站，但 d-obs 确实会读取它们作为上述兜底，排查时不要误以为「d-obs 完全不碰主站密钥」。
 
 ### 鉴权语义（与上游同源，独立部署可用）
 
