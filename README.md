@@ -14,7 +14,7 @@
 | **事故管理** | 工作台“事故调查” | 事故工作台、负责人、活动记录、AI 事故副驾（证据化根因假设） |
 | **证据化行动环** | `/api/ops/observability/actions` | 所有变更类操作走“提案→带证据 proof→他人审批→白名单剧本执行→后置验证”闭环；不提供裸执行 |
 | **自愈** | worker | 白名单剧本（nginx reload 前置校验、重启 alert-worker 等），冷却期 + 双人审批 |
-| **链路追踪** | 工作台“链路追踪” | Agent 原生 Trace（Langfuse 公开看板嵌入）+ 会话 Trace（`/session-trace`，按 sessionId 重放 run/模型/工具/审批） |
+| **链路追踪** | 工作台“链路追踪” | Agent 原生 Trace（Langfuse 公开看板嵌入）+ 运行证据链（`GET /api/ops/observability/runs/:locator`，按 run 下钻模型/工具/审批） |
 | **运营指标** | 工作台“运营指标” | 按天 token 消耗、新增用户、DAU、对话次数、Agent Run |
 | **数据库资产** | 工作台“数据库” | PostgreSQL 运行状态、表目录/关系图、分页预览、整表 CSV 导出、**AI 自然语言→只读脱敏 SQL**（仅 `ops_ai` 视图） |
 | **模型池控制面** | 工作台“模型池” | 3100/3101 网关目标健康（成功率/P95/并发/冷却）、单目标真实探测、路由优先级（fallback 顺序+权重）、目标替换（Agent 主路由受保护） |
@@ -302,7 +302,6 @@ push/PR 时跑 typecheck + test + 无数据库冒烟启动。
 | --- | --- |
 | `server/monitoring/` | 工作台页面与页面脚本、路由、告警、投递、自愈、行动环、模型池 |
 | `server/observability/` | run locator、trace list store、治理审计 |
-| `server/agent-observability/` | 会话 Trace 页面 |
 | `server/flywheel/` | 运营指标 / 增长聚合 store |
 | `server/credits/` | 模型池网关 admin client 与凭据管理 |
 | `server/evolution/` | 每日自我进化（候选治理） |

@@ -18,7 +18,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { createOpsObservabilityRouter } from './monitoring/observability-routes.js';
-import { SESSION_TRACE_HTML } from './agent-observability/session-trace-page.js';
 import {
   parseExternalProbeReport,
   recordExternalProbeReport,
@@ -36,9 +35,6 @@ app.disable('x-powered-by');
 // server/trusted-proxy.ts。
 app.set('trust proxy', resolveTrustProxySetting());
 app.use(express.json({ limit: '2mb' }));
-app.get('/session-trace', (_request, response) => {
-  response.type('html').send(SESSION_TRACE_HTML);
-});
 
 function registrationTokenMatches(provided: unknown): boolean {
   const expected = String(process.env.RDK_TENANT_REGISTRATION_TOKEN ?? '').trim();

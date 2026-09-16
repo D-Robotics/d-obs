@@ -10,7 +10,6 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/ops-observability` | 工作台 HTML（可直接打开，数据请求才鉴权） |
-| GET | `/session-trace` | 会话 Trace 独立页 |
 | GET | `/api/ops/observability/access` | 当前请求是否运营 admin（探活/自检） |
 | GET | `/api/ops/observability/overview?hours=24` | 总览：检查、事故、告警状态、行动队列 |
 | GET | `/api/ops/observability/config` | 告警配置（definitions + rules + 通道） |

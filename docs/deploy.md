@@ -104,7 +104,7 @@ location /dobs/ {
 前缀兼容性依赖两点，改代码时不能破坏：
 
 - 客户端 API base 从 `location.pathname` 剥离 `/ops-observability` 推导（前缀自适应）；
-- 页面内跳转用相对路径（`./ops-observability`、`./session-trace`）。
+- 页面内跳转用相对路径（`./ops-observability`）。
 
 ## 并存说明
 
