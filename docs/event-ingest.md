@@ -54,6 +54,8 @@
 # 仓内已提供脚本与 unit（ops/retention/）
 install -m 0644 ops/retention/tenant-events-retention.{service,timer} /etc/systemd/system/
 install -d /opt/d-obs/tools && install -m 0755 tools/trim-tenant-events.mjs /opt/d-obs/tools/
+# 脚本放在 tools/（跨 release），但 pg 在 release 内：需要这条软链，否则 ERR_MODULE_NOT_FOUND
+ln -sfn /opt/d-obs/current/node_modules /opt/d-obs/node_modules
 systemctl daemon-reload && systemctl enable --now tenant-events-retention.timer
 systemctl list-timers tenant-events-retention.timer      # 核对下次触发
 # 手动跑一次（保留天数默认 30，可传参）

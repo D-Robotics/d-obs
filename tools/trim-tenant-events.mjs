@@ -12,7 +12,19 @@
  *   RDK_CHAT_CREDITS_DB_URL=... node tools/trim-tenant-events.mjs [保留天数]
  * 默认保留 30 天，与平台事件表一致。失败以非零码退出，便于 systemd 记录。
  */
-import pg from 'pg';
+// 动态导入并给出可操作的错误：脚本装在 /opt/d-obs/tools/（跨 release，升级不影响），
+// 而 pg 在 release 内，因此需要 /opt/d-obs/node_modules → current/node_modules 软链。
+let pg;
+try {
+  pg = (await import('pg')).default;
+} catch {
+  console.error(
+    '[trim-tenant-events] 无法加载 pg 模块：请在部署机上执行\n' +
+      '  ln -sfn /opt/d-obs/current/node_modules /opt/d-obs/node_modules\n' +
+      '（见 docs/event-ingest.md 的安装步骤）',
+  );
+  process.exit(3);
+}
 
 const RETENTION_DAYS = Math.max(1, Math.min(3650, Number(process.argv[2]) || 30));
 const connectionString = String(process.env.RDK_CHAT_CREDITS_DB_URL ?? '').trim();
