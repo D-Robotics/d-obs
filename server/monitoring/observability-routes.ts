@@ -137,6 +137,19 @@ function queryBoolean(query: Record<string, unknown>, key: string): boolean | un
   return undefined;
 }
 
+/**
+ * 回给客户端的错误码。
+ *
+ * 只放行机器码形状（与行动路由的 safeErrorCode 同规），其余一律用调用方给的兜底码：
+ * 直接把 `error.message` 回传会把 Postgres 原始错误（关系名、列名、约束名）泄露给
+ * 浏览器——真机验证时 `GET /tenants` 就曾把 `关系 "public.studio_external_probe_status"
+ * 不存在` 原样返回。
+ */
+function clientErrorCode(error: unknown, fallback: string): string {
+  const raw = error instanceof Error ? error.message : '';
+  return /^[a-z][a-z0-9_]{2,80}$/.test(raw) ? raw : fallback;
+}
+
 const publicObservabilityStore = getPublicObservabilityStore();
 
 export function isProtectedAgentFrontendModel(
@@ -640,7 +653,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(500).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'observability_query_failed',
+          error: clientErrorCode(error, 'observability_query_failed'),
         });
       }
     },
@@ -664,7 +677,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(503).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'postgres_dashboard_query_failed',
+          error: clientErrorCode(error, 'postgres_dashboard_query_failed'),
         });
       }
     },
@@ -755,7 +768,7 @@ export function createOpsObservabilityRouter(): Router {
         }
         res.status(503).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'postgres_table_detail_query_failed',
+          error: clientErrorCode(error, 'postgres_table_detail_query_failed'),
         });
       }
     },
@@ -816,7 +829,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(503).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'operator_metrics_query_failed',
+          error: clientErrorCode(error, 'operator_metrics_query_failed'),
         });
       }
     },
@@ -842,7 +855,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(500).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'observability_objects_failed',
+          error: clientErrorCode(error, 'observability_objects_failed'),
         });
       }
     },
@@ -889,7 +902,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(500).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'observability_object_detail_failed',
+          error: clientErrorCode(error, 'observability_object_detail_failed'),
         });
       }
     },
@@ -1072,7 +1085,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(500).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'ops_event_detail_failed',
+          error: clientErrorCode(error, 'ops_event_detail_failed'),
         });
       }
     },
@@ -1094,7 +1107,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(500).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'alert_config_read_failed',
+          error: clientErrorCode(error, 'alert_config_read_failed'),
         });
       }
     },
@@ -1140,7 +1153,7 @@ export function createOpsObservabilityRouter(): Router {
     } catch (error) {
       res.status(503).json({
         ok: false,
-        error: sanitizeOpsSummary(error, 240) || 'tenant_list_unavailable',
+        error: clientErrorCode(error, 'tenant_list_unavailable'),
       });
     }
   });
@@ -1180,7 +1193,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(503).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'tenant_members_unavailable',
+          error: clientErrorCode(error, 'tenant_members_unavailable'),
         });
       }
     },
@@ -1224,7 +1237,7 @@ export function createOpsObservabilityRouter(): Router {
         }
         res.status(400).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'tenant_member_add_failed',
+          error: clientErrorCode(error, 'tenant_member_add_failed'),
         });
       }
     },
@@ -1269,7 +1282,7 @@ export function createOpsObservabilityRouter(): Router {
         }
         res.status(400).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'tenant_member_role_failed',
+          error: clientErrorCode(error, 'tenant_member_role_failed'),
         });
       }
     },
@@ -1308,7 +1321,7 @@ export function createOpsObservabilityRouter(): Router {
         }
         res.status(400).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'tenant_member_remove_failed',
+          error: clientErrorCode(error, 'tenant_member_remove_failed'),
         });
       }
     },
@@ -1336,7 +1349,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(400).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'tenant_create_failed',
+          error: clientErrorCode(error, 'tenant_create_failed'),
         });
       }
     },
@@ -1364,7 +1377,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(400).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'tenant_token_rotate_failed',
+          error: clientErrorCode(error, 'tenant_token_rotate_failed'),
         });
       }
     },
@@ -1392,7 +1405,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(400).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'tenant_status_failed',
+          error: clientErrorCode(error, 'tenant_status_failed'),
         });
       }
     },
@@ -1418,7 +1431,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(503).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'model_pool_unavailable',
+          error: clientErrorCode(error, 'model_pool_unavailable'),
         });
       }
     },
@@ -1445,7 +1458,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res
           .status(502)
-          .json({ ok: false, error: sanitizeOpsSummary(error, 240) || 'model_probe_failed' });
+          .json({ ok: false, error: clientErrorCode(error, 'model_probe_failed') });
       }
     },
   );
@@ -1491,7 +1504,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(400).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'model_routing_update_failed',
+          error: clientErrorCode(error, 'model_routing_update_failed'),
         });
       }
     },
@@ -1538,7 +1551,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res
           .status(400)
-          .json({ ok: false, error: sanitizeOpsSummary(error, 240) || 'model_replacement_failed' });
+          .json({ ok: false, error: clientErrorCode(error, 'model_replacement_failed') });
       }
     },
   );
@@ -1607,7 +1620,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(400).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'incident_action_failed',
+          error: clientErrorCode(error, 'incident_action_failed'),
         });
       }
     },
@@ -1635,7 +1648,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(500).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'notification_test_failed',
+          error: clientErrorCode(error, 'notification_test_failed'),
         });
       }
     },
@@ -1655,7 +1668,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(500).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'alert_worker_start_failed',
+          error: clientErrorCode(error, 'alert_worker_start_failed'),
         });
       }
     },
@@ -1672,7 +1685,7 @@ export function createOpsObservabilityRouter(): Router {
       } catch (error) {
         res.status(500).json({
           ok: false,
-          error: sanitizeOpsSummary(error, 240) || 'remediation_overview_failed',
+          error: clientErrorCode(error, 'remediation_overview_failed'),
         });
       }
     },

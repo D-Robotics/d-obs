@@ -161,14 +161,27 @@ export async function listTenants(): Promise<
 > {
   const p = await pool();
   await ensureTenantsSchema(p);
-  const result = await p.query(
-    `select t.tenant_id, t.display_name, t.status, t.created_at, t.created_by,
-            max(s.reported_at) last_report_at
-       from public.studio_obs_tenants t
-       left join public.studio_external_probe_status s on s.tenant_id = t.tenant_id
-      group by t.tenant_id
-      order by t.created_at desc`,
-  );
+  const result = await p
+    .query(
+      `select t.tenant_id, t.display_name, t.status, t.created_at, t.created_by,
+              max(s.reported_at) last_report_at
+         from public.studio_obs_tenants t
+         left join public.studio_external_probe_status s on s.tenant_id = t.tenant_id
+        group by t.tenant_id
+        order by t.created_at desc`,
+    )
+    .catch(async (error) => {
+      // studio_external_probe_status 由拨测摄取在首次写入时创建：全新库在首份上报
+      // 之前没有这张表，租户列表不该因此 503（此前会把 Postgres 原始错误回给客户端）。
+      // 退回不带「最近上报」的查询，表出现后自动恢复。
+      if ((error as { code?: string }).code !== '42P01') throw error;
+      return p.query(
+        `select tenant_id, display_name, status, created_at, created_by,
+                null as last_report_at
+           from public.studio_obs_tenants
+          order by created_at desc`,
+      );
+    });
   return result.rows.map((row) => ({
     ...rowToTenant(row),
     lastReportAt:

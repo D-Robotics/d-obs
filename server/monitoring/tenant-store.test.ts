@@ -39,3 +39,61 @@ test('租户 token：64-hex 随机、不可预测；哈希确定且与原文可�
   // 哈希不等于原文（库中只存哈希的前提）。
   assert.notEqual(hashTenantToken(a), a);
 });
+
+test('listTenants：全新库尚未建拨测表时退回不带最近上报的查询（不再 503）', async () => {
+  const { configureTenantPoolForTest, listTenants, invalidateTenantTokenCache } = await import(
+    './tenant-store.js'
+  );
+  invalidateTenantTokenCache();
+  const queries: string[] = [];
+  const missingTable = Object.assign(new Error('relation "public.studio_external_probe_status" does not exist'), {
+    code: '42P01',
+  });
+  configureTenantPoolForTest({
+    query: async (text: string) => {
+      queries.push(text);
+      if (/create (table|index)/.test(text)) return { rows: [] };
+      // 首次带 join 的查询模拟真库缺表；退回查询（无 join）正常返回。
+      if (text.includes('studio_external_probe_status')) throw missingTable;
+      return {
+        rows: [
+          {
+            tenant_id: 'team-a',
+            display_name: 'A 队',
+            status: 'active',
+            created_at: new Date(0),
+            created_by: 'test',
+            last_report_at: null,
+          },
+        ],
+      };
+    },
+  });
+  try {
+    const tenants = await listTenants();
+    assert.equal(tenants.length, 1);
+    assert.equal(tenants[0].tenantId, 'team-a');
+    // 退回的查询不含 join 到缺失表。
+    assert.ok(queries.some((q) => q.includes('null as last_report_at')));
+    assert.equal(tenants[0].lastReportAt, null);
+  } finally {
+    configureTenantPoolForTest(null);
+  }
+});
+
+test('listTenants：非缺表错误仍然抛出（不退化成静默空列表）', async () => {
+  const { configureTenantPoolForTest, listTenants } = await import('./tenant-store.js');
+  configureTenantPoolForTest({
+    query: async (text: string) => {
+      if (/create (table|index)/.test(text)) return { rows: [] };
+      throw Object.assign(new Error('permission denied for table studio_obs_tenants'), {
+        code: '42501',
+      });
+    },
+  });
+  try {
+    await assert.rejects(() => listTenants(), /permission denied/);
+  } finally {
+    configureTenantPoolForTest(null);
+  }
+});
