@@ -447,6 +447,50 @@ function normalizedCatalogName(value: unknown): string {
   return name;
 }
 
+/**
+ * 可选的数据库面板表白名单（`RDK_DB_PANEL_TABLES`）。
+ *
+ * 未配置 = 不限制（与历史行为一致，面板可浏览中心库全部表）。配置后只允许
+ * 名单内的表被列出/查看/导出，用来收敛「admin token ≈ 共用中心库整库只读」
+ * 这个面：例如只放可观测相关表 `RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_ops_events`。
+ *
+ * 条目写法：`table`（默认 public schema）或 `schema.table`，逗号/空白分隔。
+ * 判定大小写不敏感（Postgres 未加引号的标识符会折叠为小写）。
+ */
+export function postgresDashboardTableAllowlist(
+  env: Record<string, string | undefined> = process.env,
+): Set<string> {
+  const raw = String(env.RDK_DB_PANEL_TABLES ?? '').trim();
+  if (!raw) return new Set();
+  const entries = raw
+    .split(/[\s,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => (value.includes('.') ? value : `public.${value}`).toLowerCase());
+  return new Set(entries);
+}
+
+/** 未配置白名单时全部放行；配置后只放行名单内的 `schema.table`。 */
+export function isPostgresDashboardTableAllowed(
+  schemaName: unknown,
+  tableName: unknown,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const allowlist = postgresDashboardTableAllowlist(env);
+  if (tableAllowlistEmpty(allowlist)) return true;
+  return allowlist.has(`${String(schemaName ?? '').trim()}.${String(tableName ?? '').trim()}`.toLowerCase());
+}
+
+function tableAllowlistEmpty(allowlist: Set<string>): boolean {
+  return allowlist.size === 0;
+}
+
+function assertTableAllowed(schemaName: string, tableName: string): void {
+  if (isPostgresDashboardTableAllowed(schemaName, tableName)) return;
+  // 用 404 而不是 403：白名单是「这张表不在面板里」，不需要向调用方确认它是否存在。
+  throw new PostgresTableDetailError('postgres_table_not_found', 404);
+}
+
 function quoteIdentifier(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
 }
@@ -903,7 +947,15 @@ export async function collectPostgresDashboard(
     trendMap.set(bucketValue, values);
   }
 
-  const tables = tableResult.rows.map((row) => {
+  // 白名单过滤一次，供目录列表与关系图共用：关系图的节点/外键边都从这批行派生，
+  // 只过滤 tables 会让非白名单表以节点名重新出现在图里。
+  const allowedTableRows = tableResult.rows.filter((row) =>
+    isPostgresDashboardTableAllowed(
+      String(row.schemaname ?? 'public'),
+      String(row.relname ?? ''),
+    ),
+  );
+  const tables = allowedTableRows.map((row) => {
     const liveRows = finiteNumber(row.n_live_tup);
     const deadRows = finiteNumber(row.n_dead_tup);
     const sequentialScans = finiteNumber(row.seq_scan);
@@ -962,7 +1014,7 @@ export async function collectPostgresDashboard(
       .map(([trendBucket, values]) => ({ bucket: trendBucket, values })),
     relationshipGraph: buildPostgresRelationshipGraph(
       database.database_name,
-      tableResult.rows,
+      allowedTableRows,
       relationshipResult.rows,
     ),
     tables,
@@ -987,6 +1039,7 @@ export async function collectPostgresTableDetail(
 ): Promise<PostgresTableDetail> {
   const schemaName = normalizedCatalogName(options.schemaName);
   const tableName = normalizedCatalogName(options.tableName);
+  assertTableAllowed(schemaName, tableName);
   const page = clampTablePage(options.page);
   const pageSize = clampTablePageSize(options.pageSize);
   return withReadOnlyStatementTimeout(p, TABLE_DETAIL_QUERY_TIMEOUT_MS, async (target) => {
@@ -1084,6 +1137,7 @@ export async function collectPostgresTableCsvExport(
 ): Promise<PostgresTableCsvExport> {
   const schemaName = normalizedCatalogName(options.schemaName);
   const tableName = normalizedCatalogName(options.tableName);
+  assertTableAllowed(schemaName, tableName);
   const [relationResult, columnResult] = await Promise.all([
     pool.query(TABLE_DETAIL_RELATION_SQL, [schemaName, tableName]),
     pool.query(TABLE_DETAIL_COLUMNS_SQL, [schemaName, tableName]),

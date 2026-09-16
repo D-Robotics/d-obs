@@ -77,6 +77,27 @@ export const OPS_OBSERVABILITY_SCRIPT_C = `      async function runChecks(){cons
         if(opsMemberMode&&state.view==='tenants'&&typeof renderObsMemberTenantsView==='function')renderObsMemberTenantsView();
         loadAll();
       })();
+      // ---- 轮询节流 ----
+      // 原来是无条件 setInterval(30s)：每个打开的工作台（含被切到后台的标签页）
+      // 都会持续全量拉 overview + 各域数据，每次请求还会触发一次 SSO 会话校验。
+      // 现在：隐藏标签页完全不发请求；回到前台若数据已过期先补一次；连续失败按
+      // 指数退避（30s→60s→…→上限 5 分钟），一次成功即复位。
+      // obsLastOkAt 由 applyOverviewSnapshot 更新——它是租户/组员/平台三条加载
+      // 分支共同的成功出口。
+      const OBS_POLL_BASE_MS=30000;
+      const OBS_POLL_MAX_MS=300000;
+      let obsPollTimer=null;
+      let obsPollFailures=0;
+      function obsPollInterval(){return Math.min(OBS_POLL_MAX_MS,OBS_POLL_BASE_MS*Math.pow(2,Math.min(obsPollFailures,4)))}
+      function obsPollStop(){if(obsPollTimer){clearTimeout(obsPollTimer);obsPollTimer=null}}
+      function obsPollSchedule(){obsPollStop();if(typeof document==='undefined'||document.visibilityState==='hidden')return;obsPollTimer=setTimeout(obsPollTick,obsPollInterval())}
+      async function obsPollTick(){
+        obsPollTimer=null;
+        if(typeof document!=='undefined'&&document.visibilityState==='hidden')return;
+        try{await loadAll(false)}catch{}
+        if(obsLastOkAt&&Date.now()-obsLastOkAt<obsPollInterval())obsPollFailures=0;
+        else obsPollFailures+=1;
+        obsPollSchedule();
       }
       if(typeof document!=='undefined'&&document.addEventListener){
         document.addEventListener('visibilitychange',()=>{

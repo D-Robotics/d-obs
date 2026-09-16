@@ -61,6 +61,20 @@ env 文件在服务器 `/etc/d-obs/probes/<project>.env`。
    `journalctl` 里所有请求都记成 127.0.0.1，说明 nginx 没传
    `X-Forwarded-For`（检查 `proxy_set_header` 是否仍在）。
 
+## 数据库面板的表范围（可选收紧）
+
+`/api/ops/observability/database*` 是运营只读取证面：凭据/密钥类列按名字启发式
+隐藏（含 CSV 导出），但**表级默认不设限**——而 d-obs 与业务站共用中心库，所以
+admin token ≈ 对该库整库只读。需要收紧时在 `/etc/d-obs.env` 配白名单：
+
+```
+# 只允许看可观测相关表（裸表名默认 public schema）
+RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_alert_checks,studio_ops_events,studio_obs_tenants
+```
+
+配置后目录列表、关系图、表详情、整表 CSV 四个面一致收敛；白名单外的表按
+「不存在」（404）返回，不确认其是否存在。不配置 = 保持现状（全部可见）。
+
 ## 反代与客户端地址
 
 `app.set('trust proxy', …)` 默认取 `loopback`（见 `server/trusted-proxy.ts`）：

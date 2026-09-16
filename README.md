@@ -225,6 +225,7 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_SSO_RELAY_BASE_URL` |  | 主站 SSO 中继地址（生产 `http://127.0.0.1:18090`）。配了才有账号登录与**同源 Cookie 免登**；不配 = 登录端点 503 fail-closed，token 入口不受影响 |
 | `RDK_SSO_RELAY_LOGIN_RATE_MAX` |  | 登录端点**按客户端地址**的限流上限（默认 20 次/15 分钟） |
 | `RDK_SSO_RELAY_LOGIN_ACCOUNT_RATE_MAX` |  | 登录端点**按目标账号**的限流上限（默认 10 次/15 分钟），挡单账号爆破 |
+| `RDK_DB_PANEL_TABLES` |  | **可选的数据库面板表白名单**（逗号/空白分隔，`table` 或 `schema.table`）。不配 = 面板可浏览中心库全部表（历史行为）；配上则目录、关系图、表详情、整表 CSV 全部只放行名单内的表。用于收敛 admin token 对共用中心库的整库只读面 |
 | `RDK_TRUST_PROXY` |  | 反代信任范围。默认 `loopback`（只在直连对端是回环时采信 X-Forwarded-For，匹配同机 nginx）；`0`/`off` 关闭；也可填 CIDR 列表。影响登录限流按真实客户端 IP 计数 |
 | `PORT` |  | HTTP 端口，默认 `47110` |
 | `RDK_DATA_DIR` |  | 本地状态/配置目录（默认数据布局） |
