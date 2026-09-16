@@ -112,13 +112,33 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         }
         renderTenantList();
       }
+      // 显示名称是 ASCII 时顺手把 ID 填好（用户一旦手动改过 ID 就不再覆盖）。
+      function bindTenantIdSuggestion(){
+        const nameInput=$('newTenantName');const idInput=$('newTenantId');
+        if(!nameInput||!idInput||nameInput.dataset.idSuggestBound)return;
+        nameInput.dataset.idSuggestBound='1';
+        idInput.addEventListener('input',()=>{idInput.dataset.userEdited='1'});
+        nameInput.addEventListener('input',()=>{
+          if(idInput.dataset.userEdited)return;
+          const suggestion=tenantIdSuggestion(nameInput.value);
+          idInput.value=suggestion;
+        });
+      }
       async function createTenantSubmit(){
         const idInput=$('newTenantId');
         const nameInput=$('newTenantName');
         const button=$('createTenantBtn');
         const id=(idInput&&idInput.value||'').trim();
         const name=(nameInput&&nameInput.value||'').trim();
-        if(!id){toast('请输入租户 ID：小写字母开头，2–40 字符',false);if(idInput)idInput.focus();return}
+        if(!id){toast('请输入租户 ID（小写 ASCII 字母开头，2–40 字符）',false);if(idInput)idInput.focus();return}
+        // 就地校验并给出可用的整理结果：服务端只接受 /^[a-z][a-z0-9-]{1,39}$/，
+        // 直接抛「不符合规范」对用户没有指导意义，这里把原因与建议一起给出。
+        if(!/^[a-z][a-z0-9-]{1,39}$/.test(id)){
+          const suggestion=tenantIdSuggestion(id);
+          toast('租户 ID 只能用小写 ASCII（它要拼进告警键 t.<ID>.<检查项>，并出现在 URL/请求头里）'+(suggestion?('；按规则可写作 '+suggestion):'；中文请填到「显示名称」'),false);
+          if(idInput)idInput.focus();
+          return;
+        }
         if(!button)return;
         button.disabled=true;button.textContent='创建中…';
         try{
@@ -161,6 +181,7 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         }
       }
       function bindTenantPanel(){
+        bindTenantIdSuggestion();
         const create=$('createTenantBtn');
         if(create&&!create.dataset.bound){
           create.dataset.bound='1';

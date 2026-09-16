@@ -8,4 +8,7 @@
  */
 export const OPS_TENANT_SCOPE_JS = `      function alertKeyTenant(key){const parts=String(key||'').split('.');return parts.length>=3&&parts[0]==='t'&&/^[a-z][a-z0-9-]{1,39}$/.test(parts[1])?parts[1]:''}
       function alertKeyScopeLabel(key){const tenant=alertKeyTenant(key);return tenant?('租户 '+tenant+' · '):'平台 · '}
+      // 按服务端规则（/^[a-z][a-z0-9-]{1,39}$/）整理出可用租户 ID，供创建表单就地提示：
+      // 租户 ID 是标识符（拼进告警键 t.<ID>.<检查项>、出现在 URL 与请求头），不是名字。
+      function tenantIdSuggestion(value){const cleaned=String(value||'').trim().toLowerCase().replace(/[\\s_]+/g,'-').replace(/[^a-z0-9-]/g,'');const trimmed=cleaned.replace(/^[^a-z]+/,'').replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'').slice(0,40);return /^[a-z][a-z0-9-]{1,39}$/.test(trimmed)?trimmed:''}
 `;

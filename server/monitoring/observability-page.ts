@@ -179,10 +179,11 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 租户管理</div><h2 id="tenantsHeading">团队接入与探针凭据</h2><p>注册租户、签发与轮换探针 token、停用或启用团队；所有操作均写入审计日志。</p></div><div class="right">探针 token 仅显示一次</div></div>
       <details class="detail-sections" open><summary class="detail-summary"><strong>创建租户</strong><span>为新团队创建租户并签发探针 token</span></summary>
         <div class="tenant-toolbar">
-          <label class="field">租户 ID<input id="newTenantId" type="text" autocomplete="off" spellcheck="false" placeholder="小写字母开头，2–40 字符" /></label>
-          <label class="field">显示名称<input id="newTenantName" type="text" autocomplete="off" placeholder="团队或项目名，可留空" /></label>
+          <label class="field">租户 ID<input id="newTenantId" type="text" autocomplete="off" spellcheck="false" placeholder="如 sim2real、team-a" /></label>
+          <label class="field">显示名称<input id="newTenantName" type="text" autocomplete="off" placeholder="团队或项目名，可用中文，可留空" /></label>
           <button id="createTenantBtn" class="btn primary" type="button">创建租户</button>
         </div>
+        <div id="newTenantIdHint" class="hint">租户 ID 是标识符不是名字：它会拼进告警键 <code>t.&lt;ID&gt;.&lt;检查项&gt;</code>（点作分隔符），并出现在 URL 与请求头里，因此只能用小写 ASCII 字母/数字/连字符（2–40 字符，需字母开头；<code>platform</code> 等保留字不可用）。中文名请填「显示名称」。</div>
       </details>
       <details class="detail-sections" open><summary class="detail-summary"><strong>租户列表</strong><span>状态、最近上报时间与凭据操作</span></summary><div id="tenantsContent"></div></details>
     </section>
