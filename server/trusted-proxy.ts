@@ -10,6 +10,11 @@
  * X-Forwarded-For」。这样同机反代能拿到真实客户端 IP，而一旦进程被意外暴露
  * 到公网，外部攻击者伪造的 XFF 不会被采信（对端不是回环），限流仍然生效。
  *
+ * 与 `server/studio-deployment.ts` 里的 `EXPRESS_TRUST_PROXY` 区分：后者是上游
+ * 部署自检用的声明式开关（「我在反代后面」），既不调用 `app.set('trust proxy')`
+ * 也不会被本模块读取；真正决定 XFF 是否被采信的是 `RDK_TRUST_PROXY`。命名相近，
+ * 排查限流/审计 IP 时别配错。
+ *
  * `RDK_TRUST_PROXY`：
  *   - 未设置 / `loopback`：只信任回环对端（默认，匹配同机 nginx）；
  *   - `0` / `false` / `off` / `none` / `no`：完全不信任代理头；

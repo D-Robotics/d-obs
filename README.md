@@ -226,7 +226,7 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_SSO_RELAY_LOGIN_RATE_MAX` |  | 登录端点**按客户端地址**的限流上限（默认 20 次/15 分钟） |
 | `RDK_SSO_RELAY_LOGIN_ACCOUNT_RATE_MAX` |  | 登录端点**按目标账号**的限流上限（默认 10 次/15 分钟），挡单账号爆破 |
 | `RDK_DB_PANEL_TABLES` |  | **可选的数据库面板表白名单**（逗号/空白分隔，`table` 或 `schema.table`）。不配 = 面板可浏览中心库全部表（历史行为）；配上则目录、关系图、表详情、整表 CSV 全部只放行名单内的表。用于收敛 admin token 对共用中心库的整库只读面 |
-| `RDK_TRUST_PROXY` |  | 反代信任范围。默认 `loopback`（只在直连对端是回环时采信 X-Forwarded-For，匹配同机 nginx）；`0`/`off` 关闭；也可填 CIDR 列表。影响登录限流按真实客户端 IP 计数 |
+| `RDK_TRUST_PROXY` |  | 反代信任范围。默认 `loopback`（只在直连对端是回环时采信 X-Forwarded-For，匹配同机 nginx）；`0`/`off` 关闭；也可填 CIDR 列表。影响登录限流按真实客户端 IP 计数。**注意**：与本仓库 `server/studio-deployment.ts` 里的 `EXPRESS_TRUST_PROXY`（上游部署自检用的声明式开关，不配置 express）不是同一个东西 |
 | `PORT` |  | HTTP 端口，默认 `47110` |
 | `RDK_DATA_DIR` |  | 本地状态/配置目录（默认数据布局） |
 | `RDK_GATEWAY_ADMIN_URL` / `GATEWAY_ADMIN_KEY` |  | 模型池网关 admin API 地址与密钥（默认 `127.0.0.1:3100`） |
@@ -247,6 +247,14 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_CENTRAL_TELEMETRY_LOG_ERRORS` |  | `1` = 中央遥测上报失败打日志 |
 | `RDK_STUDIO_AGENT_TTFT_PROBE_ENABLED` / `_URL` / `_MODEL` / `_INTERVAL_MINUTES` / `_TIMEOUT_MS` 与 `RDK_STUDIO_AGENT_TTFT_SLO_MS` |  | Agent 首字延迟（TTFT）探测与 SLO 阈值 |
 | `RDK_FLYWHEEL_ADMIN_USER_IDS` |  | SSO admin 用户 ID 逗号表（与业务站共用身份时用）。**不配 = 任何 SSO 账号都不是管理员，行动环对所有人 403** |
+
+### 登录限流为何是两段
+
+登录尝试要在两处过闸：d-obs 自己（按地址 + 按账号，见 `RDK_SSO_RELAY_LOGIN_*`）与主站的 `ssoCredentialLimiter`（20 次/15 分钟，按 `req.ip`）。d-obs 的全部转发都来自回环地址，因此**主站侧默认会把所有 d-obs 用户算作同一个来源**，额度退化成全平台共享。
+
+d-obs 会把真实客户端地址用 `X-Forwarded-For` / `X-Real-IP` 转发给主站，使其按真实来源分桶——**前提是主站设了 `EXPRESS_TRUST_PROXY=1`**（主站只在此时 `app.set('trust proxy', 1)`）。主站未设该变量时这两个头被忽略，行为与本改动前一致（仍为共享额度），不会因此变差。
+
+排查时注意：`RDK_TRUST_PROXY` 配得过宽（信任任意来源的 XFF）会让 d-obs 采信攻击者伪造的地址，这不仅绕过 d-obs 自己的限流，也会把伪造地址转发给主站——这是同一个配置错误，务必只填受信代理。
 
 ### 密钥与兜底链
 

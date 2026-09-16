@@ -63,10 +63,11 @@ schema 由服务进程幂等自建（启动后首次访问自动创建，无需�
   表示「只在直连对端是回环时才采信 X-Forwarded-For」，匹配同机 nginx 反代，
   同时避免进程意外暴露到公网时被伪造 XFF 绕过。可用 `RDK_TRUST_PROXY` 显式关闭
   （`0`/`off`）或指定 CIDR 列表。
-  **上游主站额度仍是 un-fixable 的共享上限**：`ssoCredentialLimiter` 按 20 次/
-  15 分钟计数，而 d-obs 的全部中继登录都来自 127.0.0.1，所以主站侧看到的始终是
-  同一个来源；免登普及后登录次数大幅下降，但仍应把这条额度当作平台级硬上限
-  （必要时请主站侧放宽），429 会原样透传为 `login_rate_limited`。
+  - 上游主站的 `ssoCredentialLimiter`（20 次/15 分钟）按 `req.ip` 计数，而 d-obs
+    的全部中继登录都来自 127.0.0.1：d-ops 会把真实客户端地址用 `X-Forwarded-For`
+    / `X-Real-IP` 转发过去，**前提是主站设了 `EXPRESS_TRUST_PROXY=1`**，此时主站也
+    按真实来源分桶；主站未设该变量时这两个头被忽略，额度仍为平台级共享（行为与
+    之前一致）。429 会原样透传为 `login_rate_limited`。
 - `POST /api/ops/auth/logout`：按候选链逐个清本地缓存 + 尽力吊销主站会话
   （一并带 Cookie 通道，让主站围栏它看到的全部候选）；失败不影响本地登出。
   工作台登录时写入的运营令牌/租户 token 也在此一并清除。

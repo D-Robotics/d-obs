@@ -22,6 +22,7 @@ import {
   resetSsoRelaySessionCacheForTest,
   resolveSsoRelaySessionUser,
   ssoRelayConfigured,
+  ssoRelayForwardedClientIp,
   ssoRelayLoginAccountRateDefaultMaxForTest,
   ssoRelayLoginRateAllow,
   ssoRelayLoginRateDefaultMaxForTest,
@@ -521,4 +522,50 @@ test('登录限流：窗口滑动后账号维度重置', () => {
     }),
     true,
   );
+});
+
+test('中继转发真实客户端地址：仅转发合法 IP 字面量，避免污染代理头', () => {
+  assert.equal(ssoRelayForwardedClientIp('203.0.113.7'), '203.0.113.7');
+  assert.equal(ssoRelayForwardedClientIp('::ffff:127.0.0.1'), '::ffff:127.0.0.1');
+  assert.equal(ssoRelayForwardedClientIp('2001:db8::1'), '2001:db8::1');
+  assert.equal(ssoRelayForwardedClientIp('  203.0.113.7  '), '203.0.113.7');
+  // 非 IP 一律不转发：'unknown'（无地址时的兜底）、注入尝试、空值。
+  for (const bad of ['unknown', '', '   ', 'not-an-ip', '127.0.0.1, 10.0.0.1', '127.0.0.1\r\nX-Evil: 1', undefined, null]) {
+    assert.equal(ssoRelayForwardedClientIp(bad), '', String(bad));
+  }
+});
+
+test('登录与 /sso/me 中继都把客户端地址带给主站（供其按来源限流）', async () => {
+  const seen: Array<{ url: string; headers: Headers }> = [];
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    seen.push({ url: String(url), headers: new Headers(init?.headers) });
+    if (String(url).endsWith('/api/sso/direct/login')) {
+      return jsonResponse(200, { ok: true, user: { id: 'u-1' }, sessionId: SID });
+    }
+    return jsonResponse(200, { user: { id: 'u-1' }, sessionId: SID });
+  }) as unknown as typeof fetch;
+
+  await loginViaSsoRelay(
+    { userName: 'alice', password: 'secret' },
+    { fetchImpl, env: ENV, clientIp: '203.0.113.9' },
+  );
+  await verifySsoRelaySession(SID, { fetchImpl, env: ENV });
+  const login = seen.find((entry) => entry.url.endsWith('/api/sso/direct/login'));
+  assert.equal(login?.headers.get('x-forwarded-for'), '203.0.113.9');
+  assert.equal(login?.headers.get('x-real-ip'), '203.0.113.9');
+
+  // 未提供或非法地址时不带头（行为与改动前一致，主站按回环地址计数）。
+  const withoutIp: Array<Headers> = [];
+  await loginViaSsoRelay(
+    { userName: 'alice', password: 'secret' },
+    {
+      fetchImpl: (async (_url: string | URL, init?: RequestInit) => {
+        withoutIp.push(new Headers(init?.headers));
+        return jsonResponse(200, { ok: true, user: { id: 'u-1' }, sessionId: SID });
+      }) as unknown as typeof fetch,
+      env: ENV,
+      clientIp: 'unknown',
+    },
+  );
+  assert.equal(withoutIp[0].get('x-forwarded-for'), null);
 });

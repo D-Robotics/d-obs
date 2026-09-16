@@ -456,7 +456,12 @@ export function createOpsObservabilityRouter(): Router {
       return;
     }
     try {
-      const { user, sessionId, setCookies } = await loginViaSsoRelay({ userName, password });
+      const { user, sessionId, setCookies } = await loginViaSsoRelay(
+        { userName, password },
+        // 把真实客户端地址一并转发给主站：主站按 req.ip 限流，否则它的额度会被
+        // 全部来自回环地址的 d-obs 登录退化成全平台共享桶。
+        { clientIp: ip },
+      );
       await recordOpsConfigurationAudit({
         actor: user.email || user.name || user.id,
         action: 'sso_login',

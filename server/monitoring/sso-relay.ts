@@ -20,6 +20,7 @@
  * 水合中间件先行完成并把身份挂到 req 上。
  */
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 
 import type { Request } from 'express';
 
@@ -147,6 +148,25 @@ export function ssoRelayCloudSessionId(req: Request): string {
   return normalizeSsoRelaySessionId(req.header(SSO_RELAY_CLOUD_SESSION_HEADER));
 }
 
+/**
+ * 中继请求要转发的客户端地址（`X-Forwarded-For` / `X-Real-IP`）。
+ *
+ * 为什么需要：d-obs 的全部登录转发都来自回环地址，主站 `ssoCredentialLimiter`
+ * 按 `req.ip` 计数，于是主站侧看到的永远是同一个来源、额度退化成全平台共享。
+ * 主站若按文档开了 `EXPRESS_TRUST_PROXY=1`（`app.set('trust proxy', 1)`），
+ * 转发真实客户端地址就能让它的限流按真实来源分桶。
+ *
+ * 安全性：取值来自 d-ops 自己的 `clientAddress()`（受 `RDK_TRUST_PROXY` 约束——
+ * 默认只信回环对端），不是客户端可随意声明的头；且只转发 `net.isIP` 认得的字面量，
+ * 避免把任意字符串塞进代理头。若运维把 `RDK_TRUST_PROXY` 放得过宽（例如信任任意
+ * 来源的 XFF），本函数会转发被伪造的地址——这与它同时绕过 d-obs 自身限流是同一个
+ * 配置错误，已在 README 中标注。
+ */
+export function ssoRelayForwardedClientIp(clientAddress: unknown): string {
+  const value = String(clientAddress ?? '').trim();
+  return isIP(value) ? value : '';
+}
+
 /** 同步取「本请求首选会话 id」：优先水合结果，其次候选链第一个。 */
 export function ssoRelayRequestSessionId(req: Request): string {
   const attached = req.opsSsoSession;
@@ -224,7 +244,13 @@ function toSessionUser(payload: SsoMePayload | null): ObservabilitySessionUser |
  * 加密 Cookie 也由此透传，d-obs 不解析密文）。
  */
 async function fetchSsoMe(
-  options: { fetchImpl?: typeof fetch; env?: EnvLike; cookieHeader?: string; cloudSessionId?: string },
+  options: {
+    fetchImpl?: typeof fetch;
+    env?: EnvLike;
+    cookieHeader?: string;
+    cloudSessionId?: string;
+    clientIp?: string;
+  },
   sessionId: string,
 ): Promise<{ ok: boolean; payload: SsoMePayload | null }> {
   const base = relayBaseUrl(options.env);
@@ -235,6 +261,11 @@ async function fetchSsoMe(
   if (sessionId) headers[SSO_RELAY_SESSION_HEADER] = sessionId;
   if (options.cloudSessionId) headers[SSO_RELAY_CLOUD_SESSION_HEADER] = options.cloudSessionId;
   if (options.cookieHeader) headers.cookie = options.cookieHeader;
+  const forwardedIp = ssoRelayForwardedClientIp(options.clientIp);
+  if (forwardedIp) {
+    headers['x-forwarded-for'] = forwardedIp;
+    headers['x-real-ip'] = forwardedIp;
+  }
   try {
     const response = await (options.fetchImpl ?? fetch)(`${base}/api/sso/me`, {
       headers,
@@ -330,19 +361,27 @@ function forwardedSetCookies(response: Response): string[] {
 
 export async function loginViaSsoRelay(
   input: { userName: string; password: string },
-  options: { fetchImpl?: typeof fetch; env?: EnvLike } = {},
+  options: { fetchImpl?: typeof fetch; env?: EnvLike; clientIp?: string } = {},
 ): Promise<{ user: SsoRelayUser; sessionId: string; setCookies: string[] }> {
   if (!ssoRelayConfigured(options.env)) throw new SsoRelayError(503, 'sso_relay_disabled');
   const base = relayBaseUrl(options.env);
   let response: Response;
   try {
+    const loginHeaders: Record<string, string> = {
+      'content-type': 'application/json',
+      accept: 'application/json',
+      'user-agent': 'd-obs-sso-relay/1',
+    };
+    // 转发真实客户端地址，让主站限流按来源分桶（前提：主站开了
+    // EXPRESS_TRUST_PROXY=1；未开时该头被忽略，行为与本改动前一致）。
+    const forwardedIp = ssoRelayForwardedClientIp(options.clientIp);
+    if (forwardedIp) {
+      loginHeaders['x-forwarded-for'] = forwardedIp;
+      loginHeaders['x-real-ip'] = forwardedIp;
+    }
     response = await (options.fetchImpl ?? fetch)(`${base}/api/sso/direct/login`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-        'user-agent': 'd-obs-sso-relay/1',
-      },
+      headers: loginHeaders,
       body: JSON.stringify({ method: 'account', userName: input.userName, password: input.password }),
       signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
     });
