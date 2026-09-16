@@ -25,7 +25,23 @@ export const OPS_OBSERVABILITY_TENANTS_STYLE = `
     .tenant-token-result code{display:block;padding:8px 10px;border-radius:6px;background:#f6f7f5;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all;color:#39443f}
     .tenant-token-result .btn{margin-top:8px}
     .tenant-empty{padding:26px 20px;border:1px dashed var(--line2);border-radius:8px;color:var(--muted);font-size:12px;text-align:center}
-    @media(max-width:720px){.tenant-row{grid-template-columns:1fr 1fr}.tenant-row.head{display:none}.tenant-row .tenant-actions{grid-column:1/-1;justify-self:stretch;flex-wrap:wrap}}
+    .member-toolbar{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+    .member-toolbar .field{margin:0}
+    .member-toolbar .field input{width:180px}
+    .member-grid{display:grid;gap:1px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--line);margin-top:8px}
+    .member-row{display:grid;grid-template-columns:minmax(140px,1.4fr) minmax(100px,1fr) minmax(80px,.6fr) minmax(90px,.8fr) auto;align-items:center;gap:8px;padding:10px 14px;background:var(--panel)}
+    .member-row.head{font-size:10px;font-weight:650;color:var(--muted);background:var(--panel2)}
+    .member-row .member-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .member-row .member-role{font-size:11px}
+    .member-row .member-actions{display:flex;gap:6px;justify-self:end}
+    .role-chip{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:650}
+    .role-chip.owner{background:#e8f0fe;color:#1a56db}
+    .role-chip.member{background:#f1f5f4;color:#4b5b57}
+    .obs-account-bar{display:flex;align-items:center;gap:10px;margin-left:auto}
+    .obs-user-chip{font-size:12px;color:var(--text);border:1px solid var(--line);border-radius:999px;padding:4px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .obs-tenant-select{font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);max-width:200px}
+    .obs-logout-btn{font-size:12px;padding:4px 12px}
+    @media(max-width:720px){.tenant-row{grid-template-columns:1fr 1fr}.tenant-row.head{display:none}.tenant-row .tenant-actions{grid-column:1/-1;justify-self:stretch;flex-wrap:wrap}.member-row{grid-template-columns:1fr 1fr}.member-row.head{display:none}.member-row .member-actions{grid-column:1/-1;justify-self:stretch;flex-wrap:wrap}.obs-account-bar{flex-wrap:wrap}}
 `;
 
 export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
@@ -67,6 +83,10 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
           row.appendChild(status);
           add(row,'div','tenant-last',whenShort(item.lastReportAt));
           const actions=make('div','tenant-actions');
+          const members=add(actions,'button','btn','组员 '+(item.memberCount!=null?'('+item.memberCount+')':''));
+          members.type='button';
+          members.title='查看与管理本租户组员（owner/member）';
+          members.addEventListener('click',()=>openAdminMembersEditor(item.tenantId,members));
           const rotate=add(actions,'button','btn','轮换 token');
           rotate.type='button';
           rotate.title='旧 token 立即失效并签发新 token；接入方需同步更新';
@@ -156,5 +176,203 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
           nameInput.dataset.bound='1';
           nameInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();createTenantSubmit()}});
         }
+      }
+      // 管理员行内组员管理：复用组员面板渲染，挂到一个 dialog 容器。
+      function openAdminMembersEditor(tenantId,button){
+        const existed=document.getElementById('obsMembersDialog');
+        if(existed){existed.remove()}
+        const dialog=make('details','detail-sections obs-members-dialog');dialog.id='obsMembersDialog';dialog.open=true;dialog.style.margin='10px 0';
+        const summary=make('summary','detail-summary');
+        add(summary,'strong','','租户 '+tenantId+' 的组员管理');
+        const closeChip=make('span','','');closeChip.textContent='收起';summary.appendChild(closeChip);
+        dialog.appendChild(summary);
+        const content=make('div');content.id='tenantMembersContent';
+        dialog.appendChild(content);
+        const toolbar=make('div','member-toolbar');
+        const idField=make('label','field');idField.textContent='账号 ID';
+        const idInput=make('input');idInput.id='newMemberId';idInput.type='text';idInput.autocomplete='off';idInput.spellcheck=false;idInput.placeholder='主站账号 ID';idField.appendChild(idInput);
+        toolbar.appendChild(idField);
+        const nameField=make('label','field');nameField.textContent='显示名';
+        const nameInput=make('input');nameInput.id='newMemberName';nameInput.type='text';nameInput.autocomplete='off';nameInput.placeholder='可留空';nameField.appendChild(nameInput);
+        toolbar.appendChild(nameField);
+        const roleField=make('label','field');roleField.textContent='角色';
+        const roleSelect=make('select');roleSelect.id='newMemberRole';
+        [['member','member（只读）'],['owner','owner（可管理）']].forEach(optionData=>{const option=make('option','',optionData[1]);option.value=optionData[0];roleSelect.appendChild(option)});
+        roleField.appendChild(roleSelect);
+        toolbar.appendChild(roleField);
+        const button2=make('button','btn primary');button2.id='addMemberBtn';button2.type='button';button2.textContent='添加组员';
+        toolbar.appendChild(button2);
+        dialog.appendChild(toolbar);
+        if(button&&button.parentElement){const host=button.closest('.tenant-grid');(host&&host.parentElement||$('tenantsContent')).insertBefore(dialog,host)}
+        // admin 模式下 loadTenantMembers 读 window.obsAdminMembersTenant。
+        window.obsAdminMembersTenant=tenantId;
+        bindTenantMembersPanel();
+        loadTenantMembers();
+      }
+      // ---- 租户组员管理（admin 面板行内 + SSO owner/member 模式专用面板） ----
+      let membersState={tenantId:null,list:null,error:null};
+      function memberRoleChip(role){return make('span','role-chip '+role,role==='owner'?'owner':'member')}
+      function renderMemberList(){
+        const root=$('tenantMembersContent');
+        if(!root)return;
+        root.replaceChildren();
+        if(membersState.error){root.appendChild(make('div','empty','组员列表加载失败：'+friendlyError(membersState.error)+'。'));return}
+        const list=Array.isArray(membersState.list)?membersState.list:null;
+        if(list===null){root.appendChild(make('div','empty','正在加载组员…'));return}
+        if(!list.length){root.appendChild(make('div','tenant-empty','本租户暂无组员。owner 可通过上方表单添加组员。'));return}
+        const me=obsAuthState.me||{};
+        const selfId=me&&me.user?me.user.id:'';
+        const canManage=Boolean(me.admin||(me.tenants||[]).some(item=>item.tenantId===membersState.tenantId&&item.role==='owner'));
+        const grid=make('div','member-grid');
+        const head=make('div','member-row head');
+        ['账号 ID','显示名','角色','加入时间','操作'].forEach(label=>add(head,'div','',label));
+        grid.appendChild(head);
+        list.forEach(item=>{
+          const row=make('div','member-row');
+          const idCell=make('div','member-id',item.ssoUserId);
+          if(item.ssoUserId===selfId)add(idCell,'span','member-role','（你）');
+          row.appendChild(idCell);
+          add(row,'div','',item.displayName||'—');
+          row.appendChild(memberRoleChip(item.role));
+          add(row,'div','tenant-last',whenShort(item.createdAt));
+          const actions=make('div','member-actions');
+          if(canManage){
+            const roleToggle=add(actions,'button','btn',item.role==='owner'?'降为 member':'升为 owner');
+            roleToggle.type='button';
+            roleToggle.title=item.role==='owner'?'移除管理权（最后一个 owner 不可降级）':'授予组员管理权';
+            roleToggle.addEventListener('click',()=>setTenantMemberRole(item.ssoUserId,item.role==='owner'?'member':'owner',roleToggle));
+            const remove=add(actions,'button','btn','移除');
+            remove.type='button';
+            remove.title='把该账号移出本租户（最后一个 owner 不可移除）';
+            remove.addEventListener('click',()=>removeTenantMember(item.ssoUserId,remove));
+          }
+          row.appendChild(actions);
+          grid.appendChild(row);
+        });
+        root.appendChild(grid);
+      }
+      async function loadTenantMembers(){
+        const root=$('tenantMembersContent');
+        if(!root)return;
+        const tenantId=opsMemberMode?opsSsoActiveTenant:(window.obsAdminMembersTenant||'');
+        if(!tenantId)return;
+        membersState.tenantId=tenantId;
+        try{
+          const data=await request('/api/ops/observability/tenants/'+encodeURIComponent(tenantId)+'/members');
+          membersState.list=data.members||[];
+          membersState.error=null;
+        }catch(error){
+          membersState.error=error.message;
+        }
+        renderMemberList();
+      }
+      async function addTenantMemberSubmit(){
+        const idInput=$('newMemberId');
+        const nameInput=$('newMemberName');
+        const roleInput=$('newMemberRole');
+        const button=$('addMemberBtn');
+        const tenantId=opsMemberMode?opsSsoActiveTenant:(window.obsAdminMembersTenant||'');
+        const id=(idInput&&idInput.value||'').trim();
+        if(!tenantId){toast('请先选择租户',false);return}
+        if(!id){toast('请输入账号 ID',false);if(idInput)idInput.focus();return}
+        if(!button)return;
+        button.disabled=true;button.textContent='添加中…';
+        try{
+          await request('/api/ops/observability/tenants/'+encodeURIComponent(tenantId)+'/members',{method:'POST',body:JSON.stringify({ssoUserId:id,displayName:(nameInput&&nameInput.value||'').trim(),role:(roleInput&&roleInput.value)||'member'})});
+          if(idInput)idInput.value='';
+          if(nameInput)nameInput.value='';
+          await loadTenantMembers();
+          toast('组员 '+id+' 已加入租户 '+tenantId);
+        }catch(error){
+          toast('添加组员失败：'+friendlyError(error.message),false);
+        }finally{
+          button.disabled=false;button.textContent='添加组员';
+        }
+      }
+      async function setTenantMemberRole(ssoUserId,role,button){
+        if(!confirm('把组员 '+ssoUserId+' 的角色改为 '+role+'？'))return;
+        button.disabled=true;
+        try{
+          await request('/api/ops/observability/tenants/'+encodeURIComponent(membersState.tenantId)+'/members/'+encodeURIComponent(ssoUserId)+'/role',{method:'POST',body:JSON.stringify({role})});
+          await loadTenantMembers();
+          toast('组员 '+ssoUserId+' 角色已改为 '+role);
+        }catch(error){
+          toast('修改角色失败：'+friendlyError(error.message),false);
+          button.disabled=false;
+        }
+      }
+      async function removeTenantMember(ssoUserId,button){
+        if(!confirm('把组员 '+ssoUserId+' 移出租户 '+membersState.tenantId+'？该账号将立即失去本租户视图。'))return;
+        button.disabled=true;
+        try{
+          await request('/api/ops/observability/tenants/'+encodeURIComponent(membersState.tenantId)+'/members/'+encodeURIComponent(ssoUserId),{method:'DELETE'});
+          await loadTenantMembers();
+          toast('组员 '+ssoUserId+' 已移除');
+        }catch(error){
+          toast('移除失败：'+friendlyError(error.message),false);
+          button.disabled=false;
+        }
+      }
+      function bindTenantMembersPanel(){
+        const add=$('addMemberBtn');
+        if(add&&!add.dataset.bound){
+          add.dataset.bound='1';
+          add.addEventListener('click',addTenantMemberSubmit);
+        }
+        const idInput=$('newMemberId');
+        if(idInput&&!idInput.dataset.bound){
+          idInput.dataset.bound='1';
+          idInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addTenantMemberSubmit()}});
+        }
+      }
+      // SSO 组员模式进入租户视图：渲染本租户组员面板（owner 可管理）。
+      function renderObsMemberTenantsView(){
+        const section=$('view-tenants');
+        if(!section)return;
+        const me=obsAuthState.me||{};
+        const isOwner=(me.tenants||[]).some(item=>item.tenantId===opsSsoActiveTenant&&item.role==='owner');
+        const membership=(me.tenants||[]).find(item=>item.tenantId===opsSsoActiveTenant);
+        section.replaceChildren();
+        const head=make('div','view-head');
+        const copy=make('div');
+        add(copy,'div','eyebrow','可观测中心 / 租户');
+        add(copy,'h2','','租户 '+opsSsoActiveTenant+(isOwner?' · 组员管理':' · 组员名单'));
+        add(copy,'p','',isOwner?'管理本租户的组员与角色；探针 token 轮换请在总览页联系平台管理员。':'查看本租户的组员名单；组员变更请联系本租户 owner 或平台管理员。');
+        head.appendChild(copy);
+        add(head,'div','right',membership?('你的角色：'+membership.role):'');
+        section.appendChild(head);
+        if(isOwner){
+          const manage=make('details','detail-sections');manage.open=true;
+          const summary=make('summary','detail-summary');
+          add(summary,'strong','','添加组员');
+          add(summary,'span','','用主站账号 ID 邀请（成员需先把账号 ID 发给你）');
+          manage.appendChild(summary);
+          const toolbar=make('div','member-toolbar');
+          const idField=make('label','field');idField.textContent='账号 ID';
+          const idInput=make('input');idInput.id='newMemberId';idInput.type='text';idInput.autocomplete='off';idInput.spellcheck=false;idInput.placeholder='主站账号 ID';idField.appendChild(idInput);
+          toolbar.appendChild(idField);
+          const nameField=make('label','field');nameField.textContent='显示名';
+          const nameInput=make('input');nameInput.id='newMemberName';nameInput.type='text';nameInput.autocomplete='off';nameInput.placeholder='可留空';nameField.appendChild(nameInput);
+          toolbar.appendChild(nameField);
+          const roleField=make('label','field');roleField.textContent='角色';
+          const roleSelect=make('select');roleSelect.id='newMemberRole';
+          [['member','member（只读）'],['owner','owner（可管理）']].forEach(optionData=>{const option=make('option','',optionData[1]);option.value=optionData[0];roleSelect.appendChild(option)});
+          roleField.appendChild(roleSelect);
+          toolbar.appendChild(roleField);
+          const button=make('button','btn primary');button.id='addMemberBtn';button.type='button';button.textContent='添加组员';
+          toolbar.appendChild(button);
+          manage.appendChild(toolbar);
+          section.appendChild(manage);
+        }
+        const list=make('details','detail-sections');list.open=true;
+        const listSummary=make('summary','detail-summary');
+        add(listSummary,'strong','','组员名单');
+        add(listSummary,'span','',isOwner?'账号、角色与移出操作':'账号与角色（只读）');
+        list.appendChild(listSummary);
+        const content=make('div');content.id='tenantMembersContent';
+        list.appendChild(content);
+        section.appendChild(list);
+        bindTenantMembersPanel();
+        loadTenantMembers();
       }
 `;

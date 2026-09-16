@@ -19,6 +19,7 @@
 | **数据库资产** | 工作台“数据库” | PostgreSQL 运行状态、表目录/关系图、分页预览、整表 CSV 导出、**AI 自然语言→只读脱敏 SQL**（仅 `ops_ai` 视图） |
 | **模型池控制面** | 工作台“模型池” | 3100/3101 网关目标健康（成功率/P95/并发/冷却）、单目标真实探测、路由优先级（fallback 顺序+权重）、目标替换（Agent 主路由受保护） |
 | **外部拨测接入** | `POST /api/health/external-probe-report` | 异地探针把 DNS/TLS/健康/入口数据回传，计入告警评估 |
+| **租户组员与账号登录** | 工作台登录屏 / 租户管理面板 | 主站账号密码登录（SSO 中继），组员按租户获得隔离只读视图，owner 管理组员与角色（[docs/tenant-members.md](./docs/tenant-members.md)） |
 | **公共可观测 API** | `/api/ops/observability/*` | 全部能力均有 JSON API；访问受运营鉴权保护 |
 
 ## 快速开始

@@ -34,7 +34,16 @@ export function isOpsObservabilityConfigured(): boolean {
 }
 
 let poolReady: Promise<Pool> | null = null;
+let testPool: Pool | null = null;
+
+/** 回归测试注入点：整体替换默认池解析并重置事故/审计 schema 缓存。 */
+export function configureOpsObservabilityPoolForTest(p: Pool | null): void {
+  testPool = p;
+  incidentSchemaReady = null;
+}
+
 async function pool(): Promise<Pool> {
+  if (testPool) return testPool;
   if (!centralDbUrl()) throw new Error('RDK_CHAT_CREDITS_DB_URL 未配置');
   if (!poolReady) {
     poolReady = (async () => {

@@ -80,10 +80,18 @@ export function resolveOpsActorId(req: Request): string {
  * 租户只读访问：x-tenant-token 命中 studio_obs_tenants 的活跃 token（哈希
  * 查找）。租户身份与运营管理员互斥——带 admin token 的请求按管理员处理，
  * 不会同时获得租户作用域；租户 token 只授予本租户检查/事故/通知的只读视图。
+ *
+ * SSO 组员身份（source: 'member'）：请求携带有效主站会话与 x-rdk-obs-tenant
+ * 头，且该用户是此租户的组员时，同样落进 opsTenantAccess——下游复用租户
+ * 数据过滤链路；owner 角色额外获得组员管理与本租户探针 token 轮换权限。
  */
 export interface ResolvedTenantAccess {
   tenantId: string;
   displayName: string;
+  /** SSO 组员通道携带的角色；租户探针 token 通道无此字段。 */
+  role?: 'owner' | 'member';
+  /** 身份来源：'token' = 租户探针 token；'member' = SSO 组员。 */
+  source: 'token' | 'member';
 }
 
 export async function resolveTenantTokenAccess(
@@ -95,7 +103,27 @@ export async function resolveTenantTokenAccess(
   const tenant = await findTenantByToken(String(req.header('x-tenant-token') ?? '').trim()).catch(
     () => null,
   );
-  return tenant ? { tenantId: tenant.tenantId, displayName: tenant.displayName } : null;
+  return tenant ? { tenantId: tenant.tenantId, displayName: tenant.displayName, source: 'token' } : null;
+}
+
+/** SSO 组员作用域：主站会话 + x-rdk-obs-tenant 头 → 查 studio_obs_tenant_members。 */
+export async function resolveTenantMemberAccess(
+  req: Request,
+): Promise<ResolvedTenantAccess | null> {
+  const user = getSessionSsoUser(req);
+  if (!user?.id) return null;
+  const tenantId = String(req.header('x-rdk-obs-tenant') ?? '').trim();
+  if (!tenantId) return null;
+  const { findMembership } = await import('./tenant-members-store.js');
+  // 数据库不可用 fail-closed：返回 null（调用方拒绝），异常不上抛。
+  const membership = await findMembership(tenantId, user.id).catch(() => null);
+  if (!membership) return null;
+  return {
+    tenantId: membership.tenantId,
+    displayName: membership.tenantDisplayName,
+    role: membership.role,
+    source: 'member',
+  };
 }
 
 export function hasInvalidTenantToken(req: Request): boolean {

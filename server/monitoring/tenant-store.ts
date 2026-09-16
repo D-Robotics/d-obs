@@ -29,7 +29,16 @@ type Pool = {
 };
 
 let tenantsPool: Promise<Pool> | null = null;
+let testPool: Pool | null = null;
+
+/** 回归测试注入点：整体替换默认池解析并重置 schema 缓存。 */
+export function configureTenantPoolForTest(p: Pool | null): void {
+  testPool = p;
+  tenantsSchemaReady = null;
+}
+
 async function pool(): Promise<Pool> {
+  if (testPool) return testPool;
   const connectionString = String(process.env.RDK_CHAT_CREDITS_DB_URL ?? '').trim();
   if (!connectionString) throw new Error('central database is not configured');
   if (!tenantsPool) {
@@ -82,6 +91,11 @@ async function ensureTenantsSchema(p: Pool): Promise<void> {
     });
   }
   await tenantsSchemaReady;
+}
+
+/** 供组员表等相邻 store 复用（幂等，重复调用无副作用）。 */
+export function ensureTenantTables(p: Pool): Promise<void> {
+  return ensureTenantsSchema(p);
 }
 
 function rowToTenant(row: Record<string, unknown>): ObsTenant {

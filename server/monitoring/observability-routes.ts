@@ -81,9 +81,22 @@ import {
   hasInvalidTenantToken,
   isOpsAdminRequest,
   resolveOpsActorId,
+  resolveTenantMemberAccess,
   resolveTenantTokenAccess,
   type ResolvedTenantAccess,
 } from './observability-access.js';
+import {
+  SSO_RELAY_SESSION_HEADER,
+  SSO_RELAY_TENANT_HEADER,
+  SsoRelayError,
+  configureSsoRelayObservabilityAccess,
+  hydrateSsoRelaySession,
+  loginViaSsoRelay,
+  logoutViaSsoRelay,
+  normalizeSsoRelaySessionId,
+  ssoRelayConfigured,
+  ssoRelayLoginRateAllow,
+} from './sso-relay.js';
 
 const execFileAsync = promisify(execFile);
 let configWriteQueue: Promise<void> = Promise.resolve();
@@ -193,9 +206,11 @@ const requireObservabilityAccessTenantAware: RequestHandler = (req, res, next) =
 /**
  * 租户只读作用域解析。三种结果：
  *  - null：非租户请求（管理员/SSO），走原有逻辑；
- *  - 'deny'：带了 x-tenant-token 但匹配不到活跃租户 → 401 fail-closed；
+ *  - 'deny'：带了租户凭证（x-tenant-token 或组员头）但匹配不到有效身份 → 401/403 fail-closed；
  *  - 租户身份：请求被限制在该租户数据内（只读面）。
- * 管理员 token 优先于租户 token，两者同带时按管理员处理。
+ * 管理员 token 优先于租户身份（探针 token 与 SSO 组员通道都不例外）。
+ * SSO 组员通道：主站会话 + x-rdk-obs-tenant 头命中 studio_obs_tenant_members
+ * 才放行；带了头但不是组员（或租户停用）→ deny。
  */
 declare module 'express-serve-static-core' {
   interface Request {
@@ -205,13 +220,26 @@ declare module 'express-serve-static-core' {
 
 async function resolveTenantScope(
   req: Request,
-): Promise<{ deny: true; tenant?: undefined } | { deny: false; tenant: ResolvedTenantAccess } | null> {
-  const header = String(req.header('x-tenant-token') ?? '').trim();
-  if (!header) return null;
-  if (isOpsAdminRequest(req)) return null; // admin token 优先
-  const tenant = await resolveTenantTokenAccess(req);
-  if (tenant) return { deny: false, tenant };
-  return { deny: true };
+): Promise<
+  | { deny: true; status: number; error: string; tenant?: undefined }
+  | { deny: false; tenant: ResolvedTenantAccess }
+  | null
+> {
+  const tokenHeader = String(req.header('x-tenant-token') ?? '').trim();
+  if (tokenHeader) {
+    if (isOpsAdminRequest(req)) return null; // admin token 优先
+    const tenant = await resolveTenantTokenAccess(req);
+    if (tenant) return { deny: false, tenant };
+    return { deny: true, status: 401, error: 'invalid_tenant_token' };
+  }
+  const tenantHeader = String(req.header(SSO_RELAY_TENANT_HEADER) ?? '').trim();
+  if (tenantHeader) {
+    if (isOpsAdminRequest(req)) return null; // admin/allowlist 管理员走全局视图
+    const membership = await resolveTenantMemberAccess(req);
+    if (membership) return { deny: false, tenant: membership };
+    return { deny: true, status: 403, error: 'not_a_member' };
+  }
+  return null;
 }
 
 const tenantScopeGate: RequestHandler = async (req, res, next) => {
@@ -221,7 +249,7 @@ const tenantScopeGate: RequestHandler = async (req, res, next) => {
     return;
   }
   if (scope.deny) {
-    res.status(401).json({ ok: false, error: 'invalid_tenant_token' });
+    res.status(scope.status).json({ ok: false, error: scope.error });
     return;
   }
   req.opsTenantAccess = scope.tenant;
@@ -366,6 +394,110 @@ function resolveTraceAccess(
 export function createOpsObservabilityRouter(): Router {
   const router = Router();
 
+  // 装配期（组合根职责）：把主站 SSO 中继的会话解析注入 D-010 访问端口。
+  // standalone 部署此前从不装配（fail-closed），这里补上后：
+  // RDK_FLYWHEEL_ADMIN_USER_IDS 白名单、审计署名、SSO 组员作用域全部点亮；
+  // 未配置中继时中继自身 fail-closed，行为与装配前一致。
+  configureSsoRelayObservabilityAccess();
+
+  // SSO 会话水合：请求带 x-rdk-sso-session 时先远程验证并写入同步缓存，
+  // 后续所有守卫/适配器同步读取。验证失败/网络错误都不阻断请求（按未登录
+  // 处理，fail-closed 由各守卫完成）。
+  router.use(async (_req, _res, next) => {
+    try {
+      await hydrateSsoRelaySession(_req);
+    } catch {
+      /* 水合失败按未登录处理 */
+    }
+    next();
+  });
+
+  // ---- 主站 SSO 登录中继（组员/管理员账号密码登录） ----
+
+  router.post('/api/ops/auth/login', async (req: Request, res: Response) => {
+    const userName = String(req.body?.userName ?? '').trim();
+    const password = String(req.body?.password ?? '');
+    if (!userName || !password) {
+      res.status(400).json({ ok: false, error: 'missing_user_name_or_password' });
+      return;
+    }
+    // 与凭据端点同源的 CSRF 守卫（浏览器表单 fetch 同源，Origin 必须匹配 host）。
+    const origin = String(req.headers.origin ?? '').trim();
+    if (origin) {
+      try {
+        if (new URL(origin).host !== req.get('host')) {
+          res.status(403).json({ ok: false, error: 'cross_origin_login_denied' });
+          return;
+        }
+      } catch {
+        res.status(403).json({ ok: false, error: 'invalid_origin' });
+        return;
+      }
+    }
+    const ip = String(req.socket?.remoteAddress ?? 'unknown');
+    if (!ssoRelayLoginRateAllow(ip)) {
+      res.status(429).json({ ok: false, error: 'login_rate_limited' });
+      return;
+    }
+    try {
+      const { user, sessionId } = await loginViaSsoRelay({ userName, password });
+      await recordOpsConfigurationAudit({
+        actor: user.email || user.name || user.id,
+        action: 'sso_login',
+        summary: `账号 ${userName} 登录可观测工作台`,
+      }).catch(() => undefined);
+      res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email }, sessionId });
+    } catch (error) {
+      if (error instanceof SsoRelayError) {
+        res.status(error.status).json({ ok: false, error: error.code });
+        return;
+      }
+      res.status(503).json({ ok: false, error: 'sso_login_failed' });
+    }
+  });
+
+  router.post('/api/ops/auth/logout', async (req: Request, res: Response) => {
+    const sid = normalizeSsoRelaySessionId(req.header(SSO_RELAY_SESSION_HEADER));
+    await logoutViaSsoRelay(sid).catch(() => undefined);
+    if (sid) {
+      await recordOpsConfigurationAudit({
+        actor: resolveOpsActor(req),
+        action: 'sso_logout',
+        summary: '账号退出可观测工作台',
+      }).catch(() => undefined);
+    }
+    res.json({ ok: true });
+  });
+
+  router.get('/api/ops/auth/me', async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const sid = normalizeSsoRelaySessionId(req.header(SSO_RELAY_SESSION_HEADER));
+    const user = sid ? (getSessionSsoUser(req) ?? null) : null;
+    if (!user) {
+      res.json({ ok: true, user: null, admin: false, relayConfigured: ssoRelayConfigured() });
+      return;
+    }
+    let tenants: Array<{ tenantId: string; displayName: string; role: 'owner' | 'member' }> = [];
+    try {
+      const { listMembershipsForUser } = await import('./tenant-members-store.js');
+      const memberships = await listMembershipsForUser(user.id);
+      tenants = memberships.map((m) => ({
+        tenantId: m.tenantId,
+        displayName: m.tenantDisplayName,
+        role: m.role,
+      }));
+    } catch {
+      // 数据库不可用时组员列表为空（fail-closed，不 500：登录态本身有效）。
+    }
+    res.json({
+      ok: true,
+      user: { id: user.id, name: user.name, email: user.email },
+      tenants,
+      admin: isOpsAdminRequest(req),
+      relayConfigured: true,
+    });
+  });
+
   // DSH-native evidence/approval/action endpoints share this authenticated
   // operations namespace but do not depend on the removed Moss runtime.
   router.use(createObservabilityActionRouter());
@@ -428,9 +560,20 @@ export function createOpsObservabilityRouter(): Router {
         const traceLimit = queryInteger(query, 'traceLimit', 40, 1, 80);
         const traceCursor = queryText(query, 'traceCursor', 4_096);
         // 租户身份：SLO / trace 面板属于平台业务数据，不进入租户视图。
-        const tenantScope = tenantAccess
-          ? tenantAccess.tenantId
-          : null;
+        // 管理员可用 ?tenant= 切换到某租户视角（复用同一过滤链路）。
+        let tenantScope = tenantAccess ? tenantAccess.tenantId : null;
+        if (!tenantScope && isOpsAdminRequest(req)) {
+          const requestedTenant = queryText(query, 'tenant', 40);
+          if (requestedTenant && requestedTenant !== 'platform') {
+            const { listTenants } = await import('./tenant-store.js');
+            const tenants = await listTenants().catch(
+              () => [] as Array<{ tenantId: string; status: string }>,
+            );
+            if (tenants.some((tenant) => tenant.tenantId === requestedTenant)) {
+              tenantScope = requestedTenant;
+            }
+          }
+        }
         const [overview, serviceLevels] = await Promise.all([
           getOpsObservabilityOverview(hours, tenantScope),
           tenantScope
@@ -925,14 +1068,43 @@ export function createOpsObservabilityRouter(): Router {
     },
   );
 
-  // ---- 租户管理（仅平台管理员） ----
+  // ---- 租户管理（平台管理员；组员域部分对 SSO owner 开放） ----
+
+  /**
+   * 租户变更权限：平台管理员放行；SSO 组员仅 owner 且限本租户（探针 token
+   * 通道只读，始终 403）。返回 null = 无权限（调用方 403）。
+   */
+  const resolveTenantMutationActor = async (
+    req: Request,
+    tenantId: string,
+  ): Promise<'admin' | 'owner' | null> => {
+    if (isOpsAdminRequest(req)) return 'admin';
+    const membership = await resolveTenantMemberAccess(req).catch(() => null);
+    if (membership && membership.tenantId === tenantId && membership.role === 'owner') {
+      return 'owner';
+    }
+    return null;
+  };
 
   router.get('/api/ops/observability/tenants', requireObservabilityAccess, async (_req, res) => {
     try {
       const { listTenants } = await import('./tenant-store.js');
       const tenants = await listTenants();
+      let memberCounts: Record<string, number> = {};
+      try {
+        const { countMembersByTenant } = await import('./tenant-members-store.js');
+        memberCounts = await countMembersByTenant();
+      } catch {
+        /* 组员计数失败不阻塞列表（fail-open 只影响这一列） */
+      }
       res.setHeader('Cache-Control', 'no-store');
-      res.json({ ok: true, tenants });
+      res.json({
+        ok: true,
+        tenants: tenants.map((tenant) => ({
+          ...tenant,
+          memberCount: memberCounts[tenant.tenantId] ?? 0,
+        })),
+      });
     } catch (error) {
       res.status(503).json({
         ok: false,
@@ -940,6 +1112,184 @@ export function createOpsObservabilityRouter(): Router {
       });
     }
   });
+
+  // ---- 租户组员（admin 或本租户 owner 可管理；SSO member 只读本租户名单） ----
+
+  router.get(
+    '/api/ops/observability/tenants/:tenantId/members',
+    tenantScopeGate,
+    requireObservabilityAccessTenantAware,
+    async (req: Request, res: Response) => {
+      const tenantId = String(req.params.tenantId ?? '').trim();
+      const tenantAccess = req.opsTenantAccess ?? null;
+      // SSO member（组员通道）只允许查看本租户名单；探针 token 通道 403。
+      if (tenantAccess && tenantAccess.source === 'token') {
+        res.status(403).json({ ok: false, error: 'tenant_read_only' });
+        return;
+      }
+      if (
+        tenantAccess &&
+        tenantAccess.source === 'member' &&
+        tenantAccess.tenantId !== tenantId
+      ) {
+        res.status(403).json({ ok: false, error: 'not_a_member' });
+        return;
+      }
+      const mutationActor = tenantAccess ? 'member-view' : await resolveTenantMutationActor(req, tenantId);
+      if (!tenantAccess && !mutationActor) {
+        res.status(403).json({ ok: false, error: 'not_authorized' });
+        return;
+      }
+      try {
+        const { listMembers } = await import('./tenant-members-store.js');
+        const members = await listMembers(tenantId);
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ ok: true, members });
+      } catch (error) {
+        res.status(503).json({
+          ok: false,
+          error: sanitizeOpsSummary(error, 240) || 'tenant_members_unavailable',
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/tenants/:tenantId/members',
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = String(req.params.tenantId ?? '').trim();
+      const actor = await resolveTenantMutationActor(req, tenantId);
+      if (!actor) {
+        res.status(403).json({ ok: false, error: 'not_authorized' });
+        return;
+      }
+      const role = String(req.body?.role ?? 'member').trim();
+      if (role !== 'owner' && role !== 'member') {
+        res.status(400).json({ ok: false, error: 'invalid_member_role' });
+        return;
+      }
+      try {
+        const { addMember } = await import('./tenant-members-store.js');
+        const member = await addMember({
+          tenantId,
+          ssoUserId: req.body?.ssoUserId,
+          displayName: req.body?.displayName,
+          role,
+          addedBy: resolveOpsActor(req),
+        });
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'tenant_member_add',
+          summary: `租户 ${tenantId} 添加组员 ${member.ssoUserId}（${role}）`,
+        });
+        res.status(201).json({ ok: true, member });
+      } catch (error) {
+        const message = String((error as Error)?.message ?? '');
+        if (message === 'tenant_disabled') {
+          res.status(400).json({ ok: false, error: 'tenant_disabled' });
+          return;
+        }
+        res.status(400).json({
+          ok: false,
+          error: sanitizeOpsSummary(error, 240) || 'tenant_member_add_failed',
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/tenants/:tenantId/members/:ssoUserId/role',
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = String(req.params.tenantId ?? '').trim();
+      const ssoUserId = String(req.params.ssoUserId ?? '').trim();
+      const role = String(req.body?.role ?? '').trim();
+      const actor = await resolveTenantMutationActor(req, tenantId);
+      if (!actor) {
+        res.status(403).json({ ok: false, error: 'not_authorized' });
+        return;
+      }
+      if (role !== 'owner' && role !== 'member') {
+        res.status(400).json({ ok: false, error: 'invalid_member_role' });
+        return;
+      }
+      try {
+        const { countOwners, findMembership, setMemberRole } = await import(
+          './tenant-members-store.js'
+        );
+        const membership = await findMembership(tenantId, ssoUserId);
+        if (!membership) {
+          res.status(404).json({ ok: false, error: 'member_not_found' });
+          return;
+        }
+        // 最后一个 owner 不可降级（防租户锁死）。
+        if (membership.role === 'owner' && role === 'member') {
+          const owners = await countOwners(tenantId);
+          if (owners <= 1) {
+            res.status(400).json({ ok: false, error: 'last_owner_role_required' });
+            return;
+          }
+        }
+        const member = await setMemberRole(tenantId, ssoUserId, role);
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'tenant_member_role',
+          summary: `租户 ${tenantId} 组员 ${ssoUserId} 角色改为 ${role}`,
+        });
+        res.json({ ok: true, member });
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          error: sanitizeOpsSummary(error, 240) || 'tenant_member_role_failed',
+        });
+      }
+    },
+  );
+
+  router.delete(
+    '/api/ops/observability/tenants/:tenantId/members/:ssoUserId',
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const tenantId = String(req.params.tenantId ?? '').trim();
+      const ssoUserId = String(req.params.ssoUserId ?? '').trim();
+      const actor = await resolveTenantMutationActor(req, tenantId);
+      if (!actor) {
+        res.status(403).json({ ok: false, error: 'not_authorized' });
+        return;
+      }
+      try {
+        const { countOwners, findMembership, removeMember } = await import(
+          './tenant-members-store.js'
+        );
+        const membership = await findMembership(tenantId, ssoUserId);
+        if (!membership) {
+          res.status(404).json({ ok: false, error: 'member_not_found' });
+          return;
+        }
+        // 最后一个 owner 不可移除（防租户锁死）。
+        if (membership.role === 'owner') {
+          const owners = await countOwners(tenantId);
+          if (owners <= 1) {
+            res.status(400).json({ ok: false, error: 'last_owner_required' });
+            return;
+          }
+        }
+        await removeMember(tenantId, ssoUserId);
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'tenant_member_remove',
+          summary: `租户 ${tenantId} 移除组员 ${ssoUserId}`,
+        });
+        res.json({ ok: true });
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          error: sanitizeOpsSummary(error, 240) || 'tenant_member_remove_failed',
+        });
+      }
+    },
+  );
 
   router.post(
     '/api/ops/observability/tenants',
@@ -971,16 +1321,21 @@ export function createOpsObservabilityRouter(): Router {
 
   router.post(
     '/api/ops/observability/tenants/:tenantId/token',
-    requireObservabilityAccess,
     requireOpsMutationGuard,
     async (req: Request, res: Response) => {
+      const tenantId = String(req.params.tenantId ?? '');
+      const actor = await resolveTenantMutationActor(req, tenantId);
+      if (!actor) {
+        res.status(403).json({ ok: false, error: 'not_authorized' });
+        return;
+      }
       try {
         const { rotateTenantToken } = await import('./tenant-store.js');
-        const token = await rotateTenantToken(String(req.params.tenantId ?? ''));
+        const token = await rotateTenantToken(tenantId);
         await recordOpsConfigurationAudit({
           actor: resolveOpsActor(req),
           action: 'tenant_token_rotate',
-          summary: `轮换租户探针 token：${String(req.params.tenantId ?? '')}`,
+          summary: `轮换租户探针 token：${tenantId}`,
         });
         res.json({ ok: true, probeToken: token });
       } catch (error) {
