@@ -222,7 +222,10 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         if(!list.length){root.appendChild(make('div','tenant-empty','本租户暂无组员。owner 可通过上方表单添加组员。'));return}
         const me=obsAuthState.me||{};
         const selfId=me&&me.user?me.user.id:'';
-        const canManage=Boolean(me.admin||(me.tenants||[]).some(item=>item.tenantId===membersState.tenantId&&item.role==='owner'));
+        // 可管理 = SSO allowlist 管理员 / 本租户 owner / 运营令牌直连（服务端
+        // resolveTenantMutationActor 对 admin token 同样放行，权限矩阵也是这么写的）。
+        // 令牌直连时 /auth/me 返回 user:null，me.admin 为 false，早先会因此漏掉按钮。
+        const canManage=Boolean(me.admin||opsAdminToken||(me.tenants||[]).some(item=>item.tenantId===membersState.tenantId&&item.role==='owner'));
         const grid=make('div','member-grid');
         const head=make('div','member-row head');
         ['账号 ID','显示名','角色','加入时间','操作'].forEach(label=>add(head,'div','',label));
@@ -326,6 +329,34 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         }
       }
       // SSO 组员模式进入租户视图：渲染本租户组员面板（owner 可管理）。
+      // 本租户 owner 轮换探针 token：新 token 只显示一次（库里只有哈希）。
+      let obsMemberToken='';
+      function renderObsMemberTokenResult(){
+        const box=make('div','tenant-token-result');
+        add(box,'strong','','新探针 token（仅显示一次）');
+        const code=make('code','',obsMemberToken);
+        box.appendChild(code);
+        const copy=add(box,'button','btn','复制 token');
+        copy.type='button';
+        copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(obsMemberToken);toast('探针 token 已复制')}catch{toast('复制失败，请手动复制',false)}});
+        add(box,'div','hint','系统仅保存 token 摘要，本页刷新后无法再次查看；请立即保存并更新接入方的凭据文件。');
+        return box;
+      }
+      async function rotateOwnTenantToken(button){
+        const tenantId=opsSsoActiveTenant;
+        if(!tenantId){toast('请先选择租户',false);return}
+        if(!confirm('轮换租户 '+tenantId+' 的探针 token？旧 token 将立即失效；接入方完成更新前，其拨测上报将无法通过鉴权。'))return;
+        button.disabled=true;
+        try{
+          const data=await request('/api/ops/observability/tenants/'+encodeURIComponent(tenantId)+'/token',{method:'POST',body:'{}'});
+          obsMemberToken=String(data.probeToken||'');
+          if(typeof renderObsMemberTenantsView==='function')renderObsMemberTenantsView();
+          toast('探针 token 已轮换，请立即保存');
+        }catch(error){
+          toast('轮换失败：'+friendlyError(error.message),false);
+          button.disabled=false;
+        }
+      }
       function renderObsMemberTenantsView(){
         const section=$('view-tenants');
         if(!section)return;
@@ -337,7 +368,7 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         const copy=make('div');
         add(copy,'div','eyebrow','可观测中心 / 租户');
         add(copy,'h2','','租户 '+opsSsoActiveTenant+(isOwner?' · 组员管理':' · 组员名单'));
-        add(copy,'p','',isOwner?'管理本租户的组员与角色；探针 token 轮换请在总览页联系平台管理员。':'查看本租户的组员名单；组员变更请联系本租户 owner 或平台管理员。');
+        add(copy,'p','',isOwner?'管理本租户的组员、角色与探针 token。':'查看本租户的组员名单；组员变更请联系本租户 owner 或平台管理员。');
         head.appendChild(copy);
         add(head,'div','right',membership?('你的角色：'+membership.role):'');
         section.appendChild(head);
@@ -363,6 +394,22 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
           toolbar.appendChild(button);
           manage.appendChild(toolbar);
           section.appendChild(manage);
+          // 探针 token 轮换：服务端对「本租户 owner」开放（与权限矩阵一致），
+          // 这里给出入口，避免 owner 被引导去找平台管理员。
+          const tokenPanel=make('details','detail-sections');
+          const tokenSummary=make('summary','detail-summary');
+          add(tokenSummary,'strong','','探针 token');
+          add(tokenSummary,'span','','轮换后旧 token 立即失效，需同步更新接入方配置');
+          tokenPanel.appendChild(tokenSummary);
+          const tokenBody=make('div');
+          const rotate=add(tokenBody,'button','btn','轮换本租户探针 token');
+          rotate.type='button';
+          rotate.addEventListener('click',()=>rotateOwnTenantToken(rotate));
+          tokenPanel.appendChild(tokenBody);
+          if(obsMemberToken){
+            tokenPanel.appendChild(renderObsMemberTokenResult());
+          }
+          section.appendChild(tokenPanel);
         }
         const list=make('details','detail-sections');list.open=true;
         const listSummary=make('summary','detail-summary');

@@ -70,7 +70,25 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
       function field(parent,id,labelText,value,type='text',full=false){const box=make('div','field'+(full?' full':''));const label=add(box,'label','',labelText);label.htmlFor=id;const input=make(type==='textarea'?'textarea':'input');input.id=id;if(type!=='textarea')input.type=type;if(type==='password'){input.autocomplete='new-password';input.name='ops-secret-'+id;input.dataset.lpignore='true';input.dataset['1pIgnore']='true'}input.value=value==null?'':String(value);box.appendChild(input);parent.appendChild(box);return input}
       function selectField(parent,id,labelText,value,options,full=false){const box=make('div','field'+(full?' full':''));const label=add(box,'label','',labelText);label.htmlFor=id;const select=make('select');select.id=id;options.forEach(optionData=>{const option=make('option','',optionData[1]);option.value=optionData[0];option.selected=optionData[0]===value;select.appendChild(option)});box.appendChild(select);parent.appendChild(box);return select}
       function switchField(parent,id,labelText,checked){const label=make('label','switch');const input=make('input');input.type='checkbox';input.id=id;input.checked=Boolean(checked);label.appendChild(input);label.appendChild(document.createTextNode(labelText));parent.appendChild(label);return input}
-      async function request(path, options){const response=await fetch(base+path,Object.assign({credentials:'same-origin',headers:apiHeaders(Boolean(options&&options.method&&options.method!=='GET'))},options||{}));if(response.status===401||response.status===403){renderAccess();throw new Error('not_authorized')}const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.message||data.error||(data.result&&data.result.error)||('HTTP '+response.status));return data}
+      // 401 与 403 语义不同：401 是未登录（登录屏可恢复），403 是已登录但权限变化
+      // （被移出租户 / 租户停用 / 模块域降级）。403 不能清屏，只提示并刷新身份快照。
+      let obsForbiddenNotifiedAt=0;let obsForbiddenCode='';
+      // 只有这些 403 说明「你的身份/租户权限变了」——需要提示并重查身份。
+      // 其余 403 是模块级能力差异（admin token 直连下行动域的预期降级、租户 token
+      // 的只读限制等），按原有方式静默降级：否则每轮轮询都会弹一次误报。
+      // 只列「身份/租户权限被改动」的码：invalid_tenant_token 是 gate 的 401
+      // （真凭证失效），tenant_scope_only 是「租户凭证打了平台面」的正常收敛，
+      // 两者都不该当作权限变化来提示。
+      const OBS_IDENTITY_FORBIDDEN_CODES=['not_a_member','tenant_disabled'];
+      function handleForbidden(code){
+        if(!OBS_IDENTITY_FORBIDDEN_CODES.includes(code))return false;
+        const now=Date.now();
+        projectTelemetryState('unauthorized');
+        if(code!==obsForbiddenCode||now-obsForbiddenNotifiedAt>15000){obsForbiddenNotifiedAt=now;obsForbiddenCode=code;toast('权限已变化：'+friendlyError(code),false)}
+        obsLoadMe().then(me=>{if(me)applyAuthMode(me)});
+        return true;
+      }
+      async function request(path, options){const response=await fetch(base+path,Object.assign({credentials:'same-origin',headers:apiHeaders(Boolean(options&&options.method&&options.method!=='GET'))},options||{}));if(response.status===401){renderAccess();throw new Error('not_authorized')}if(response.status===403){const denied=await response.json().catch(()=>({}));const code=String((denied&&(denied.error||denied.message))||'not_authorized');const deniedError=new Error(code);deniedError.forbidden=handleForbidden(code);throw deniedError}const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.message||data.error||(data.result&&data.result.error)||('HTTP '+response.status));return data}
       function renderAccess(){ // admin-token 直连模式下 action/证据域仍要求 SSO 账号身份；
       // 租户 token 模式是只读降级，两种情况都不该把已渲染的看板整体盖住。
       if(opsAdminToken||opsTenantMode){projectTelemetryState('unauthorized');return}
@@ -90,7 +108,10 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
           try{const response=await fetch(base+'/api/ops/auth/login',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({userName,password})});
             const data=await response.json().catch(()=>({}));
             if(response.ok&&data.ok&&data.sessionId){sessionStorage.setItem('d_obs_sso_session',data.sessionId);location.reload();return}
-            note.textContent=friendlyError(data.error)||'账号或密码不正确，请重试';note.className='feedback bad';
+            // friendlyError 现在有兜底文案，不能再靠 || 区分「未知错误码」；
+            // 中继自身故障码之外的一切失败都按凭据不正确提示（避免泄露原始错误码）。
+            const relayCodes=['missing_user_name_or_password','login_rate_limited','sso_relay_disabled','sso_relay_unavailable','sso_login_failed','cross_origin_login_denied','invalid_origin'];
+            note.textContent=relayCodes.includes(String(data.error||''))?friendlyError(data.error):'账号或密码不正确，请重试';note.className='feedback bad';
           }catch{note.textContent='网络异常，请稍后重试';note.className='feedback bad'}
           submit.disabled=false;submit.textContent='登录'});
         box.appendChild(accountForm);
@@ -107,7 +128,10 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
         }catch{note.textContent='网络异常，请稍后重试';note.className='feedback bad'}
         submit.disabled=false;submit.textContent='登录'});
       box.appendChild(form);
-      document.querySelectorAll('.view').forEach(node=>node.classList.add('hidden'));const main=document.querySelector('main');main.appendChild(box);const fresh=$('fresh');if(fresh)fresh.textContent='真实数据和配置受运营账号权限保护';setTimeout(()=>{try{(relayReady?userField:input).focus()}catch{}},50)}
+      document.querySelectorAll('.view').forEach(node=>node.classList.add('hidden'));const main=document.querySelector('main');if(main)main.appendChild(box);const fresh=$('fresh');if(fresh)fresh.textContent='真实数据和配置受运营账号权限保护';setTimeout(()=>{try{(relayReady?userField:input).focus()}catch{}},50)}
+      // 管理员选中租户时用 ?tenant= 把概览切到该租户视角：服务端只对管理员生效
+      // 且会校验租户存在（组员模式走 x-rdk-obs-tenant 头，不经过这里）。
+      function adminTenantQuery(){try{const me=obsAuthState.me;const tenant=obsActiveTenant();return me&&me.admin&&tenant?'&tenant='+encodeURIComponent(tenant):''}catch{return ''}}
       function updateViewHeader(source,name){const meta=viewMeta[source]||viewMeta[name]||viewMeta.overview;[['pageKicker',meta[0]],['pageTitle',meta[1]],['pageIntro',meta[2]]].forEach(item=>{const node=$(item[0]);if(node)node.textContent=item[1]});document.title='d-obs · '+meta[1]}
       const navGroupByView={investigate:'core',alerts:'core',traces:'core','operator-metrics':'data','data-health':'data',database:'data','skill-loop':'learning',evolution:'learning',platform:'advanced','service-levels':'core'};
       // 多级收起菜单的统一徽章层：分组收起时把组内关键计数提升到分组头，

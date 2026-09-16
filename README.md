@@ -134,6 +134,11 @@ token 会一次性写入 sessionStorage（随后从地址栏移除），后续 A
 `RDK_FLYWHEEL_ADMIN_USER_IDS` 白名单内，admin-token 直连下该模块显示"当前账号没有
 运营配置权限"，属预期降级——告警、事故、规则、模型池、数据库面板不受影响。
 
+前端把 403 分成两类：**身份级**（`not_a_member` / `tenant_disabled` —— 组员被移出、
+租户被停用）会提示「权限已变化」并重查 `/auth/me`，不清空已渲染内容；**模块级**
+（`not_authorized` / `tenant_scope_only` —— 行动域对令牌直连的收敛、租户凭证打平台面）
+按原有方式静默降级，不提示、不重查身份——否则每轮轮询都会弹一次误报。新增错误码时
+请按这个分类决定是否加入 `OBS_IDENTITY_FORBIDDEN_CODES`。
 
 ## 多团队租户（自助接入 + 数据隔离）
 
