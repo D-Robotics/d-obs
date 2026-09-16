@@ -87,6 +87,25 @@ RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_alert_checks,studio_ops_events
 多一张只是多暴露一张本服务确实会读的表。放宽或收窄都只改 `/etc/d-obs.env` 这一行后
 `systemctl restart d-obs`，并保留 `RDK_DB_PANEL_TABLES` 为空即可恢复「全部可见」的旧行为。
 
+## 告警配置的归属（重要，2026-09-16 实测）
+
+**线上真正生效的告警配置不在 d-obs 名下**，两条线各有各的文件：
+
+| 谁 | 配置文件 | 状态 |
+| --- | --- | --- |
+| 主站 worker（`rdstudio-alert-worker.timer`，每分钟跑，**线上唯一在跑的告警评估**） | `/var/lib/rdstudio-alert-worker/config.json` | 26 条规则、通知已启用、影子模式**关闭**、渠道 feishu |
+| d-obs | `/etc/d-obs.env` 里 `RDK_ALERT_CONFIG_PATH=/var/lib/d-obs/alert-config.json` | **该文件不存在** → d-obs 面板显示的是内置默认配置 |
+
+推论：**d-obs 工作台的「告警策略 / 通知模板」面板目前是死的**——它编辑的配置没有任何在跑的进程去评估（d-obs 自带的 worker 只在 `npm run worker` 时跑，生产不跑它）。想在面板里改阈值并生效，必须先决定由哪条线拥有告警评估：
+
+- **方案 A（让 d-obs 接管）**：把 d-obs 指向主站那份文件（即删掉 `RDK_ALERT_CONFIG_PATH` 覆盖，两边默认路径本来就是同一个）。**但先要解决两处 schema 差异**，否则一次保存就会改坏线上告警：
+  1. 那份文件里有 3 条 d-obs 不认识的规则（`moss-model-target-degraded`、`l4-shadow-ready-to-observe`、`l4-canary-ready-for-approval`），`loadAlertConfig` 只按已知键重建 `rules`，保存时会**静默删除**它们；
+  2. d-obs 的默认集合比该文件多 5 条规则，保存会把它们**物化进文件**，从而让 worker 开始评估原本不存在的规则。
+  正确做法是让 schema 透传未知规则键、并让保存以「文件内容 + 本次 patch」为基准而不是「默认值 + 文件」，改完再切。
+- **方案 B（保持两条线）**：d-obs 面板继续编辑它自己的文件，但要在部署文档/面板上说明「此面板不影响线上告警」；或干脆把该面板下线，只保留只读展示。
+
+无论选哪个，`saveAlertConfig` 现在都会在覆写前留一份时间戳备份（保留最近 5 份，`config.json.bak-<UTC 毫秒>`），使误写可恢复——这是为上面这个风险加的最低成本保险。
+
 ## 反代与客户端地址
 
 `app.set('trust proxy', …)` 默认取 `loopback`（见 `server/trusted-proxy.ts`）：

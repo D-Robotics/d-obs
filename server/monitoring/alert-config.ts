@@ -4,7 +4,7 @@
  * 配置文件包含通知 Webhook 和合成拨测账号，因此只允许写入仓库外的 0600 文件。
  * 任何发给浏览器的响应都必须先经过 toPublicAlertConfig()，不能直接序列化 AlertConfig。
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
@@ -891,9 +891,46 @@ export function mergeAndValidateAlertConfig(
   return alertConfigSchema.parse(next) as AlertConfig;
 }
 
+/**
+ * 覆写前留一份时间戳备份（保留最近 {@link ALERT_CONFIG_BACKUP_KEEP} 份）。
+ *
+ * 告警配置是**活的运维数据**：同一份文件可能被多个部署/进程使用，而每个写入方
+ * 只认识自己那套规则键。真机验证时发现线上那份 26 条规则的配置里有 3 条
+ * `moss-model-target-degraded` / `l4-shadow-ready-to-for-observe` /
+ * `l4-canary-ready-for-approval` 是 d-obs 的 schema 不认识的，写回时会被丢掉
+ * ——一次误写就可能静默关掉别人的告警。备份不能阻止这种丢字段，但能让它可恢复。
+ */
+const ALERT_CONFIG_BACKUP_KEEP = 5;
+
+async function backupAlertConfigIfPresent(target: string): Promise<void> {
+  let existing: string;
+  try {
+    existing = await readFile(target, 'utf8');
+  } catch {
+    return; // 首次写入没有可备份的内容
+  }
+  // 保留毫秒：同秒内的连续写入各自成档，且字典序仍等于时间序。
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.(\d{3})Z$/, '$1Z');
+  await writeFile(`${target}.bak-${stamp}`, existing, { encoding: 'utf8', mode: 0o600 }).catch(
+    () => undefined,
+  );
+  // 只保留最近若干份，避免无限堆积（配置写入本身很罕见）。
+  const dir = path.dirname(target);
+  const base = path.basename(target);
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  const backups = entries
+    .filter((name) => name.startsWith(`${base}.bak-`))
+    .sort()
+    .reverse();
+  for (const stale of backups.slice(ALERT_CONFIG_BACKUP_KEEP)) {
+    await rm(path.join(dir, stale), { force: true }).catch(() => undefined);
+  }
+}
+
 export async function saveAlertConfig(config: AlertConfig): Promise<void> {
   const target = alertConfigPath();
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  await backupAlertConfigIfPresent(target);
   const temp = `${target}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temp, `${JSON.stringify(config, null, 2)}\n`, {
     encoding: 'utf8',
