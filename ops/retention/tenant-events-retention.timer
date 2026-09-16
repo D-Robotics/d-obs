@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily trim of expired d-obs tenant events
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+Persistent=true
+Unit=tenant-events-retention.service
+
+[Install]
+WantedBy=timers.target

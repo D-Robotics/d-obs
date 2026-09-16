@@ -44,6 +44,22 @@
 检查（每个 `studio_ops_events` 读取语句必须带平台租户过滤，唯一豁免是全局保留期
 清理），新增查询漏掉过滤会直接测失败。
 
+### 保留期（需单独调度）
+
+平台事件表的保留期由**主站部署**的告警 worker 清理（30 天），而它不认识
+`studio_ops_events_tenant`；d-obs 自带的 worker 清理逻辑只在 d-obs 自己跑 worker
+时生效，线上并不跑它。因此租户事件表需要独立调度，否则会无界增长：
+
+```bash
+# 仓内已提供脚本与 unit（ops/retention/）
+install -m 0644 ops/retention/tenant-events-retention.{service,timer} /etc/systemd/system/
+install -d /opt/d-obs/tools && install -m 0755 tools/trim-tenant-events.mjs /opt/d-obs/tools/
+systemctl daemon-reload && systemctl enable --now tenant-events-retention.timer
+systemctl list-timers tenant-events-retention.timer      # 核对下次触发
+# 手动跑一次（保留天数默认 30，可传参）
+RDK_CHAT_CREDITS_DB_URL=... node tools/trim-tenant-events.mjs 30
+```
+
 > 租户事件目前只做归属归档，尚无面向租户的展示面：租户视图不返回事件面板，
 > 平台视图也不再包含租户行。接入租户事件看板时读 `studio_ops_events_tenant`
 > 并按 `tenant_id` 过滤即可。

@@ -1,0 +1,11 @@
+[Unit]
+Description=Trim expired d-obs tenant events (studio_ops_events_tenant)
+Documentation=https://github.com/D-Robotics/d-obs/blob/main/docs/event-ingest.md
+After=network.target
+
+[Service]
+Type=oneshot
+# 与 /etc/d-obs.env 同源，脚本需要 RDK_CHAT_CREDITS_DB_URL
+EnvironmentFile=/etc/d-obs.env
+WorkingDirectory=/opt/d-obs
+ExecStart=/opt/node-v22.19.0-linux-x64/bin/node /opt/d-obs/tools/trim-tenant-events.mjs 30

@@ -1234,6 +1234,14 @@ async function runWorker(): Promise<void> {
     await p
       .query(`delete from public.studio_ops_events where occurred_at < now() - interval '30 days'`)
       .catch(() => {});
+    // 租户事件表同期限清理：线上跑的是主站部署的 worker，它不认识这张表，
+    // 因此另有 ops/retention/ 的独立 timer（见 docs/event-ingest.md）。这里保留
+    // 一份，保证 d-obs 自己跑 worker 时两表都不会无界增长。
+    await p
+      .query(
+        `delete from public.studio_ops_events_tenant where occurred_at < now() - interval '30 days'`,
+      )
+      .catch(() => {});
     await p
       .query(`delete from public.studio_sli_samples where sampled_at < now() - interval '35 days'`)
       .catch(() => {});
