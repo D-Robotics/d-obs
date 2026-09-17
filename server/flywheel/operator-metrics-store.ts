@@ -14,6 +14,12 @@ import {
   emptyAgentDispatchMetrics,
   type AgentDispatchMetrics,
 } from './agent-dispatch-metrics.js';
+import {
+  buildModelTokenMetrics,
+  emptyModelTokenMetrics,
+  type ModelTokenMetrics,
+  type ModelTokenMetricRow,
+} from './model-token-metrics.js';
 
 type PgQueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number | null };
 type QueryPool = { query: (sql: string, params?: unknown[]) => Promise<PgQueryResult> };
@@ -33,6 +39,7 @@ export interface OperatorMetrics {
   windowDays: number;
   daily: OperatorDailyPoint[];
   dispatch: AgentDispatchMetrics;
+  modelTokens: ModelTokenMetrics;
   totals: {
     newAccounts: number;
     activeUsersPeak: number;
@@ -108,7 +115,7 @@ export async function getOperatorMetrics(daysInput = 30): Promise<OperatorMetric
 
   // One row per run_id prevents retries/backfills from inflating cost and run
   // totals.  Only numeric aggregates are selected from the run table.
-  const [runs, conversations, active] = await Promise.all([
+  const [runs, conversations, active, modelRuns] = await Promise.all([
     pool
       .query(
         `with latest_run as (
@@ -141,6 +148,24 @@ export async function getOperatorMetrics(daysInput = 30): Promise<OperatorMetric
       )
       .catch(() => emptyResult()),
     readDailyActiveUsers(pool, windowDays).catch(() => emptyResult()),
+    pool
+      .query(
+        `with latest_run as (
+           select distinct on (run_id)
+                  started_at::date::text as day,
+                  coalesce(model, '') model,
+                  coalesce(prompt_tokens, 0)::bigint prompt_tokens,
+                  coalesce(completion_tokens, 0)::bigint completion_tokens
+             from public.agent_run_records
+            where started_at >= now() - make_interval(days => $1::int)
+              and started_at <= now() + interval '5 minutes'
+            order by run_id, coalesce(completed_at, started_at) desc, created_at desc
+         )
+         select day, model, prompt_tokens, completion_tokens
+           from latest_run`,
+        [windowDays],
+      )
+      .catch(() => emptyResult()),
   ]);
 
   // Dispatch receipts are optional during rolling upgrades.  The query only
@@ -185,6 +210,26 @@ export async function getOperatorMetrics(daysInput = 30): Promise<OperatorMetric
     );
   } catch {
     dispatch = emptyAgentDispatchMetrics(windowDays);
+  }
+
+  // Token split by model.  The model column is optional during rolling
+  // upgrades; a missing column degrades to "unconfigured" instead of failing
+  // the whole metrics response.
+  let modelTokens = emptyModelTokenMetrics(windowDays);
+  try {
+    modelTokens = buildModelTokenMetrics(
+      modelRuns.rows.map(
+        (row): ModelTokenMetricRow => ({
+          day: day(row.day),
+          model: String(row.model ?? '').slice(0, 96),
+          promptTokens: number(row.prompt_tokens),
+          completionTokens: number(row.completion_tokens),
+        }),
+      ),
+      windowDays,
+    );
+  } catch {
+    modelTokens = emptyModelTokenMetrics(windowDays);
   }
 
   const byDay = new Map<string, OperatorDailyPoint>();
@@ -254,6 +299,7 @@ export async function getOperatorMetrics(daysInput = 30): Promise<OperatorMetric
     windowDays,
     daily,
     dispatch,
+    modelTokens,
     totals,
     sources: {
       accounts: accountSource,

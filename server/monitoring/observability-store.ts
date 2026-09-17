@@ -362,6 +362,7 @@ export async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
       action text not null,
       summary text not null
     )`,
+    `alter table public.studio_alert_configuration_audit add column if not exists details jsonb null`,
     `create table if not exists public.studio_alert_checks (
       alert_key text primary key,
       title text not null,
@@ -409,14 +410,56 @@ export async function recordOpsConfigurationAudit(input: {
   actor: string;
   action: string;
   summary: string;
+  /** Structured, restore-ready snapshot for reversible control-plane changes
+   *  (model-pool routing/replacement). Must never contain raw credentials —
+   *  callers store a fingerprint instead. */
+  details?: unknown;
 }): Promise<void> {
   const p = await pool();
   await ensureIncidentOperationsSchema(p);
+  const details =
+    input.details === undefined || input.details === null ? null : JSON.stringify(input.details);
   await p.query(
-    `insert into public.studio_alert_configuration_audit (actor, action, summary)
-     values ($1, $2, $3)`,
-    [auditActor(input.actor), text(input.action, 64), text(input.summary, 800)],
+    `insert into public.studio_alert_configuration_audit (actor, action, summary, details)
+     values ($1, $2, $3, $4::jsonb)`,
+    [auditActor(input.actor), text(input.action, 64), text(input.summary, 800), details],
   );
+}
+
+/** Latest restore-ready snapshot recorded for a control-plane action. Used by
+ *  the model-pool rollback endpoint to recover the pre-change target without
+ *  storing raw keys anywhere. */
+export async function getLatestOpsConfigurationAuditDetails(
+  action: string,
+  frontendModel: string,
+): Promise<{ details: Record<string, unknown> | null; occurredAt: string | null } | null> {
+  const p = await pool();
+  await ensureIncidentOperationsSchema(p);
+  const result = await p.query(
+    `select details, occurred_at
+     from public.studio_alert_configuration_audit
+     where action = $1
+       and jsonb_typeof(details) = 'object'
+       and details->>'frontendModel' = $2
+       and jsonb_exists(details, 'previous')
+     order by id desc
+     limit 5`,
+    [text(action, 64), text(frontendModel, 120)],
+  );
+  for (const row of result.rows) {
+    let parsed: unknown = row.details;
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed);
+      } catch {
+        continue;
+      }
+    }
+    if (parsed && typeof parsed === 'object' && parsed !== null) {
+      return { details: parsed as Record<string, unknown>, occurredAt: iso(row.occurred_at) };
+    }
+  }
+  return null;
 }
 
 export async function updateOpsIncident(

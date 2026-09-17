@@ -153,7 +153,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div id="operatorMetricsContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取运营指标</strong><small>汇总中心库日粒度数据…</small></div></div>
     </section>
     <section id="view-database" class="view hidden" aria-labelledby="databaseHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 数据库</div><h2 id="databaseHeading">PostgreSQL 运行与资产</h2><p>查看运行状态、库表关系、只读 AI 查询与表维护状态。</p></div><div class="right">中心 PG · 全程只读</div></div>
+      <div class="view-head"><div><div class="eyebrow">可观测中心 / 数据库</div><h2 id="databaseHeading">PostgreSQL 运行与资产</h2><p>查看运行状态、库表关系与表维护状态。</p></div><div class="right">中心 PG · 全程只读</div></div>
       <div id="databaseContent" class="database-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取数据库状态</strong><small>查询运行指标、关系和表资产…</small></div></div>
     </section>
     <section id="view-skill-loop" class="view hidden" aria-labelledby="skillLoopHeading">

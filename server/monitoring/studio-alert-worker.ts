@@ -15,6 +15,11 @@ import {
 import { ensureOpsEventSchema, sanitizeOpsSummary } from './ops-event-store.js';
 import { remediationPlaybooksForRule, requestRemediation } from './alert-remediation.js';
 import {
+  ensureObservabilityActionSchema,
+  verifyExecutingObservabilityActions,
+  type ActionStorePool,
+} from './observability-action-loop.js';
+import {
   runSyntheticProbeCycle,
   syntheticCredentialsConfigured,
   type SyntheticProbeResult,
@@ -1065,6 +1070,23 @@ async function runWorker(): Promise<void> {
     const started = Date.now();
     await p.query('select 1');
     await ensureAlertHistorySchema(p);
+    // 行动环后置验证：executing 状态的行动不依赖操作者保持页面打开，
+    // worker 每轮巡检都会按精确 remediation run 复核并推进终态。
+    await ensureObservabilityActionSchema(p)
+      .then(() => verifyExecutingObservabilityActions(p as ActionStorePool))
+      .then((updated) => {
+        for (const item of updated) {
+          console.log(
+            `[alert-worker] action post-check advanced: ${item.id} -> ${item.status}`,
+          );
+        }
+      })
+      .catch((error) => {
+        console.warn(
+          '[alert-worker] action post-check pass failed:',
+          sanitizeOpsSummary(error, 240),
+        );
+      });
     await recordGatewayProbeSample(p, gatewayHealth, gatewayTtft).catch((error) => {
       // A telemetry migration/permission problem must not hide the rest of
       // the database-backed alert checks or turn a healthy worker into a crash.

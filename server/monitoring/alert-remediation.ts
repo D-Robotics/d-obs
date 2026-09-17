@@ -47,7 +47,7 @@ export const REMEDIATION_PLAYBOOKS: RemediationPlaybook[] = [
     id: 'restart-app',
     title: '重启主服务（standby 接管）',
     description:
-      '确认 standby（18091）active 后重启 rdstudio-web-opt；重启窗口内 nginx 自动 failover 到 standby，零停机。',
+      '前置校验 systemctl is-active rdstudio-web-opt-standby.service（不 active 拒绝）→ systemctl restart rdstudio-web-opt.service → 健康拨测 18090。重启窗口内 nginx 自动 failover 到 standby，零停机。',
     safety: 'standby 不 active 时拒绝执行，避免重启窗口造成真实停服',
     appliesTo: [
       'nginx-5xx-log',
@@ -62,14 +62,15 @@ export const REMEDIATION_PLAYBOOKS: RemediationPlaybook[] = [
     id: 'restart-standby',
     title: '重启 standby 服务',
     description:
-      '确认主服务（18090）active 后重启 rdstudio-web-opt-standby，恢复下一次重启窗口的 failover 能力。',
+      '前置校验 systemctl is-active rdstudio-web-opt.service（不 active 拒绝）→ systemctl restart rdstudio-web-opt-standby.service → 健康拨测 18091。恢复下一次重启窗口的 failover 能力。',
     safety: '主服务不 active 时拒绝执行',
     appliesTo: ['internal-health', 'public-health', 'nginx-5xx-log'],
   },
   {
     id: 'reload-nginx',
     title: '重载 Nginx',
-    description: 'nginx -t 校验通过后 systemctl reload nginx，恢复反代 worker 状态；不修改任何配置。',
+    description:
+      '前置校验 nginx -t（不通过拒绝）→ systemctl reload nginx.service → 公网健康拨测。只 reload 不 restart、不修改任何配置文件。',
     safety: '只 reload 不 restart、不改配置；校验失败拒绝执行',
     appliesTo: ['nginx-5xx-log', 'public-health'],
   },
