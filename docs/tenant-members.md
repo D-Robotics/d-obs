@@ -120,6 +120,19 @@ DELETE .../tenants/<tenantId>/members/<ssoUserId>
 
 成员变更全部写 `studio_alert_configuration_audit` 审计。
 
+## 验证状态（2026-09-17）
+
+已对**生产库**实测的：成员存储层的增删查与计数（`addMember` / `findMembership` /
+`listMembershipsForUser` / `listMembers` / `countOwners` / `countMembersByTenant` /
+`removeMember`）——用一个本身已是平台管理员的账号做临时成员（不新增任何权限），
+流程跑完即删，事后全表 0 残留。同时实测：租户凭证读租户面 200、打平台面 403
+`tenant_scope_only`、伪造 token 401 `invalid_tenant_token`、无跨租户泄漏。
+
+**尚未在真实浏览器会话里跑过的**：组员视图本身（`x-rdk-obs-tenant` + SSO 会话 →
+只读组员界面）。它需要**一个非管理员账号的会话**——要么给一个真实非管理员账号
+（能登录主站即可），要么授权在生产建一个一次性测试账号。在那之前，这条路径只有
+路由级测试（`tenant-member-access.test.ts`）与上面这层库级实测覆盖。
+
 ## 工作台使用
 
 1. **已在业务站登录的用户直接打开 `/ops-observability` 即可**（同源 Cookie
