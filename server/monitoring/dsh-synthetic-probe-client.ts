@@ -21,7 +21,16 @@ type FetchLike = typeof globalThis.fetch;
 export interface SyntheticDshProbeInput {
   baseUrl: string;
   ssoSessionId: string;
-  sessionIdPrefix: string;
+  /** 每次拨测新建会话时用的前缀（与 sessionId 二选一）。 */
+  sessionIdPrefix?: string;
+  /**
+   * 显式指定会话 id（稳定会话）。
+   *
+   * 线上需要它：官方 `session.create` 会幂等复用同一个 binding，而官方 rpc-map 没有
+   * delete——逐轮新建会话会把 canary 账号的 active DSH binding 顶到上限。所以拨测改为
+   * **复用同一个稳定会话**，这要求客户端允许调用方直接给定 sessionId。
+   */
+  sessionId?: string;
   message: string;
   expectedTool: string | null;
   expectedAssistantMarker?: string;
@@ -303,7 +312,9 @@ export async function runSyntheticDshProbe(
   input: SyntheticDshProbeInput,
 ): Promise<SyntheticDshProbeOutcome> {
   const startedAt = Date.now();
-  const sessionId = `${input.sessionIdPrefix}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const sessionId =
+    String(input.sessionId ?? '').trim() ||
+    `${input.sessionIdPrefix ?? 'ops-probe'}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const client = new SyntheticStudioDshClient(
     input.baseUrl.replace(/\/+$/, ''),
     input.ssoSessionId,
