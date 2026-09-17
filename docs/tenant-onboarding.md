@@ -49,6 +49,29 @@ trace/事故数据），无需注册租户。
 5. **验证**：一分钟后看 `journalctl -u tenant-probe@<project>`（期望
    `report=202`），再在 d-obs 总览页检查状态网格出现该租户的 4 项拨测。
 
+## 撤销与停用（2026-09-17 真机验证）
+
+**用服务自己的接口撤销**（面板停用 / 轮换 token）：服务端在 `rotateTenantToken` /
+`setTenantStatus` 里会清掉 token 查找缓存，**旧凭据立即失效**（有回归测试钉住）。
+
+**不要直接改库撤销**：`findTenantByToken` 有 60 秒短缓存，绕过服务去 `DELETE`/`UPDATE`
+`studio_obs_tenants` 之后，旧 token 最长还能读到本租户只读面 1 分钟。真机上验证过这个
+差异：直接删行 → 立即仍 200、75 秒后 401；走服务接口则无此窗口。
+
+## 隔离性的真机验证（2026-09-17）
+
+用注册接口建了一个临时租户、按文档流程上报探针数据、跑完验证后把行删干净，结论：
+
+| 验证点 | 结果 |
+| --- | --- |
+| 租户探针上报（`x-rdk-tenant-probe-token`） | 202 accepted，归属写入 `source=tenant:<id>` |
+| 伪造 64-hex token 上报 | 401 |
+| alert_key 命名空间 | 4 项全部为 `t.<tenant>.external-*`，平台裸 key 的 `checked_at` 早于本租户创建时间（未被污染） |
+| 租户凭证读租户面 `/overview` | 200，响应中不含其它任何租户标识 |
+| 同一凭证打平台面 `/tenants` | 403 `tenant_scope_only` |
+| 租户面 `/config` | 200 `{tenantReadOnly:true}`（不给配置，只给只读标记） |
+| 伪造租户 token 读 `/overview` | 401 `invalid_tenant_token` |
+
 ## 数据形态
 
 - `studio_external_probe_status`：一行一租户（PK `(tenant_id, source)`），

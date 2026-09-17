@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  configureTenantPoolForTest,
+  findTenantByToken,
   generateTenantToken,
   hashTenantToken,
+  invalidateTenantTokenCache,
+  rotateTenantToken,
+  setTenantStatus,
   validTenantId,
 } from './tenant-store.js';
 
@@ -95,5 +100,86 @@ test('listTenants：非缺表错误仍然抛出（不退化成静默空列表）
     await assert.rejects(() => listTenants(), /permission denied/);
   } finally {
     configureTenantPoolForTest(null);
+  }
+});
+
+test('token 轮换/停用后旧 token 立即失效（60s 缓存必须被显式清掉）', async () => {
+  // 真机验证时发现：直接改库（绕开服务）删租户后旧 token 还能读 60 秒——那是
+  // findTenantByToken 的短缓存。服务自己的撤销路径必须清缓存，否则「轮换 token」
+  // 之后旧凭据仍能用一分钟，安全语义就错了。这里用假池子把这条语义钉住。
+  const activeRow = {
+    tenant_id: 'team-a',
+    display_name: 'Team A',
+    status: 'active',
+    created_at: new Date('2026-09-01T00:00:00Z'),
+    created_by: 'tester',
+  };
+  let tokenRows: Array<Record<string, unknown>> = [activeRow];
+  let tokenRotated = false;
+  const pool = {
+    query: async (text: string, params?: unknown[]) => {
+      if (/create table|create index|alter table/i.test(text)) return { rows: [] };
+      if (/probe_token_hash = \$1/i.test(text)) {
+        // 模拟库：轮换后旧哈希查不到任何行
+        return { rows: tokenRotated ? [] : tokenRows };
+      }
+      if (/update public\.studio_obs_tenants set probe_token_hash/i.test(text)) {
+        tokenRotated = true;
+        return { rows: [{ tenant_id: params?.[0] }], rowCount: 1 };
+      }
+      return { rows: [] };
+    },
+  };
+  configureTenantPoolForTest(pool as never);
+  try {
+    const token = generateTenantToken();
+    // 第一次解析：命中数据库并写入缓存
+    const first = await findTenantByToken(token);
+    assert.equal(first?.tenantId, 'team-a');
+
+    // 轮换：旧 token 的哈希在库里已不存在
+    const rotated = await rotateTenantToken('team-a');
+    assert.match(rotated, /^[a-f0-9]{64}$/);
+
+    // 关键断言：旧 token 必须立刻解析不到（缓存若没清，这里会拿到 team-a）
+    assert.equal(await findTenantByToken(token), null, '轮换后旧 token 不得再解析出租户');
+
+    // 新 token 也应当解析不到：库里已换哈希，而上面那行假池子模拟"查不到旧行"
+    assert.equal(await findTenantByToken(rotated), null);
+  } finally {
+    configureTenantPoolForTest(null);
+    invalidateTenantTokenCache();
+  }
+});
+
+test('停用租户后缓存清空：即使库里仍是 active 行也不复用旧结论', async () => {
+  const activeRow = {
+    tenant_id: 'team-b',
+    display_name: 'Team B',
+    status: 'active',
+    created_at: new Date('2026-09-01T00:00:00Z'),
+    created_by: 'tester',
+  };
+  let disabled = false;
+  const pool = {
+    query: async (text: string, params?: unknown[]) => {
+      if (/create table|create index|alter table/i.test(text)) return { rows: [] };
+      if (/probe_token_hash = \$1/i.test(text)) return { rows: disabled ? [] : [activeRow] };
+      if (/update public\.studio_obs_tenants set status/i.test(text)) {
+        disabled = true;
+        return { rows: [{ tenant_id: params?.[0] }], rowCount: 1 };
+      }
+      return { rows: [] };
+    },
+  };
+  configureTenantPoolForTest(pool as never);
+  try {
+    const token = generateTenantToken();
+    assert.equal((await findTenantByToken(token))?.tenantId, 'team-b');
+    await setTenantStatus('team-b', 'disabled');
+    assert.equal(await findTenantByToken(token), null, '停用后旧 token 不得继续可用');
+  } finally {
+    configureTenantPoolForTest(null);
+    invalidateTenantTokenCache();
   }
 });
