@@ -1022,6 +1022,8 @@ export interface AlertConfigWritePlan {
   aliasedRuleKeys: Record<string, string>;
   /** 文件 `rules` 里没有的已知规则键（含只有旧键的情况）：不改动就不会被写进文件。 */
   defaultOnlyRuleKeys: AlertRuleKey[];
+  /** 本次被显式「固定进配置文件」的规则键（取值未变也会写入）。 */
+  pinnedRuleKeys: AlertRuleKey[];
   /** 本次是「整份写出」（文件不存在/损坏，没有可增补的基准文档）。 */
   fullWrite: boolean;
 }
@@ -1047,6 +1049,7 @@ export function planAlertConfigWrite(
   file: AlertConfigFileState,
   current: AlertConfig,
   next: AlertConfig,
+  options: { pinRuleKeys?: readonly string[] } = {},
 ): AlertConfigWritePlan {
   const changedFields: string[] = [];
   const changedRuleKeys: string[] = [];
@@ -1061,8 +1064,21 @@ export function planAlertConfigWrite(
       changedFields.push(`${section}.${name}`);
     }
   }
+  // 显式固定：即使取值与默认值相同也要写进文件，让「面板显示的值」= 「线上生效的值」。
+  // 只接受文件里原本没有的已知规则键——已经在文件里的键本来就被固定着。
+  const pinnedRuleKeys = ruleKeys.filter(
+    (key) =>
+      (options.pinRuleKeys ?? []).includes(key) &&
+      !file.presentRuleKeys.includes(key) &&
+      !(
+        legacyAliasForRuleKey(key) &&
+        file.presentRuleKeys.includes(legacyAliasForRuleKey(key) as string)
+      ),
+  ) as AlertRuleKey[];
   for (const key of ruleKeys) {
-    if (isDeepStrictEqual(current.rules[key], next.rules[key])) continue;
+    if (isDeepStrictEqual(current.rules[key], next.rules[key]) && !pinnedRuleKeys.includes(key)) {
+      continue;
+    }
     const alias = legacyAliasForRuleKey(key);
     // 文件里只有旧键 → 改动落到旧键上，否则线上 worker 读不到这次修改。
     const written =
@@ -1083,6 +1099,7 @@ export function planAlertConfigWrite(
       changedRuleKeys,
       aliasedRuleKeys,
       defaultOnlyRuleKeys,
+      pinnedRuleKeys,
       fullWrite: false,
     };
   }
@@ -1095,6 +1112,7 @@ export function planAlertConfigWrite(
       changedRuleKeys,
       aliasedRuleKeys,
       defaultOnlyRuleKeys,
+      pinnedRuleKeys,
       fullWrite: true,
     };
   }
@@ -1131,6 +1149,7 @@ export function planAlertConfigWrite(
     changedRuleKeys,
     aliasedRuleKeys,
     defaultOnlyRuleKeys,
+    pinnedRuleKeys,
     fullWrite: false,
   };
 }
@@ -1160,11 +1179,12 @@ export interface AlertConfigPanelWriteResult {
  */
 export async function applyPanelAlertConfigPatch(
   patch: AlertConfigPatch,
+  options: { pinRuleKeys?: readonly string[] } = {},
 ): Promise<AlertConfigPanelWriteResult> {
   const file = await alertConfigFileState();
   const current = alertConfigFromFileState(file);
   const next = mergeAndValidateAlertConfig(current, patch);
-  const plan = planAlertConfigWrite(file, current, next);
+  const plan = planAlertConfigWrite(file, current, next, options);
   if (plan.changed) await writeAlertConfigText(plan.text);
   const after = plan.changed ? alertConfigFileStateFromText(plan.text) : file;
   return {

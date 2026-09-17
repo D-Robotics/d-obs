@@ -190,3 +190,41 @@ test('公开配置如实标注：哪些规则只在默认值里、配置文件�
     assert.deepEqual(publicConfig.defaultOnlyRuleKeys, []);
   });
 });
+
+test('显式固定（pinRuleKeys）：取值与默认值相同也能写进文件，且只加这些键', async () => {
+  const original = `${JSON.stringify(SHARED_FILE, null, 2)}\n`;
+  await withConfigFile(original, async (_dir, file) => {
+    const before = await readJson(file);
+    // 不传规则取值，只要求「把 api-5xx-spike 固定进文件」——它的取值此刻等于默认值
+    const result = await applyPanelAlertConfigPatch({}, { pinRuleKeys: ['api-5xx-spike'] });
+
+    assert.equal(result.changed, true, '显式固定必须产生写入');
+    assert.deepEqual(result.plan.changedRuleKeys, ['api-5xx-spike']);
+    assert.deepEqual(result.plan.pinnedRuleKeys, ['api-5xx-spike']);
+    const after = await readJson(file);
+    const added = Object.keys(after.rules).filter((key) => !(key in before.rules));
+    assert.deepEqual(added, ['api-5xx-spike'], '只能新增被固定的那个键');
+    // 固定后的取值必须等于面板原来显示的默认值（否则等于偷偷改了线上阈值）
+    assert.equal(after.rules['api-5xx-spike'].threshold, DEFAULT_ALERT_CONFIG.rules['api-5xx-spike'].threshold);
+    assert.equal(
+      after.rules['api-5xx-spike'].criticalThreshold,
+      DEFAULT_ALERT_CONFIG.rules['api-5xx-spike'].criticalThreshold,
+    );
+    // 已经在文件里的键不需要固定，传了也不该产生写入
+    const second = await applyPanelAlertConfigPatch({}, { pinRuleKeys: ['api-5xx-spike'] });
+    assert.equal(second.changed, false, '重复固定同一个键应当是空操作');
+  });
+});
+
+test('固定时忽略未知键与文件里已有的键，不误写别的规则', async () => {
+  await withConfigFile(`${JSON.stringify(SHARED_FILE, null, 2)}\n`, async (_dir, file) => {
+    const before = await readJson(file);
+    const result = await applyPanelAlertConfigPatch(
+      {},
+      { pinRuleKeys: ['disk-space', 'not-a-real-rule', 'moss-model-target-degraded'] },
+    );
+    assert.equal(result.changed, false, '未知键/已有键（含旧键别名）都不该触发写入');
+    const after = await readJson(file);
+    assert.deepEqual(Object.keys(after.rules).sort(), Object.keys(before.rules).sort());
+  });
+});

@@ -1575,7 +1575,12 @@ export function createOpsObservabilityRouter(): Router {
         const write = async () => {
           // 面板保存走 applyPanelAlertConfigPatch：以磁盘原文为基准做最小改动，
           // 不把面板展示的默认规则物化进共用文件（见 planAlertConfigWrite）。
-          const result = await applyPanelAlertConfigPatch((req.body ?? {}) as AlertConfigPatch);
+          // pinRuleKeys 是唯一的例外：运维显式要求把「只在默认值里」的规则固定进文件。
+          const body = (req.body ?? {}) as AlertConfigPatch & { pinRuleKeys?: unknown };
+          const pinRuleKeys = Array.isArray(body.pinRuleKeys)
+            ? body.pinRuleKeys.filter((key): key is string => typeof key === 'string')
+            : [];
+          const result = await applyPanelAlertConfigPatch(body, { pinRuleKeys });
           unchanged = !result.changed;
           if (result.changed) {
             const changed = [...result.plan.changedFields, ...result.plan.changedRuleKeys];

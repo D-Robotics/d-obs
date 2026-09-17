@@ -149,7 +149,7 @@ RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_alert_checks,studio_ops_events
 ### 真机验证（对线上那份 26 条规则的配置）
 
 - 面板读到的是线上配置而非默认值：通知 `enabled=true`、`shadowMode=false`、feishu 已配置；
-- 4 条 `north-star-*` 规则只在默认值里、不在文件中（面板标「未写入配置」，线上未评估）；
+- 4 条 `north-star-*` 规则当时不在文件里。**注意：「不在文件里」不等于「线上未评估」**——worker 会把自己的内置默认值合并进来一并评估，实测这 4 条的生效阈值与 d-obs 默认值逐项相同，当时它们已在评估并有 2 条处于 critical 事故中（见下）。现已把这 4 条写入文件固定（2026-09-17），面板与线上不再存在「显示值 ≠ 生效值」的歧义；
 - 原样保存干跑：`changed=false`；
 - 停用一条规则：规则总数 26 → 26（无物化、无丢失），两条外部规则与旧键仍在。
 
