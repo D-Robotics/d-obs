@@ -168,6 +168,26 @@ RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_alert_checks,studio_ops_events
 不会被采信。反代换到别的机器时用 `RDK_TRUST_PROXY=<该机器 IP/CIDR>` 显式声明。
 
 
+## 合成拨测与主站 worker 的副本（2026-09-17）
+
+主站 worker（`rdstudio-alert-worker.timer`）跑的是**它自己那份**产物
+`/opt/rdstudio-web-opt/current/dist-server/server/monitoring/`，与 d-obs 是两份代码。
+排查「synthetic-ai-chat / synthetic-tool-call 自 08-05 起恒报 history exceeded the event
+bound」时确认了两件事：
+
+1. 主站对 `synthetic-probes.js` + `dsh-synthetic-probe-client.js` 做过**有意的本地补丁**：
+   拨测复用同一个稳定 session id，理由是官方 `session.create` 幂等复用同一 binding、
+   而官方 rpc-map 没有 delete，逐轮新建会把 canary 账号的 active DSH binding 顶到上限。
+   这个补丁是对的，不要回退（备份 `*.bak-20260915-probe-stable-session` 是补丁前的版本）。
+2. 真正错的是 d-obs 客户端这一侧：超限判断用了**整个会话**的历史事件数，稳定会话用久了
+   必然超限。已改为只看**本次 run** 的事件数，并让客户端支持显式稳定 `sessionId`
+   （`sessionIdPrefix` 变为可选），这样同一个客户端两种用法都支持。
+
+处置：把修复后的 `dsh-synthetic-probe-client.js` 同步到主站产物目录（备份
+`*.bak-20260917-before-runbound`），触发 worker 后**三项拨测全过**，两条 critical 事故自动
+resolve，进行中事故 6 → 3。注意这是**覆盖部署产物**：主站下一次发布会把它冲掉，
+要根治需把这份修复回上游（`server/monitoring/dsh-synthetic-probe-client.ts`）。
+
 ## nginx 前缀（已上线，改动前备份 rdkstudio-ssl.conf）
 
 ```nginx
