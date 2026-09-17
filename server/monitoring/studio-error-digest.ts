@@ -879,7 +879,7 @@ export function buildFeishuDailyErrorDigestCard(
         actions: [
           {
             tag: 'button',
-            text: { tag: 'plain_text', content: '打开 AI 事故副驾' },
+            text: { tag: 'plain_text', content: '打开事故副驾' },
             type: status.priority === 'P0' || status.priority === 'P1' ? 'primary' : 'default',
             url: `${dashboardBaseUrl}#investigation`,
           },

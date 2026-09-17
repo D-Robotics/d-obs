@@ -597,7 +597,7 @@ function buildPostgresRelationshipGraph(
       kind: 'schema',
       label: 'ops_ai / 脱敏查询层',
       schemaName: 'ops_ai',
-      description: '只读、脱敏视图；AI SQL 只允许访问这一层。',
+      description: '只读、脱敏视图层（历史能力，SQL 入口已下线）。',
     },
   ];
   const edges: PostgresRelationshipGraph['edges'] = [
