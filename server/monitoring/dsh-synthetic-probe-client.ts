@@ -275,18 +275,22 @@ async function pollCompletedHistory(
       ),
       'session.history',
     );
-    if (history.events.length > MAX_HISTORY_EVENTS) {
-      // 带上真实数字：这条错误长期只能看到「超限」，无法判断是边界太紧还是 run 失控。
-      const runEvents = eventsForRun(
-        history.events.map((entry) => entry.event),
-        canonicalRunId,
-      );
-      throw new Error(
-        `synthetic DSH history exceeded the event bound（会话事件 ${history.events.length} > 上限 ${MAX_HISTORY_EVENTS}，其中本次 run ${runEvents.length} 条）`,
-      );
-    }
     const events = history.events.map((entry) => entry.event);
     const runEvents = eventsForRun(events, canonicalRunId);
+    // 超限判断只看**本次 run** 的事件，不能看整个会话的历史。
+    //
+    // 真机教训（2026-09-17）：主站为避免 canary 账号的 active DSH binding 累积
+    // （官方 rpc-map 没有 delete，逐轮新建会话会把 binding 顶到上限），把拨测改成
+    // **复用同一个稳定 session id**——这是对的。但这里原来拿整个会话的历史事件数去比
+    // MAX_HISTORY_EVENTS，于是稳定会话用久了必然超限：synthetic-ai-chat /
+    // synthetic-tool-call 从 08-05 起每分钟都报「history exceeded the event bound」，
+    // 而手动跑一次（新会话）却立刻通过。「事件爆炸」是本次 run 失控的信号，
+    // 只应该按本次 run 的事件数判断。
+    if (runEvents.length > MAX_HISTORY_EVENTS) {
+      throw new Error(
+        `synthetic DSH run exceeded the event bound（本次 run ${runEvents.length} 条 > 上限 ${MAX_HISTORY_EVENTS}；会话累计 ${history.events.length} 条）`,
+      );
+    }
     const terminal = terminalKind(runEvents);
     if (terminal === 'completed') return runEvents;
     if (terminal) throw new Error(`native DSH run ended with ${terminal}`);
