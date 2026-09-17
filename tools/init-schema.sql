@@ -151,6 +151,16 @@ create index if not exists studio_remediation_runs_environment_started_idx
 -- 控制面数据：仅服务器连接角色可写；直连自有库的部署至少启用 RLS。
 alter table public.studio_remediation_runs enable row level security;
 
+-- 行动环提案溯源（上游迁移同源）：origin 记录提案草稿来自人工还是事故副驾，
+-- 提交人 proposed_by 恒为账号身份；旧行缺列时幂等补齐默认 'human'。
+alter table public.studio_observability_actions
+  add column if not exists origin text not null default 'human';
+alter table public.studio_observability_actions
+  drop constraint if exists studio_observability_actions_origin_check;
+alter table public.studio_observability_actions
+  add constraint studio_observability_actions_origin_check
+    check (origin in ('human', 'ai-copilot'));
+
 -- 遥测治理 schema（同源拷贝自 rdstudio-web-master
 -- supabase/migrations/2026-08-26-telemetry-data-governance.sql）：
 -- 提供 run/trace 受保护读取所需的 payload 授权、审计、tombstone

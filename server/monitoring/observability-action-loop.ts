@@ -8,7 +8,9 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
+  ensureRemediationSchema,
   getRemediationPlaybook,
+  getRemediationRun,
   isRemediationPlaybookActionEnabled,
   requestRemediation,
   type RemediationRequestResult,
@@ -31,6 +33,15 @@ export { resetObservabilityActionSchemaReadinessForTest } from './observability-
 import type { StudioDeploymentEnvironment } from '../../shared/studio-observability.js';
 
 export type ObservabilityActionType = 'investigate' | 'observe' | 'escalate' | 'remediate';
+/** Who drafted the proposal: a human operator or the incident copilot.
+ *  The submitter is always a human (`proposedBy`); origin only records where
+ *  the draft came from so the audit chain can tell AI suggestions from human
+ *  decisions. */
+export type ObservabilityActionOrigin = 'human' | 'ai-copilot';
+export const OBSERVABILITY_ACTION_ORIGINS: readonly ObservabilityActionOrigin[] = [
+  'human',
+  'ai-copilot',
+];
 export type ObservabilityActionStatus =
   | 'pending_approval'
   | 'approved'
@@ -97,6 +108,7 @@ export interface ObservabilityActionRecord {
   evidenceRefs: string[];
   requiresApproval: boolean;
   status: ObservabilityActionStatus;
+  origin: ObservabilityActionOrigin;
   proposedBy: string;
   approvedBy: string | null;
   /** Short-lived authorization window; it never extends beyond the proposal TTL. */
@@ -120,6 +132,7 @@ export interface ActionProposalInput {
   playbookId?: string | null;
   evidenceRefs: string[];
   requiresApproval?: boolean;
+  origin?: ObservabilityActionOrigin;
   proposedBy: string;
 }
 
@@ -249,6 +262,11 @@ export function proposeObservabilityAction(input: ActionProposalInput): Observab
   if (!['investigate', 'observe', 'escalate', 'remediate'].includes(input.type)) {
     throw new Error('action_type_invalid');
   }
+  const origin: ObservabilityActionOrigin = OBSERVABILITY_ACTION_ORIGINS.includes(
+    input.origin as ObservabilityActionOrigin,
+  )
+    ? (input.origin as ObservabilityActionOrigin)
+    : 'human';
   const playbookId = input.playbookId ? text(input.playbookId, 96) : null;
   if (input.type === 'remediate') {
     if (
@@ -282,6 +300,7 @@ export function proposeObservabilityAction(input: ActionProposalInput): Observab
     evidenceRefs,
     requiresApproval,
     status: requiresApproval ? 'pending_approval' : 'approved',
+    origin,
     proposedBy,
     approvedBy: requiresApproval ? null : proposedBy,
     approvalExpiresAt,
@@ -653,6 +672,11 @@ export async function claimObservabilityAction(
   return affected > 0 ? claimed : null;
 }
 
+/** Test-only projection of the raw row shape used by the pg layer. */
+export function rowToActionForTest(row: Record<string, unknown>): ObservabilityActionRecord {
+  return rowToAction(row);
+}
+
 function rowToAction(row: Record<string, unknown>): ObservabilityActionRecord {
   return {
     id: String(row.id),
@@ -666,6 +690,7 @@ function rowToAction(row: Record<string, unknown>): ObservabilityActionRecord {
     evidenceRefs: cleanRefs(row.evidence_refs),
     requiresApproval: row.requires_approval !== false,
     status: String(row.status) as ObservabilityActionStatus,
+    origin: row.origin === 'ai-copilot' ? 'ai-copilot' : 'human',
     proposedBy: String(row.proposed_by),
     approvedBy: row.approved_by ? String(row.approved_by) : null,
     approvalExpiresAt: row.approval_expires_at
@@ -690,8 +715,8 @@ export async function insertObservabilityAction(
 ): Promise<void> {
   await p.query(
     `insert into public.studio_observability_actions
-    (id, account_scope_id, environment, run_id, type, title, rationale, playbook_id, evidence_refs, requires_approval, status, proposed_by, approved_by, approval_expires_at, created_at, updated_at, execution, regression_marker, revision)
-    values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19)`,
+    (id, account_scope_id, environment, run_id, type, title, rationale, playbook_id, evidence_refs, requires_approval, status, origin, proposed_by, approved_by, approval_expires_at, created_at, updated_at, execution, regression_marker, revision)
+    values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20)`,
     [
       action.id,
       action.accountScopeId,
@@ -704,6 +729,7 @@ export async function insertObservabilityAction(
       JSON.stringify(action.evidenceRefs),
       action.requiresApproval,
       action.status,
+      action.origin,
       action.proposedBy,
       action.approvedBy,
       action.approvalExpiresAt,
@@ -761,6 +787,47 @@ export async function listObservabilityActions(
   return result.rows.map(rowToAction);
 }
 
+export type ObservabilityActionOriginStats = Readonly<{
+  origin: ObservabilityActionOrigin;
+  total: number;
+  approved: number;
+  executed: number;
+  verified: number;
+  approvalRate: number | null;
+}>;
+
+export async function observabilityActionOriginStats(
+  p: ActionStorePool,
+  accountScopeIds: string[],
+  environment = resolveObservabilityActionEnvironment(),
+): Promise<ObservabilityActionOriginStats[]> {
+  const scopes = [...new Set(accountScopeIds.map((scope) => text(scope, 256)).filter(Boolean))];
+  if (!scopes.length) return [];
+  const result = await p.query(
+    `select origin,
+            count(*)::int total,
+            count(*) filter (where status in ('approved','executing','succeeded','failed','verification_failed','completed'))::int approved,
+            count(*) filter (where execution is not null)::int executed,
+            count(*) filter (where status = 'succeeded')::int verified
+       from public.studio_observability_actions
+      where account_scope_id = any($1::text[]) and environment = $2
+      group by origin`,
+    [scopes, environment],
+  );
+  return result.rows.map((row) => {
+    const total = Math.max(0, Number(row.total) || 0);
+    const approved = Math.max(0, Number(row.approved) || 0);
+    return {
+      origin: row.origin === 'ai-copilot' ? 'ai-copilot' : 'human',
+      total,
+      approved,
+      executed: Math.max(0, Number(row.executed) || 0),
+      verified: Math.max(0, Number(row.verified) || 0),
+      approvalRate: total > 0 ? approved / total : null,
+    } satisfies ObservabilityActionOriginStats;
+  });
+}
+
 export async function listObservabilityActionsForScopes(
   p: ActionStorePool,
   accountScopeIds: string[],
@@ -776,6 +843,79 @@ export async function listObservabilityActionsForScopes(
     [scopes, environment, boundedLimit],
   );
   return result.rows.map(rowToAction);
+}
+
+/**
+ * Worker-side post-verification pass for `executing` actions.
+ *
+ * This mirrors the HTTP `/actions/:id/verify` semantics exactly (same
+ * remediation-run lookup, same terminal/pending decision, same pure state
+ * transition) so a no-block playbook reaches a terminal state even if the
+ * operator closes the browser.  The worker never executes anything new here;
+ * it only reads the remediation run and advances the record.
+ */
+export async function verifyExecutingObservabilityActions(
+  p: ActionStorePool,
+  options: { lookupGraceMs?: number } = {},
+): Promise<Array<{ id: string; status: ObservabilityActionStatus }>> {
+  const environment = resolveObservabilityActionEnvironment();
+  const result = await p.query(
+    `select * from public.studio_observability_actions
+      where status = 'executing' and environment = $1
+      order by created_at asc limit 50`,
+    [environment],
+  );
+  const actions = result.rows.map(rowToAction);
+  if (!actions.length) return [];
+  await ensureRemediationSchema(p as Parameters<typeof getRemediationRun>[0]);
+  const graceMs =
+    Number(options.lookupGraceMs) && Number(options.lookupGraceMs) > 0
+      ? Number(options.lookupGraceMs)
+      : 2 * 60_000;
+  const updated: Array<{ id: string; status: ObservabilityActionStatus }> = [];
+  for (const action of actions) {
+    try {
+      const executionRunId = action.execution?.runId;
+      if (!executionRunId) {
+        // Same fail-closed rule as the HTTP route: without the exact run id
+        // the action only advances via the missing-run grace path below.
+      }
+      const run = executionRunId
+        ? await getRemediationRun(p as Parameters<typeof getRemediationRun>[0], executionRunId)
+        : null;
+      const startedAt = Date.parse(action.execution?.startedAt ?? '');
+      const missingBeyondGrace =
+        !run && (!Number.isFinite(startedAt) || Date.now() - startedAt >= graceMs);
+      const terminal = Boolean(
+        (run && ['succeeded', 'failed', 'rejected'].includes(run.status)) || missingBeyondGrace,
+      );
+      if (!terminal) continue;
+      const verification: ObservabilityActionVerification = {
+        ok: run?.status === 'succeeded',
+        checkedAt: nowIso(),
+        detail: run
+          ? `remediation run ${run.status} (worker post-check)`
+          : 'exact remediation run is still missing after the lookup grace period',
+        checks: [
+          {
+            name: 'remediation-run',
+            ok: run?.status === 'succeeded',
+            detail: run?.summary ?? 'run_missing',
+          },
+        ],
+      };
+      const next = applyActionVerification(action, verification);
+      const persisted = await updateObservabilityAction(p, next, action.status);
+      updated.push({ id: persisted.id, status: persisted.status });
+    } catch (error) {
+      // A state conflict means another writer advanced the action first; any
+      // other failure is a store problem and must not abort the whole pass.
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'action_state_conflict' || code === 'action_transition_invalid') continue;
+      throw error;
+    }
+  }
+  return updated;
 }
 
 export async function updateObservabilityAction(

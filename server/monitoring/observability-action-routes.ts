@@ -27,6 +27,7 @@ import {
   issueObservabilityEvidenceProof,
   listObservabilityActionsForScopes,
   markActionRegression,
+  observabilityActionOriginStats,
   proposeObservabilityAction,
   type ActionStorePool,
   type ActionProposalInput,
@@ -306,7 +307,12 @@ function writeAudit(action: string, actor: ActionActor, record: ObservabilityAct
     outcome: 'ok',
     severityHint: record.type === 'remediate' ? 'warning' : 'info',
     safeSummary: `DSH observability action ${action}`,
-    metadata: { action_id: record.id, action_type: record.type, status: record.status },
+    metadata: {
+      action_id: record.id,
+      action_type: record.type,
+      status: record.status,
+      origin: record.origin,
+    },
     correlation: { userId: actor.actorId },
   }).catch(() => undefined);
 }
@@ -409,8 +415,13 @@ export function createObservabilityActionRouter(
           [...actor.allowedAccountScopeIds],
           Number(req.query.limit),
         );
+        // Aggregate only: counts per origin, no per-user detail.
+        const stats = await observabilityActionOriginStats(
+          pool,
+          [...actor.allowedAccountScopeIds],
+        ).catch(() => []);
         res.setHeader('Cache-Control', 'no-store');
-        res.json({ ok: true, actions });
+        res.json({ ok: true, actions, stats });
       } catch (error) {
         res
           .status(503)
@@ -452,6 +463,7 @@ export function createObservabilityActionRouter(
           evidenceRefs,
           requiresApproval:
             typeof input.requiresApproval === 'boolean' ? input.requiresApproval : undefined,
+          origin: cleanIdentity(input.origin, 32) as ActionProposalInput['origin'],
           proposedBy: actor.actorId,
         });
         const pool = await openActionPool(options);
@@ -495,6 +507,65 @@ export function createObservabilityActionRouter(
         res
           .status(503)
           .json({ ok: false, error: safeErrorCode(error, 'action_store_unavailable') });
+      }
+    },
+  );
+
+  // Recovery path for failed/verification_failed actions: re-propose the same
+  // evidence + playbook as a fresh action.  Evidence refs are re-validated
+  // against the live store (the caller cannot supply refs or a proof), and the
+  // new action goes through the full approval gate again — no status is
+  // inherited from the source action.
+  router.post(
+    '/api/ops/observability/actions/:id/repropose',
+    requireActionAccess,
+    requireActionMutation,
+    async (req, res) => {
+      const actor = resolveActionActor(req);
+      const id = safeActionId(req.params.id);
+      if (!actor) return;
+      if (!id) {
+        res.status(400).json({ ok: false, error: 'invalid_action_id' });
+        return;
+      }
+      try {
+        const pool = await openActionPool(options);
+        const source = await getObservabilityActionForScopes(
+          pool,
+          id,
+          [...actor.allowedAccountScopeIds],
+        );
+        if (!source) {
+          res.status(404).json({ ok: false, error: 'action_not_found' });
+          return;
+        }
+        if (source.status !== 'failed' && source.status !== 'verification_failed') {
+          res.status(409).json({ ok: false, error: 'action_repropose_outcome_required' });
+          return;
+        }
+        const evidence = await validateEvidenceRefs(source.evidenceRefs, actor, options);
+        const action = proposeObservabilityAction({
+          accountScopeId: actor.accountScopeId,
+          environment: evidence.environment,
+          // The original run binding may be minutes old; a fresh proposal is not
+          // bound to a stale client run.
+          runId: null,
+          type: source.type as ActionProposalInput['type'],
+          title: source.title,
+          rationale: source.rationale,
+          playbookId: source.playbookId,
+          evidenceRefs: evidence.refs,
+          origin: source.origin,
+          proposedBy: actor.actorId,
+        });
+        await insertObservabilityAction(pool, action);
+        writeAudit('action_reproposed', actor, action);
+        res.status(201).json({ ok: true, action });
+      } catch (error) {
+        const code = safeErrorCode(error, 'action_repropose_failed');
+        res
+          .status(code === 'action_store_unavailable' ? 503 : 409)
+          .json({ ok: false, error: code });
       }
     },
   );
