@@ -7,7 +7,8 @@
  * 真实拼接顺序取出页面里的每个 <script> 块并做一次编译，任何语法错误立即失败。
  */
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -91,4 +92,56 @@ test('页面脚本模板字面量里没有会被吃掉的单反斜杠正则转�
     });
   }
   assert.deepEqual(hits, [], `以下位置的单反斜杠会被模板字面量吃掉：${hits.join(', ')}`);
+});
+
+test('页面脚本模块都必须真正拼进页面（防止改了不生效的死模块）', async () => {
+  // 真实事故：把「未写入配置」的标记加到了 observability-page-script-rules.ts 里，
+  // 而那个模块根本没被 observability-page.ts 引用（页面里的 renderRules 在
+  // observability-page-script-a.ts）——测试全绿、部署成功，功能一行都没上线。
+  // 页面 JS 是「显式 import + 字符串拼接」组装的，所以可达性可以静态算出来：
+  // 从这里出发做一次 import 遍历，凡是导出了页面脚本常量却不可达的模块一律失败。
+  const entry = path.join(SERVER_ROOT, 'server/monitoring/observability-page.ts');
+  const seen = new Set<string>();
+  const queue = [entry];
+  while (queue.length) {
+    const file = queue.shift() as string;
+    const relative = path.relative(SERVER_ROOT, file);
+    if (seen.has(relative)) continue;
+    seen.add(relative);
+    let source: string;
+    try {
+      source = await readFile(file, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const match of source.matchAll(/from\s+'(\.[^']+)'/g)) {
+      const spec = match[1];
+      const base = path.resolve(path.dirname(file), spec);
+      for (const candidate of [base.replace(/\.js$/, '.ts'), base]) {
+        if (existsSync(candidate)) {
+          queue.push(candidate);
+          break;
+        }
+      }
+    }
+  }
+
+  const dir = path.join(SERVER_ROOT, 'server/monitoring');
+  const unreachable: string[] = [];
+  for (const name of await readdir(dir)) {
+    // 只看页面模块本身（observability-page*.ts）：服务端模块也可能导出 OPS_ 常量
+    // （如 ops-event-store.ts 的 OPS_EVENT_TENANT_TABLE），它们不属于页面脚本。
+    if (!name.startsWith('observability-page')) continue;
+    if (!name.endsWith('.ts') || name.endsWith('.test.ts') || name === 'observability-page.ts') {
+      continue;
+    }
+    const source = await readFile(path.join(dir, name), 'utf8');
+    if (!/^export const OPS_[A-Z0-9_]+\s*=/m.test(source)) continue;
+    if (!seen.has(path.posix.join('server/monitoring', name))) unreachable.push(name);
+  }
+  assert.deepEqual(
+    unreachable,
+    [],
+    `以下模块导出了页面脚本但没被页面引用（改了不会生效）：${unreachable.join(', ')}`,
+  );
 });
