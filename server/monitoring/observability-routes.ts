@@ -54,10 +54,11 @@ import {
 } from '../observability/run-trace-list-store.js';
 import type { TelemetryRole } from '../../shared/telemetry-data-governance.js';
 import {
+  alertConfigFileState,
+  alertConfigFromFileState,
   alertConfigValidationMessage,
+  applyPanelAlertConfigPatch,
   loadAlertConfig,
-  mergeAndValidateAlertConfig,
-  saveAlertConfig,
   toPublicAlertConfig,
   type AlertConfigPatch,
 } from './alert-config.js';
@@ -1103,7 +1104,13 @@ export function createOpsObservabilityRouter(): Router {
           res.json({ ok: true, config: { tenantReadOnly: true } });
           return;
         }
-        res.json({ ok: true, config: toPublicAlertConfig(await loadAlertConfig()) });
+        const file = await alertConfigFileState();
+        res.json({
+          ok: true,
+          config: toPublicAlertConfig(alertConfigFromFileState(file), {
+            fileRuleKeys: file.parseable ? file.presentRuleKeys : null,
+          }),
+        });
       } catch (error) {
         res.status(500).json({
           ok: false,
@@ -1563,21 +1570,26 @@ export function createOpsObservabilityRouter(): Router {
     async (req: Request, res: Response) => {
       try {
         let publicConfig: ReturnType<typeof toPublicAlertConfig> | null = null;
+        let unchanged = false;
         const auditParts = Object.keys((req.body ?? {}) as Record<string, unknown>);
         const write = async () => {
-          const current = await loadAlertConfig();
-          const next = mergeAndValidateAlertConfig(current, (req.body ?? {}) as AlertConfigPatch);
-          await saveAlertConfig(next);
-          await recordOpsConfigurationAudit({
-            actor: resolveOpsActor(req),
-            action: 'update_config',
-            summary: auditParts.length ? `更新告警配置：${auditParts.join('、')}` : '更新告警配置',
-          }).catch(() => undefined);
-          publicConfig = toPublicAlertConfig(next);
+          // 面板保存走 applyPanelAlertConfigPatch：以磁盘原文为基准做最小改动，
+          // 不把面板展示的默认规则物化进共用文件（见 planAlertConfigWrite）。
+          const result = await applyPanelAlertConfigPatch((req.body ?? {}) as AlertConfigPatch);
+          unchanged = !result.changed;
+          if (result.changed) {
+            const changed = [...result.plan.changedFields, ...result.plan.changedRuleKeys];
+            await recordOpsConfigurationAudit({
+              actor: resolveOpsActor(req),
+              action: 'update_config',
+              summary: `更新告警配置：${changed.length ? changed.join('、') : auditParts.join('、')}`,
+            }).catch(() => undefined);
+          }
+          publicConfig = toPublicAlertConfig(result.config, { fileRuleKeys: result.fileRuleKeys });
         };
         configWriteQueue = configWriteQueue.then(write, write);
         await configWriteQueue;
-        res.json({ ok: true, config: publicConfig });
+        res.json({ ok: true, unchanged, config: publicConfig });
       } catch (error) {
         res.status(400).json({
           ok: false,

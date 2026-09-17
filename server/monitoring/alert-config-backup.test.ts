@@ -142,10 +142,11 @@ test('共用配置文件：不认识的规则键与旧键原样保留、往返�
   );
 
   // 面板公开视图如实列出「不归本面板管」的规则键。
+  // 旧键不在其中：它对应一条本面板**能编辑**的规则（改动会写到旧键上），
+  // 报成「别人管理的规则」会让运维以为这条规则不归面板管。
   const { toPublicAlertConfig } = await import('./alert-config.js');
   assert.deepEqual(toPublicAlertConfig(loaded).unmanagedRuleKeys, [
     'l4-canary-ready-for-approval',
-    'moss-model-target-degraded',
   ]);
 
   // 保存后：文件里两条外部规则仍在（值不变），且不出现内部字段 preservedRules。
