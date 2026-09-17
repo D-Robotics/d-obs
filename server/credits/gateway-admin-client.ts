@@ -353,3 +353,94 @@ export async function replaceGatewayModel(
     body: { frontendModel, target },
   });
 }
+
+export interface GatewayTargetPreflightResult {
+  ok: boolean;
+  status: number | null;
+  elapsedMs: number;
+  errorCategory?: 'timeout' | 'network' | 'http' | 'invalid_response';
+  /** First visible completion text, bounded — proves the target actually answers. */
+  sample?: string;
+}
+
+/**
+ * Pre-replacement probe: one tiny real chat completion against the *new*
+ * upstream target, before any gateway config is written. Bounded in time and
+ * body size; the raw key never appears in the result or logs.
+ */
+export async function preflightGatewayTarget(
+  target: { baseUrl: string; model: string; apiKey: string },
+  timeoutMs = 15_000,
+): Promise<GatewayTargetPreflightResult> {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const boundedTimeout = Math.max(1_000, Math.min(30_000, Math.round(timeoutMs)));
+  const timer = setTimeout(() => controller.abort(), boundedTimeout);
+  let chatUrl: URL;
+  try {
+    chatUrl = new URL(target.baseUrl.replace(/\/$/, ''));
+    if (/\/chat\/completions\/?$/i.test(chatUrl.pathname)) {
+      // already the completions endpoint
+    } else if (/\/models\/?$/i.test(chatUrl.pathname)) {
+      chatUrl.pathname = chatUrl.pathname.replace(/\/models\/?$/i, '/chat/completions');
+    } else {
+      chatUrl.pathname = `${chatUrl.pathname.replace(/\/$/, '')}/chat/completions`;
+    }
+  } catch {
+    return { ok: false, status: null, elapsedMs: 0, errorCategory: 'invalid_response' };
+  }
+  try {
+    const response = await fetch(chatUrl, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${target.apiKey}`,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({
+        model: target.model,
+        messages: [{ role: 'user', content: '模型池替换前预探测，只回复"ok"。' }],
+        stream: false,
+        temperature: 0,
+        max_tokens: 8,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        elapsedMs: Date.now() - startedAt,
+        errorCategory: 'http',
+      };
+    }
+    const text = await readResponseTextBounded(response, 64 * 1024);
+    let sample = '';
+    try {
+      const json = JSON.parse(text) as {
+        choices?: Array<{ message?: { content?: unknown }; text?: unknown }>;
+      };
+      const choice = json.choices?.[0];
+      const content = choice?.message?.content ?? choice?.text;
+      sample = (typeof content === 'string' ? content : '').slice(0, 40);
+    } catch {
+      return {
+        ok: false,
+        status: response.status,
+        elapsedMs: Date.now() - startedAt,
+        errorCategory: 'invalid_response',
+      };
+    }
+    return { ok: true, status: response.status, elapsedMs: Date.now() - startedAt, sample };
+  } catch (error) {
+    const aborted = controller.signal.aborted;
+    return {
+      ok: false,
+      status: null,
+      elapsedMs: Date.now() - startedAt,
+      errorCategory: aborted ? 'timeout' : 'network',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
