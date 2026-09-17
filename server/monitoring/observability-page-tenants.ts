@@ -14,11 +14,11 @@ export const OPS_OBSERVABILITY_TENANTS_STYLE = `
     .tenant-toolbar .field input{width:200px}
     .tenant-grid{display:grid;gap:1px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--line)}
     .tenant-row{display:grid;grid-template-columns:minmax(140px,1.2fr) minmax(110px,.9fr) minmax(90px,.7fr) minmax(120px,.9fr) auto;align-items:center;gap:8px;padding:10px 14px;background:var(--panel)}
-    .tenant-row.head{font-size:10px;font-weight:650;color:var(--muted);background:var(--panel2)}
+    .tenant-row.head{font-size:11px;font-weight:650;color:var(--muted);background:var(--panel2)}
     .tenant-row .tenant-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .tenant-row .tenant-status{font-size:11px}
+    .tenant-row .tenant-status{font-size:12px}
     .tenant-row .tenant-status .state-dot{margin-right:5px}
-    .tenant-row .tenant-last{font-size:11px;color:var(--muted)}
+    .tenant-row .tenant-last{font-size:12px;color:var(--muted)}
     .tenant-row .tenant-actions{display:flex;gap:6px;justify-self:end}
     .tenant-token-result{margin-top:10px;padding:12px 14px;border:1px dashed var(--line2);border-radius:8px;background:#fffdf3}
     .tenant-token-result strong{display:block;font-size:12px;color:#8a6100;margin-bottom:6px}
@@ -30,7 +30,7 @@ export const OPS_OBSERVABILITY_TENANTS_STYLE = `
     .member-toolbar .field input{width:180px}
     .member-grid{display:grid;gap:1px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--line);margin-top:8px}
     .member-row{display:grid;grid-template-columns:minmax(140px,1.4fr) minmax(100px,1fr) minmax(80px,.6fr) minmax(90px,.8fr) auto;align-items:center;gap:8px;padding:10px 14px;background:var(--panel)}
-    .member-row.head{font-size:10px;font-weight:650;color:var(--muted);background:var(--panel2)}
+    .member-row.head{font-size:11px;font-weight:650;color:var(--muted);background:var(--panel2)}
     .member-row .member-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .member-row .member-role{font-size:11px}
     .member-row .member-actions{display:flex;gap:6px;justify-self:end}
@@ -41,7 +41,7 @@ export const OPS_OBSERVABILITY_TENANTS_STYLE = `
     .obs-user-chip{font-size:12px;color:var(--text);border:1px solid var(--line);border-radius:999px;padding:4px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .obs-tenant-select{font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);max-width:200px}
     .obs-logout-btn{font-size:12px;padding:4px 12px}
-    @media(max-width:720px){.tenant-row{grid-template-columns:1fr 1fr}.tenant-row.head{display:none}.tenant-row .tenant-actions{grid-column:1/-1;justify-self:stretch;flex-wrap:wrap}.member-row{grid-template-columns:1fr 1fr}.member-row.head{display:none}.member-row .member-actions{grid-column:1/-1;justify-self:stretch;flex-wrap:wrap}.obs-account-bar{flex-wrap:wrap}}
+    @media(max-width:720px){.tenant-toolbar .field{flex:1 1 100%}.tenant-toolbar .field input{width:100%}.member-toolbar{display:grid;grid-template-columns:1fr 1fr;align-items:end;gap:8px}.member-toolbar .field{margin:0}.member-toolbar .field input,.member-toolbar .field select{width:100%}.tenant-row{grid-template-columns:1fr 1fr}.tenant-row.head{display:none}.tenant-row .tenant-actions{grid-column:1/-1;justify-self:stretch;flex-wrap:wrap}.member-row{grid-template-columns:1fr 1fr}.member-row.head{display:none}.member-row .member-actions{grid-column:1/-1;justify-self:stretch;flex-wrap:wrap}.tenant-row [data-label]::before,.member-row [data-label]::before{content:attr(data-label);margin-right:4px;color:var(--muted);font-size:10px}.obs-account-bar{flex-wrap:wrap}}
 `;
 
 export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
@@ -74,14 +74,15 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         grid.appendChild(head);
         list.forEach(item=>{
           const row=make('div','tenant-row');
-          add(row,'div','tenant-id',item.tenantId);
-          add(row,'div','tenant-last',item.displayName||'—');
+          add(row,'div','tenant-id',item.tenantId).dataset.label='租户';
+          add(row,'div','tenant-last',item.displayName||'—').dataset.label='名称';
           const status=make('div','tenant-status');
+          status.dataset.label='状态';
           const dot=make('span','state-dot '+(item.status==='disabled'?'critical':'healthy'));
           status.appendChild(dot);
           status.appendChild(document.createTextNode(item.status==='disabled'?'已停用':'启用'));
           row.appendChild(status);
-          add(row,'div','tenant-last',whenShort(item.lastReportAt));
+          add(row,'div','tenant-last',whenShort(item.lastReportAt)).dataset.label='最近上报';
           const actions=make('div','tenant-actions');
           const members=add(actions,'button','btn','组员 '+(item.memberCount!=null?'('+item.memberCount+')':''));
           members.type='button';
@@ -254,11 +255,14 @@ export const OPS_OBSERVABILITY_SCRIPT_TENANTS = `
         list.forEach(item=>{
           const row=make('div','member-row');
           const idCell=make('div','member-id',item.ssoUserId);
+          idCell.dataset.label='账号';
           if(item.ssoUserId===selfId)add(idCell,'span','member-role','（你）');
           row.appendChild(idCell);
-          add(row,'div','',item.displayName||'—');
-          row.appendChild(memberRoleChip(item.role));
-          add(row,'div','tenant-last',whenShort(item.createdAt));
+          add(row,'div','',item.displayName||'—').dataset.label='显示名';
+          const roleCell=memberRoleChip(item.role);
+          roleCell.dataset.label='角色';
+          row.appendChild(roleCell);
+          add(row,'div','tenant-last',whenShort(item.createdAt)).dataset.label='加入';
           const actions=make('div','member-actions');
           if(canManage){
             const roleToggle=add(actions,'button','btn',item.role==='owner'?'降为 member':'升为 owner');

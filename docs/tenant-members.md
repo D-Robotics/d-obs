@@ -128,10 +128,28 @@ DELETE .../tenants/<tenantId>/members/<ssoUserId>
 流程跑完即删，事后全表 0 残留。同时实测：租户凭证读租户面 200、打平台面 403
 `tenant_scope_only`、伪造 token 401 `invalid_tenant_token`、无跨租户泄漏。
 
-**尚未在真实浏览器会话里跑过的**：组员视图本身（`x-rdk-obs-tenant` + SSO 会话 →
-只读组员界面）。它需要**一个非管理员账号的会话**——要么给一个真实非管理员账号
-（能登录主站即可），要么授权在生产建一个一次性测试账号。在那之前，这条路径只有
-路由级测试（`tenant-member-access.test.ts`）与上面这层库级实测覆盖。
+**组员视图已真机验证（2026-09-17，用 canary 账号，非管理员）**
+
+canary 账号（`synthetic.username`，不在 `RDK_FLYWHEEL_ADMIN_USER_IDS` 里）是现成的
+**真实非管理员账号**，用它走主站直登中继拿到真实会话后，组员链路逐项跑通：
+
+| 验证点 | 结果 |
+| --- | --- |
+| `/api/ops/auth/me`（带会话） | 200，`admin=false`，`tenants` 列出组员租户与角色 |
+| 组员带 `x-rdk-obs-tenant` 读本租户 overview | 200，`tenantScope` = 该租户 |
+| 组员读**真实租户**（sim2real） | 200，返回该租户自己的 `t.sim2real.external-*` 检查 |
+| 非管理员不带租户头 | 403 `not_authorized` |
+| 组员访问没加入的租户 | 403 `not_a_member`（fail-closed） |
+| 组员打平台专属面（`/tenants`） | 403（模块级拒绝） |
+
+验证用的成员行与一次性租户**已全部删除**（成员表复查 0 行、无 e2e 残留），
+canary 三项拨测复跑仍全过，说明这次验证没有影响线上告警。
+
+一个已知的措辞细节：组员路径下**租户被停用**时返回的是 403 `not_a_member`
+（因为成员查询按「活跃租户」联表，停用后查不到成员关系），而不是 `tenant_disabled`
+——两者都是 fail-closed 的 403，只是对「被停用」这种情况提示不够精确；`tenant_disabled`
+目前只在租户 token 路径出现。要让提示更准确，需要成员查询区分「无成员关系」与
+「有成员关系但租户停用」。
 
 ## 工作台使用
 
