@@ -5,7 +5,14 @@
  * CSV 导出四个面都必须一致收敛，否则可以靠猜表名绕过。
  */
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, test } from 'node:test';
+
+/** 仓库根（本测试位于 server/monitoring/ 下）。 */
+const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 import {
   PostgresTableDetailError,
@@ -92,5 +99,61 @@ test('白名单外：详情与 CSV 导出都在触库前按“不存在”拒绝
         tableName: 'studio_alert_incidents',
       }),
     /pool_should_not_be_used/,
+  );
+});
+
+/**
+ * 白名单防漂移。
+ *
+ * 生产 `RDK_DB_PANEL_TABLES` 用的是 `ops/db-panel-allowlist.txt` 的内容，而那份名单是
+ * 从代码推导出来的。代码里新增一张表的读写、而没人同步名单时，面板会漏掉本该可见的表
+ * （运维排查时才发现）。这里重算一遍可达表集合并断言全部在名单里，漏了就直接失败。
+ */
+test('ops/db-panel-allowlist.txt 覆盖所有运行时可达的表（防漂移）', async () => {
+  const root = SERVER_ROOT;
+  const seen = new Set<string>();
+  const queue = ['server/main.ts'];
+  const resolveRef = (from: string, spec: string): string | null => {
+    const base = path.resolve(path.dirname(from), spec);
+    for (const candidate of [base.replace(/\.js$/, '.ts'), base]) {
+      if (existsSync(candidate)) return path.relative(root, candidate);
+    }
+    return null;
+  };
+  while (queue.length) {
+    const file = queue.shift()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const source = await readFile(path.join(root, file), 'utf8');
+    // 静态 from '...' 与动态 import('...') 都要跟（租户 store 就是动态导入的）。
+    for (const match of source.matchAll(/(?:from\s+|import\(\s*)['"](\.[^'"]+)['"]/g)) {
+      const next = resolveRef(path.join(root, file), match[1]);
+      if (next && !seen.has(next)) queue.push(next);
+    }
+  }
+  const touched = new Set<string>();
+  for (const file of seen) {
+    if (file.endsWith('.test.ts')) continue;
+    const source = await readFile(path.join(root, file), 'utf8');
+    for (const match of source.matchAll(
+      /\b(?:from|into|update|join)\s+(?:public\.)?((?:studio|agent|conversation|ops)_[a-z0-9_]+)/gi,
+    )) {
+      touched.add(match[1].toLowerCase());
+    }
+  }
+  const listed = new Set(
+    (await readFile(path.join(root, 'ops/db-panel-allowlist.txt'), 'utf8'))
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+      .flatMap((line) => line.split(',').map((name) => name.trim()))
+      .filter(Boolean),
+  );
+  assert.ok(listed.size > 20, `名单条目过少（${listed.size}），检查文件是否被破坏`);
+  const missing = [...touched].filter((table) => !listed.has(table)).sort();
+  assert.deepEqual(
+    missing,
+    [],
+    `以下运行时可达的表不在 ops/db-panel-allowlist.txt 里，请补上并同步生产 RDK_DB_PANEL_TABLES：${missing.join(', ')}`,
   );
 });

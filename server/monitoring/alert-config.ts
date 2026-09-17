@@ -268,6 +268,17 @@ export interface AlertRuleConfig {
 export interface AlertConfig {
   version: 1;
   updatedAt: string | null;
+  /**
+   * 配置文件里存在、但本服务不管理的规则键（原样保留、不编辑、不删除）。
+   *
+   * 为什么需要：同一份告警配置可能被多条部署共用，各自的规则集并不相同。真机
+   * 验证过——线上那份 26 条规则的配置里有 `l4-shadow-ready-to-observe`、
+   * `l4-canary-ready-for-approval` 是 d-obs 不认识的，另有 `moss-model-target-degraded`
+   * 是 d-obs 侧已重命名（→ agent-model-target-degraded）的旧键：直接保存会让前者
+   * 消失、让后者被搬走，而跑基线告警的 worker 只认旧键——那条规则会静默停止评估。
+   * 保留它们之后，d-obs 的编辑只影响自己管理的规则集。
+   */
+  preservedRules: Record<string, unknown>;
   global: {
     enabled: boolean;
     environmentLabel: string;
@@ -324,6 +335,8 @@ function rule(overrides: Partial<AlertRuleConfig>): AlertRuleConfig {
 export const DEFAULT_ALERT_CONFIG: AlertConfig = {
   version: ALERT_CONFIG_VERSION,
   updatedAt: null,
+  // 内置默认配置不含「外部管理」的规则；它们只可能来自被共用的配置文件。
+  preservedRules: {},
   global: {
     enabled: true,
     environmentLabel: 'production',
@@ -603,6 +616,7 @@ const alertConfigSchema = z
       })
       .strict(),
     rules: z.record(z.enum(ruleKeys), ruleSchema),
+    preservedRules: z.record(z.string(), z.unknown()).default({}),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -757,6 +771,16 @@ export function normalizeStoredAlertConfig(raw: unknown): AlertConfig {
       ...DEFAULT_ALERT_CONFIG.logSignatures,
       ...(stored.logSignatures ?? {}),
     },
+    // 未知/旧规则键原样留档：本服务不编辑它们，但保存时必须写回文件。
+    preservedRules: Object.fromEntries(
+      Object.entries(storedRules).filter(
+        ([key, value]) =>
+          !ruleKeys.includes(key as (typeof ruleKeys)[number]) &&
+          Boolean(value) &&
+          typeof value === 'object' &&
+          !Array.isArray(value),
+      ),
+    ),
     rules: Object.fromEntries(
       ruleKeys.map((key) => [
         key,
@@ -879,6 +903,7 @@ export function mergeAndValidateAlertConfig(
       ...(patch.logSignatures ?? {}),
     },
     rules: { ...current.rules },
+    preservedRules: { ...current.preservedRules },
   };
   delete (next.notification as Record<string, unknown>).clearFeishuWebhookUrl;
   delete (next.notification as Record<string, unknown>).clearWebhookUrl;
@@ -932,7 +957,11 @@ export async function saveAlertConfig(config: AlertConfig): Promise<void> {
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   await backupAlertConfigIfPresent(target);
   const temp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temp, `${JSON.stringify(config, null, 2)}\n`, {
+  // 落盘形态：保留键并回 rules（其它部署就是这么读的），且不写出 preservedRules 这个
+  // 内部字段——下次读取会重新从 rules 里把它们识别出来，往返闭合。
+  const { preservedRules, ...rest } = config;
+  const onDisk = { ...rest, rules: { ...rest.rules, ...preservedRules } };
+  await writeFile(temp, `${JSON.stringify(onDisk, null, 2)}\n`, {
     encoding: 'utf8',
     mode: 0o600,
   });
@@ -957,6 +986,11 @@ export function toPublicAlertConfig(config: AlertConfig) {
     version: config.version,
     updatedAt: config.updatedAt,
     global: config.global,
+    /**
+     * 配置文件里由其它系统管理的规则键（本面板不编辑）。让面板能如实说明
+     * 「你看到的不是全部规则」，而不是让运维以为改了面板就管住了所有告警。
+     */
+    unmanagedRuleKeys: Object.keys(config.preservedRules).sort(),
     notification: {
       enabled: config.notification.enabled,
       shadowMode: config.notification.shadowMode,

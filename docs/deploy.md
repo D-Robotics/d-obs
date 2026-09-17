@@ -37,6 +37,16 @@ ssh root@47.110.142.255 'cd /opt/d-obs/releases && mkdir <release-id> \
   && systemctl restart d-obs && sleep 3 && systemctl is-active d-obs'
 ```
 
+## release 清理
+
+每次发布会新增一个约 184 MB 的 release（`node_modules` 占大头）。`d-obs.service` 只通过
+`current` 软链启动，因此**除 current 之外都可安全删除**，建议保留 current + 上一个作为
+回滚点：
+
+```bash
+cd /opt/d-obs/releases && ls -1t | tail -n +3 | xargs -r rm -rf
+```
+
 ## 团队接入
 
 线上项目以租户身份接入拨测监控，流程见 [`tenant-onboarding.md`](./tenant-onboarding.md)；
@@ -81,6 +91,9 @@ RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_alert_checks,studio_ops_events
 `product_events` 等）。实测：这些表在目录里不出现，按表名直连详情与 CSV 导出均 404，
 而本服务要用的表（如 `conversation_turns`、`studio_alert_incidents`）仍为 200。
 
+**名单已纳入仓库**：`ops/db-panel-allowlist.txt`（含生成说明）。`server/monitoring/postgres-dashboard-allowlist.test.ts`
+会重算运行时可达表集合、断言全部在名单里 —— 代码新增表读写而没同步名单时会直接测试失败。
+
 名单的生成方式（改代码后重新推导，别靠手写）：从入口做一次可达性遍历（**含动态
 `import()`**——租户 store 就是动态导入的），收集可达模块里所有
 `from|into|update|join public.<table>` 的表名。宁可宽一点：漏一张会让面板功能坏掉，
@@ -98,10 +111,9 @@ RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_alert_checks,studio_ops_events
 
 推论：**d-obs 工作台的「告警策略 / 通知模板」面板目前是死的**——它编辑的配置没有任何在跑的进程去评估（d-obs 自带的 worker 只在 `npm run worker` 时跑，生产不跑它）。想在面板里改阈值并生效，必须先决定由哪条线拥有告警评估：
 
-- **方案 A（让 d-obs 接管）**：把 d-obs 指向主站那份文件（即删掉 `RDK_ALERT_CONFIG_PATH` 覆盖，两边默认路径本来就是同一个）。**但先要解决两处 schema 差异**，否则一次保存就会改坏线上告警：
-  1. 那份文件里有 3 条 d-obs 不认识的规则（`moss-model-target-degraded`、`l4-shadow-ready-to-observe`、`l4-canary-ready-for-approval`），`loadAlertConfig` 只按已知键重建 `rules`，保存时会**静默删除**它们；
-  2. d-obs 的默认集合比该文件多 5 条规则，保存会把它们**物化进文件**，从而让 worker 开始评估原本不存在的规则。
-  正确做法是让 schema 透传未知规则键、并让保存以「文件内容 + 本次 patch」为基准而不是「默认值 + 文件」，改完再切。
+- **方案 A（让 d-obs 接管）**：把 d-obs 指向主站那份文件（即删掉 `RDK_ALERT_CONFIG_PATH` 覆盖，两边默认路径本来就是同一个）。原先有两处 schema 差异会让一次保存就改坏线上告警，**第 1 处已修**：
+  1. ✅ **已修**：那 3 条 d-obs 不认识的规则（`moss-model-target-degraded`、`l4-shadow-ready-to-observe`、`l4-canary-ready-for-approval`）现在会原样留档到 `preservedRules` 并在保存时写回 `rules`，面板还会如实提示「另有 N 条规则由其它系统管理」。真机往返验证：对线上那份真实配置做 load→merge→保存，**0 条规则丢失**（修复前丢 3 条，其中旧键被搬走会让旧 worker 那条规则静默停止评估）。
+  2. ⚠️ **仍需接受**：d-obs 的默认集合比该文件多 5 条规则，保存会把它们**物化进文件**，使 worker 开始评估原本不存在的规则（通知是开着的，可能产生新的投递）。切换前应确认这 5 条是否该启用。
 - **方案 B（保持两条线）**：d-obs 面板继续编辑它自己的文件，但要在部署文档/面板上说明「此面板不影响线上告警」；或干脆把该面板下线，只保留只读展示。
 
 无论选哪个，`saveAlertConfig` 现在都会在覆写前留一份时间戳备份（保留最近 5 份，`config.json.bak-<UTC 毫秒>`），使误写可恢复——这是为上面这个风险加的最低成本保险。

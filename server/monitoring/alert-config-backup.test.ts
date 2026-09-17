@@ -74,7 +74,7 @@ test('备份保留上限 5 份，且同秒内连续写入不互相覆盖', async
   }
 });
 
-test('未知规则键不会被备份机制掩盖：主文件仍按 schema 归一（记录当前行为）', async () => {
+test('含未知规则键的配置文件不再被静默丢弃，而是留档到 preservedRules', async () => {
   // 这份文件模拟「别的部署写的、含 d-obs 不认识的规则键」的配置。
   await writeFile(
     configPath,
@@ -93,9 +93,78 @@ test('未知规则键不会被备份机制掩盖：主文件仍按 schema 归一
     )}\n`,
     'utf8',
   );
-  // 当前行为：load 只按已知键重建 rules，未知键在读取阶段即被丢弃（因此**不要**把
-  // d-obs 指向别的部署正在用的配置文件后随意保存）。本用例把该行为固定下来，避免
-  // 将来悄悄变化；真要共用文件需先让 schema 透传未知键。
+  // 未知键不进入受管 rules（不会被面板当成本服务的规则去编辑/校验），但会被原样留档，
+  // 保存时写回文件——这样与其它部署共用一份配置时也不会静默关掉别人的告警。
   const loaded = await loadAlertConfig();
-  assert.equal('l4-canary-ready-for-approval' in loaded.rules, false);
+  assert.equal('l4-canary-ready-for-approval' in loaded.rules, false, '不受管规则不进入 rules');
+  assert.deepEqual(loaded.preservedRules['l4-canary-ready-for-approval'], {
+    enabled: true,
+    severity: 'warning',
+  });
+});
+
+test('共用配置文件：不认识的规则键与旧键原样保留、往返不丢', async () => {
+  const foreign = { enabled: true, severity: 'critical', threshold: 7 };
+  // 旧键的取值会被合并进已知规则 agent-model-target-degraded，因此必须是 schema 合法字段
+  // （severity 不是可配项——写成 severity 会让整份配置校验失败并回落到默认值）。
+  const legacy = { enabled: true, threshold: 1, criticalThreshold: 2 };
+  await writeFile(
+    configPath,
+    `${JSON.stringify(
+      {
+        version: 1,
+        updatedAt: null,
+        global: { enabled: true },
+        notification: {},
+        synthetic: {},
+        logSignatures: {},
+        rules: {
+          'l4-canary-ready-for-approval': foreign,
+          'moss-model-target-degraded': legacy,
+          'api-5xx-spike': { enabled: false },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+  const loaded = await loadAlertConfig();
+  // 两条外部规则被原样留档；已知键照常管理。
+  assert.deepEqual(loaded.preservedRules['l4-canary-ready-for-approval'], foreign);
+  assert.deepEqual(loaded.preservedRules['moss-model-target-degraded'], legacy);
+  assert.equal(loaded.rules['api-5xx-spike'].enabled, false);
+  // 旧键的**取值**同时迁移到新键（既有行为），但旧键本身不会被搬走。
+  assert.equal(loaded.rules['agent-model-target-degraded'].threshold, legacy.threshold);
+  assert.equal(
+    loaded.rules['agent-model-target-degraded'].criticalThreshold,
+    legacy.criticalThreshold,
+  );
+
+  // 面板公开视图如实列出「不归本面板管」的规则键。
+  const { toPublicAlertConfig } = await import('./alert-config.js');
+  assert.deepEqual(toPublicAlertConfig(loaded).unmanagedRuleKeys, [
+    'l4-canary-ready-for-approval',
+    'moss-model-target-degraded',
+  ]);
+
+  // 保存后：文件里两条外部规则仍在（值不变），且不出现内部字段 preservedRules。
+  await saveAlertConfig(mergeAndValidateAlertConfig(loaded, { global: { cooldownMinutes: 11 } }));
+  const onDisk = JSON.parse(await readFile(configPath, 'utf8'));
+  assert.deepEqual(onDisk.rules['l4-canary-ready-for-approval'], foreign);
+  assert.deepEqual(onDisk.rules['moss-model-target-degraded'], legacy);
+  assert.equal('preservedRules' in onDisk, false, '不应把内部字段写到磁盘');
+  assert.equal(onDisk.global.cooldownMinutes, 11, '本次修改照常生效');
+
+  // 再读一遍仍然一致（往返闭合）。
+  const reloaded = await loadAlertConfig();
+  assert.deepEqual(reloaded.preservedRules['l4-canary-ready-for-approval'], foreign);
+  assert.equal(reloaded.global.cooldownMinutes, 11);
+});
+
+test('全新安装（无配置文件）不产生 preservedRules', async () => {
+  const fresh = await loadAlertConfig();
+  assert.deepEqual(fresh.preservedRules, {});
+  const { toPublicAlertConfig } = await import('./alert-config.js');
+  assert.deepEqual(toPublicAlertConfig(fresh).unmanagedRuleKeys, []);
 });
