@@ -125,23 +125,40 @@ RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_alert_checks,studio_ops_events
 多一张只是多暴露一张本服务确实会读的表。放宽或收窄都只改 `/etc/d-obs.env` 这一行后
 `systemctl restart d-obs`，并保留 `RDK_DB_PANEL_TABLES` 为空即可恢复「全部可见」的旧行为。
 
-## 告警配置的归属（重要，2026-09-16 实测）
+## 告警配置的归属（2026-09-17 已切给 d-obs）
 
-**线上真正生效的告警配置不在 d-obs 名下**，两条线各有各的文件：
+**线上真正生效的告警配置只有一份**，d-obs 与主站 worker 现在共用它：
 
 | 谁 | 配置文件 | 状态 |
 | --- | --- | --- |
 | 主站 worker（`rdstudio-alert-worker.timer`，每分钟跑，**线上唯一在跑的告警评估**） | `/var/lib/rdstudio-alert-worker/config.json` | 26 条规则、通知已启用、影子模式**关闭**、渠道 feishu |
-| d-obs | `/etc/d-obs.env` 里 `RDK_ALERT_CONFIG_PATH=/var/lib/d-obs/alert-config.json` | **该文件不存在** → d-obs 面板显示的是内置默认配置 |
+| d-obs | 同一个文件（`/etc/d-obs.env` 里的 `RDK_ALERT_CONFIG_PATH` 覆盖已注释掉，走默认路径） | 面板显示的就是线上真实配置 |
 
-推论：**d-obs 工作台的「告警策略 / 通知模板」面板目前是死的**——它编辑的配置没有任何在跑的进程去评估（d-obs 自带的 worker 只在 `npm run worker` 时跑，生产不跑它）。想在面板里改阈值并生效，必须先决定由哪条线拥有告警评估：
+也就是说：**在 d-obs 面板里改的阈值现在会真的生效**（下一次 worker 评估时）。切换前
+必须先解决的两个 schema 差异都已修掉：
 
-- **方案 A（让 d-obs 接管）**：把 d-obs 指向主站那份文件（即删掉 `RDK_ALERT_CONFIG_PATH` 覆盖，两边默认路径本来就是同一个）。原先有两处 schema 差异会让一次保存就改坏线上告警，**第 1 处已修**：
-  1. ✅ **已修**：那 3 条 d-obs 不认识的规则（`moss-model-target-degraded`、`l4-shadow-ready-to-observe`、`l4-canary-ready-for-approval`）现在会原样留档到 `preservedRules` 并在保存时写回 `rules`，面板还会如实提示「另有 N 条规则由其它系统管理」。真机往返验证：对线上那份真实配置做 load→merge→保存，**0 条规则丢失**（修复前丢 3 条，其中旧键被搬走会让旧 worker 那条规则静默停止评估）。
-  2. ⚠️ **仍需接受**：d-obs 的默认集合比该文件多 5 条规则，保存会把它们**物化进文件**，使 worker 开始评估原本不存在的规则（通知是开着的，可能产生新的投递）。切换前应确认这 5 条是否该启用。
-- **方案 B（保持两条线）**：d-obs 面板继续编辑它自己的文件，但要在部署文档/面板上说明「此面板不影响线上告警」；或干脆把该面板下线，只保留只读展示。
+1. ✅ 文件里 d-obs 不认识的规则键（`l4-shadow-ready-to-observe`、`l4-canary-ready-for-approval`）
+   与其旧键（`moss-model-target-degraded`，现名 `agent-model-target-degraded`）不再被搬动或丢弃：
+   未知键原样留档并在整份写出时写回；旧键的改动**写到旧键上**（worker 读的是旧键，
+   写新键等于没改）。面板会如实列出「其它系统管理的规则」。
+2. ✅ 保存不再把 d-obs 的默认值物化进文件：写盘以**磁盘原文**为基准做最小改动
+   （`planAlertConfigWrite`）。原样保存 → `changed=false`，文件一个字节都不动、连备份都不产生；
+   改一条规则 → 只写那一条。schema 也改成「校验时滤掉未知字段」而不是 strict 拒绝，
+   否则文件里任何别的系统写的字段都会让整份配置退回默认值、面板显示的就不是线上配置。
 
-无论选哪个，`saveAlertConfig` 现在都会在覆写前留一份时间戳备份（保留最近 5 份，`config.json.bak-<UTC 毫秒>`），使误写可恢复——这是为上面这个风险加的最低成本保险。
+### 真机验证（对线上那份 26 条规则的配置）
+
+- 面板读到的是线上配置而非默认值：通知 `enabled=true`、`shadowMode=false`、feishu 已配置；
+- 4 条 `north-star-*` 规则只在默认值里、不在文件中（面板标「未写入配置」，线上未评估）；
+- 原样保存干跑：`changed=false`；
+- 停用一条规则：规则总数 26 → 26（无物化、无丢失），两条外部规则与旧键仍在。
+
+### 回滚
+
+恢复 `/etc/d-obs.env` 里 `RDK_ALERT_CONFIG_PATH=/var/lib/d-obs/alert-config.json`（备份在
+`/etc/d-obs.env.bak-*`）后 `systemctl restart d-obs`，面板即回到「只看自己的空文件」状态；
+线上告警始终由主站 worker 读那份文件，不受影响。每次覆写前都会留时间戳备份
+（`config.json.bak-<UTC 毫秒>`，保留最近 5 份）。
 
 ## 反代与客户端地址
 
