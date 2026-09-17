@@ -83,7 +83,9 @@ if [ "$WITH_DEPS" = "1" ]; then
   cp -R "$ROOT/node_modules" "$STAGE/node_modules"
 fi
 
-tar --exclude='.DS_Store' --exclude='.git' -czf "$TGZ" -C "$STAGE" .
+# --no-xattrs：macOS 的 bsdtar 会把 com.apple.provenance 塞进扩展头，远端 GNU tar
+# 解压时刷一屏 "Ignoring unknown extended header keyword" 噪音，容易盖住真正的报错。
+tar --no-xattrs --exclude='.DS_Store' --exclude='.git' -czf "$TGZ" -C "$STAGE" .
 [ -s "$TGZ" ] || { echo "打包失败：$TGZ 为空" >&2; exit 1; }
 
 # 入口必须在包里 —— 这是「scp 了旧包/空包」的第一道闸
@@ -114,7 +116,7 @@ printf '%s\n' "$HASH" > "$TGZ.sha256"
 scp -q "$TGZ.sha256" "$HOST:${REMOTE_TGZ}.sha256"
 
 say "远端发布"
-ssh "$HOST" \
+if ssh "$HOST" \
   "RELEASE='$RELEASE' REMOTE_TGZ='$REMOTE_TGZ' HASH='$HASH' PORT='$PORT' WITH_DEPS='$WITH_DEPS' bash -s" <<'REMOTE'
 set -euo pipefail
 REL_DIR="/opt/d-obs/releases/$RELEASE"
@@ -187,6 +189,14 @@ echo "上一版   -> $PREV"
 echo "回滚命令 -> ln -sfn $PREV $CUR_LINK && systemctl restart d-obs"
 echo "release 数：$(ls -1 /opt/d-obs/releases | wc -l)，占用 $(du -sh /opt/d-obs/releases | cut -f1)"
 REMOTE
-
-say "完成：$RELEASE"
-echo "回滚点：上一版 release 仍在 /opt/d-obs/releases（建议保留 current + 上一个，其余可删）"
+then
+  say "完成：$RELEASE"
+  echo "回滚点：上一版 release 仍在 /opt/d-obs/releases（建议保留 current + 上一个，其余可删）"
+else
+  # 远端拒绝了这次发布（sha256 不符 / 依赖不允许复用 / 健康检查回滚等）：
+  # 清掉服务器上的上传包，别在 /tmp 里越堆越多；未切换的 release 目录留着便于排查。
+  ssh "$HOST" "rm -f '$REMOTE_TGZ' '${REMOTE_TGZ}.sha256'" || true
+  echo "发布未完成（见上面的远端报错）。服务器 /tmp 的上传包已清理；" >&2
+  echo "若留下了半成品 release 目录，确认无用后删：rm -rf /opt/d-obs/releases/$RELEASE" >&2
+  exit 1
+fi

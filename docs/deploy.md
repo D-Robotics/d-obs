@@ -21,6 +21,27 @@ DB URL 与运营令牌从服务器上 studio 的 `/etc/rdstudio-web.env` 读取�
 
 ## 发布流程
 
+推荐用脚本（`ops/deploy.sh`）——它把下面手工步骤里出过事故的地方都做成了闸门：
+
+```bash
+ops/deploy.sh --tag tenant-id-ux            # 用当前 HEAD 发布
+ops/deploy.sh --tag tenant-id-ux --dry-run  # 只在本机构建打包，打印远端步骤
+```
+
+闸门与行为：
+
+- **脏工作区直接拒发**（产物必须能对应到 commit，否则「线上 == HEAD」无法证明；
+  确实要发未提交代码时用 `--allow-dirty`，但线上就不可溯源了）；
+- 包内必须存在 `./server/main.js` 与 `./package.json` 才允许上传；
+- 上传后在服务器核对 **sha256** 才解压（防上传截断/中间设备改写）；
+- **依赖不上传**：服务器 `cp -al` 硬链上一版 `node_modules`（180MB → 秒级；硬链而非软链，
+  所以删旧 release 不会把新 release 的依赖一起删掉）。`package.json` 变了则拒绝复用，
+  要求本地装好依赖后用 `--with-deps` 重发；
+- 切软链后健康检查（`systemctl is-active` + 本机 `/ops-observability` 200）不过就
+  **自动回滚**到上一版并打印 journal。
+
+### 手工步骤（脚本不可用时的兜底）
+
 ```bash
 npm run build:clean                      # tsc 产物到 dist/
 mkdir /tmp/d-obs-rel && cp -R dist/server dist/shared /tmp/d-obs-rel/
@@ -37,11 +58,15 @@ ssh root@47.110.142.255 'cd /opt/d-obs/releases && mkdir <release-id> \
   && systemctl restart d-obs && sleep 3 && systemctl is-active d-obs'
 ```
 
+注意 `tar --czf` 是错的（少一个横杠，命令直接失败），配合 `2>/dev/null` 会静默失败并把
+上一轮的旧包传上去——手工发时不要吞 stderr，且传完先确认包内有 `server/main.js`。
+
 ## release 清理
 
-每次发布会新增一个约 184 MB 的 release（`node_modules` 占大头）。`d-obs.service` 只通过
-`current` 软链启动，因此**除 current 之外都可安全删除**，建议保留 current + 上一个作为
-回滚点：
+每次发布会新增一个 release，其中 `node_modules`（约 182MB）在脚本发布时是**硬链**自
+上一版，所以 `du` 看到的体积会明显大于实际新增占用。`d-obs.service` 只通过 `current`
+软链启动，因此**除 current 之外都可安全删除**（硬链不会因删旧 release 而断链），
+建议保留 current + 上一个作为回滚点：
 
 ```bash
 cd /opt/d-obs/releases && ls -1t | tail -n +3 | xargs -r rm -rf
