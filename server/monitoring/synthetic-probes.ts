@@ -207,36 +207,47 @@ export async function runSyntheticProbeCycle(config: AlertConfig): Promise<Synth
     return results;
   }
 
-  if (config.rules['synthetic-tool-call'].enabled) {
-    const transaction = await runAgentDshProbe({
-      config,
-      sessionId: login.sessionId,
-      key: 'synthetic-tool-call',
-      message:
-        '这是 d-obs 系统拨测。你必须调用只读 device_list_all 工具查看当前设备列表，然后简短结束；不要调用其他工具。',
-      expectedTool: 'device_list_all',
-    });
-    if (config.rules['synthetic-ai-chat'].enabled) {
-      results.push({
-        ...transaction,
-        key: 'synthetic-ai-chat',
-        summary: transaction.ok
-          ? `AI 对话完成并进入工具执行链，${transaction.elapsedMs}ms`
-          : `AI/工具单事务拨测失败：${transaction.summary}`,
-      });
-    }
-    results.push(transaction);
-  } else if (config.rules['synthetic-ai-chat'].enabled) {
-    results.push(
-      await runAgentDshProbe({
+  // 拨测**必须**在结束时登出 canary 会话。
+  //
+  // 真机排查（2026-09-17）：主站 worker 的 synthetic-ai-chat / synthetic-tool-call 自 08-05
+  // 起持续报「DSH history exceeded the event bound」，而同一天手动跑同一份代码却立刻成功。
+  // 原因是 `runAgentDshProbe` 抛错时这里直接冒泡出去，`logoutCanary` 从来不会执行：
+  // canary 的会话留在登录态，下一次登录拿回同一个会话，历史事件只增不减，
+  // 于是 probe 永远在同一个超限错误上打转——一次偶发失败被自己锁成了永久故障。
+  // 用 try/finally 保证无论成败都登出，偶发失败不会自我固化。
+  try {
+    if (config.rules['synthetic-tool-call'].enabled) {
+      const transaction = await runAgentDshProbe({
         config,
         sessionId: login.sessionId,
-        key: 'synthetic-ai-chat',
-        message: '这是 d-obs 系统拨测。请不要调用工具，只回复固定字符串 RDK_PROBE_OK。',
-        expectedTool: null,
-      }),
-    );
+        key: 'synthetic-tool-call',
+        message:
+          '这是 d-obs 系统拨测。你必须调用只读 device_list_all 工具查看当前设备列表，然后简短结束；不要调用其他工具。',
+        expectedTool: 'device_list_all',
+      });
+      if (config.rules['synthetic-ai-chat'].enabled) {
+        results.push({
+          ...transaction,
+          key: 'synthetic-ai-chat',
+          summary: transaction.ok
+            ? `AI 对话完成并进入工具执行链，${transaction.elapsedMs}ms`
+            : `AI/工具单事务拨测失败：${transaction.summary}`,
+        });
+      }
+      results.push(transaction);
+    } else if (config.rules['synthetic-ai-chat'].enabled) {
+      results.push(
+        await runAgentDshProbe({
+          config,
+          sessionId: login.sessionId,
+          key: 'synthetic-ai-chat',
+          message: '这是 d-obs 系统拨测。请不要调用工具，只回复固定字符串 RDK_PROBE_OK。',
+          expectedTool: null,
+        }),
+      );
+    }
+  } finally {
+    await logoutCanary(login.sessionId).catch(() => undefined);
   }
-  await logoutCanary(login.sessionId);
   return results;
 }
