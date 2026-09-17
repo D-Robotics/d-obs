@@ -276,7 +276,14 @@ async function pollCompletedHistory(
       'session.history',
     );
     if (history.events.length > MAX_HISTORY_EVENTS) {
-      throw new Error('synthetic DSH history exceeded the event bound');
+      // 带上真实数字：这条错误长期只能看到「超限」，无法判断是边界太紧还是 run 失控。
+      const runEvents = eventsForRun(
+        history.events.map((entry) => entry.event),
+        canonicalRunId,
+      );
+      throw new Error(
+        `synthetic DSH history exceeded the event bound（会话事件 ${history.events.length} > 上限 ${MAX_HISTORY_EVENTS}，其中本次 run ${runEvents.length} 条）`,
+      );
     }
     const events = history.events.map((entry) => entry.event);
     const runEvents = eventsForRun(events, canonicalRunId);
