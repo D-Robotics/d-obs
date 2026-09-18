@@ -21,6 +21,7 @@
 | **外部拨测接入** | `POST /api/health/external-probe-report` | 异地探针把 DNS/TLS/健康/入口数据回传，计入告警评估 |
 | **租户组员与账号登录** | 工作台登录屏 / 租户管理面板 | 主站账号密码登录（SSO 中继），组员按租户获得隔离只读视图，owner 管理组员与角色（[docs/tenant-members.md](./docs/tenant-members.md)） |
 | **公共可观测 API** | `/api/ops/observability/*` | 全部能力均有 JSON API；访问受运营鉴权保护 |
+| **AI 原生生态接入** | `/v1/traces` / `/v1/metrics` / `/metrics` | OTLP/HTTP JSON、GenAI/OpenInference 语义映射、Phoenix/Langfuse OTLP 兼容入口、Prometheus 抓取 |
 
 ## 快速开始
 
@@ -33,6 +34,10 @@ npm start
 打开 `http://127.0.0.1:47110/ops-observability`，默认进“当前态势”。
 导航：左侧分组（处置与证据 / 数据与资产 / 学习与进化 / 系统配置），模型池在
 “系统配置”分组；⌘K / `/` 唤起命令面板；移动端用底部 tab。
+
+AI 应用接入与生态配置见 [docs/ecosystem.md](./docs/ecosystem.md)。平台推荐使用
+OpenTelemetry OTLP/HTTP JSON 作为统一入口；Phoenix、Langfuse 以及其他支持 OTLP 的
+SDK 可以直接上报，平台只保留低敏感 AI 语义字段，不接收 prompt、completion 或工具参数。
 
 ## 已验证的告警状态机（端到端实测）
 
@@ -230,6 +235,8 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `PORT` |  | HTTP 端口，默认 `47110` |
 | `RDK_DATA_DIR` |  | 本地状态/配置目录（默认数据布局） |
 | `RDK_GATEWAY_ADMIN_URL` / `GATEWAY_ADMIN_KEY` |  | 模型池网关 admin API 地址与密钥（默认 `127.0.0.1:3100`） |
+| `RDK_PUBLIC_OBSERVABILITY_API_TOKEN` |  | OTLP 与公共观测写入 token；配置后所有 `/v1/*` 写入必须使用该 Bearer/API key |
+| `RDK_OBSERVABILITY_METRICS_TOKEN` |  | Prometheus `/metrics` 的可选 Bearer/API key；不配时保留本地兼容的匿名抓取 |
 | `RDK_ALERT_INTERNAL_HEALTH_URL` |  | internal-health 检查目标 |
 | `STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL` |  | Langfuse 公开看板 URL，配置后 Agent Trace 面板嵌入它 |
 | `RDK_OBSERVABILITY_ENVIRONMENT` |  | 环境标注（production/dev），写入事件投影 |

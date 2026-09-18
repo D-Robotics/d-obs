@@ -26,6 +26,7 @@ import {
 import { createTenant } from './monitoring/tenant-store.js';
 import { createOpsEventIngestRouter } from './monitoring/ops-event-ingest.js';
 import { createPublicObservabilityRouter } from './public-api/public-observability-routes.js';
+import { createAiEcosystemRouter } from './observability/ai-ecosystem-routes.js';
 import { startTelemetryGovernanceRuntime } from './observability/governance-runtime-service.js';
 import { resolveTrustProxySetting } from './trusted-proxy.js';
 
@@ -105,6 +106,7 @@ app.post('/api/health/external-probe-report', async (req, res) => {
 });
 // 事件级埋点摄取：租户/平台 token 鉴权，逐条消毒去重后写 studio_ops_events。
 app.use(createOpsEventIngestRouter());
+app.use(createAiEcosystemRouter());
 app.use(createPublicObservabilityRouter());
 app.use(createOpsObservabilityRouter());
 
