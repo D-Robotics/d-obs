@@ -116,7 +116,8 @@ ingestion payload 不作为稳定兼容面。
 
 ## Prometheus
 
-把 `/metrics` 加入 Prometheus scrape 配置：
+把 `/metrics` 加入 Prometheus scrape 配置；Prometheus 负责保存指标历史，d-obs 只提供当前
+样本和低基数标签。仓库内有可直接部署的配置：[ops/prometheus/prometheus.yml](../ops/prometheus/prometheus.yml)。
 
 ```yaml
 scrape_configs:
@@ -127,7 +128,9 @@ scrape_configs:
 ```
 
 平台提供 OTLP 接入量、接受/拒绝数、创建 run 数，以及最近收到的上游 metric point。
-指标名称经过清洗并限制数量，避免把用户 ID、trace ID 等高基数字段带入 Prometheus。
+上游指标只映射 `service`、`version`、`environment`、`provider`、`model`、`project`、`route`
+等受控标签，指标名称和 series 数量都有上限，避免把用户 ID、trace ID 等高基数字段带入
+Prometheus。生产机的本机持久化部署说明见 [ops/prometheus/README.md](../ops/prometheus/README.md)。
 
 ## 数据边界
 

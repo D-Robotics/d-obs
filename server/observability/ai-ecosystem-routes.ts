@@ -13,6 +13,7 @@ import {
   recordOtlpRequestError,
   recordOtlpTraceIngest,
   recordUpstreamMetric,
+  normalizeMetricLabels,
   renderPrometheusMetrics,
 } from './ai-ecosystem-metrics.js';
 import { decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
@@ -320,10 +321,11 @@ async function ingestTraces(req: Request, res: Response): Promise<void> {
   res.status(200).json({ partialSuccess: { rejectedSpans: result.rejected, ...(result.rejected ? { errorMessage: 'Some spans were rejected by the low-sensitivity policy.' } : {}) } });
 }
 
-function metricPoints(body: JsonObject): Array<{ name: string; value: number; timestampMs: number }> {
-  const result: Array<{ name: string; value: number; timestampMs: number }> = [];
+function metricPoints(body: JsonObject): Array<{ name: string; value: number; timestampMs: number; labels: Record<string, string> }> {
+  const result: Array<{ name: string; value: number; timestampMs: number; labels: Record<string, string> }> = [];
   const groups = Array.isArray(body.resourceMetrics) ? body.resourceMetrics : [];
   for (const group of groups) {
+    const resource = resourceAttributes(object(group).resource);
     const scopes: unknown[] = Array.isArray(object(group).scopeMetrics)
       ? object(group).scopeMetrics as unknown[]
       : Array.isArray(object(group).instrumentationLibraryMetrics) ? object(group).instrumentationLibraryMetrics as unknown[] : [];
@@ -338,10 +340,15 @@ function metricPoints(body: JsonObject): Array<{ name: string; value: number; ti
           const item = object(point);
           const value = metricValue(item.asDouble ?? item.asInt ?? item.value ?? item.sum);
           if (value === undefined) continue;
+          const labels = normalizeMetricLabels({
+            ...resource,
+            ...attributes(item.attributes),
+          });
           result.push({
             name,
             value,
             timestampMs: otlpTime(item.timeUnixNano ?? item.time_unix_nano, Date.now()),
+            labels,
           });
           if (result.length >= MAX_OTLP_METRIC_POINTS) return result;
         }
@@ -357,7 +364,7 @@ export async function ingestMetricPayload(body: JsonObject, _identity: Principal
     recordOtlpRequestError('metrics');
     return { valid: false, accepted: 0, rejected: 0, runs: 0 };
   }
-  for (const point of points) recordUpstreamMetric(point.name, point.value, point.timestampMs);
+  for (const point of points) recordUpstreamMetric(point.name, point.value, point.timestampMs, point.labels);
   recordOtlpMetricIngest(points.length);
   return { valid: true, accepted: points.length, rejected: 0, runs: 0 };
 }

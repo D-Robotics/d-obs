@@ -109,6 +109,10 @@ test('accepts Phoenix/Langfuse-compatible OTLP aliases and exposes Prometheus me
     headers: { Authorization: 'Bearer ecosystem-test-token', 'Content-Type': 'application/json' },
     body: JSON.stringify({
       resourceMetrics: [{
+        resource: { attributes: [
+          { key: 'service.name', value: { stringValue: 'metrics-agent' } },
+          { key: 'gen_ai.request.model', value: { stringValue: 'test-model' } },
+        ] },
         scopeMetrics: [{
           metrics: [{
             name: 'gen_ai.client.token.usage',
@@ -121,7 +125,7 @@ test('accepts Phoenix/Langfuse-compatible OTLP aliases and exposes Prometheus me
   assert.equal(metricsResponse.status, 200);
   const prometheus = await (await fetch(`${baseUrl}/metrics`)).text();
   assert.match(prometheus, /rdk_ai_otlp_spans_accepted_total\s+[1-9]/);
-  assert.match(prometheus, /rdk_upstream_gen_ai_client_token_usage\s+20/);
+  assert.match(prometheus, /rdk_upstream_gen_ai_client_token_usage\{model="test-model",service="metrics-agent"\}\s+20/);
 
   const capabilities = await (await fetch(`${baseUrl}/api/v1/ecosystem/capabilities`)).json() as { data: { protocols: string[] } };
   assert.deepEqual(capabilities.data.protocols, ['otlp/http-json', 'otlp/http-protobuf', 'otlp/grpc', 'prometheus exposition']);
