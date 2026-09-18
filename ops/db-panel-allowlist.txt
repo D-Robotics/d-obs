@@ -44,3 +44,6 @@ studio_trace_backend_mappings
 studio_trace_ingestion_receipts
 studio_trace_span_conflicts
 studio_trace_spans
+
+studio_public_observability_feedback
+studio_public_observability_scores

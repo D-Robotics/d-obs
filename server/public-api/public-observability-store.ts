@@ -16,6 +16,11 @@ import type {
   PublicObservabilityObjectUpdateInput,
   PublicObservabilitySummary,
 } from '../../shared/public-observability-client.js';
+import {
+  loadPublicObservabilityQuality,
+  persistPublicObservabilityFeedback,
+  persistPublicObservabilityScore,
+} from './public-observability-quality-store.js';
 
 export const PUBLIC_OBSERVABILITY_SPAN_SCHEMA = 'rdk.public.observability.span.v1' as const;
 
@@ -687,6 +692,18 @@ class PublicObservabilityStore {
     run.lastSpanAt = ordered.at(-1)?.endTime;
   }
 
+  private async hydrateQuality(run: StoredRun): Promise<void> {
+    try {
+      const quality = await loadPublicObservabilityQuality({ owner: run.owner, runId: run.runId });
+      if (quality.scores.length) run.scores = quality.scores.slice(-MAX_SCORES_PER_RUN);
+      if (quality.feedback.length) run.feedback = quality.feedback.slice(-MAX_FEEDBACK_PER_RUN);
+      run.scoreCount = run.scores.length;
+      run.feedbackCount = run.feedback.length;
+    } catch {
+      // Quality data is additive; a database outage must not hide the trace.
+    }
+  }
+
   async createRun(owner: string, keyId: string, input: PublicObservabilityRunCreateInput): Promise<{ run: PublicObservabilityRunRecord; replayed: boolean }> {
     const normalizedOwner = cleanText(owner, 256);
     const normalizedKeyId = cleanText(keyId, 96);
@@ -1330,6 +1347,8 @@ class PublicObservabilityStore {
     }
     const trace = await this.getTrace(normalizedOwner, normalizedRunId, 256);
     if (!trace) return null;
+    const recovered = this.runs.get(normalizedRunId);
+    if (recovered?.owner === normalizedOwner) return this.publicRun(recovered);
     const root = trace.find((span) => span.kind === 'agent') ?? trace[0];
     if (!root) return null;
     const now = Date.now();
@@ -1360,6 +1379,7 @@ class PublicObservabilityStore {
     record.feedbackCount = 0;
     record.spans = new Map(trace.map((span) => [`${span.traceId}:${span.spanId}`, span] as const));
     this.upsertStoredRun(record);
+    await this.hydrateQuality(record);
     return this.publicRun(record);
   }
 
@@ -1411,6 +1431,7 @@ class PublicObservabilityStore {
       record.createdAt = publicSpans[0]?.startTime ?? Date.now();
       record.updatedAt = publicSpans.at(-1)?.endTime ?? Date.now();
       this.upsertStoredRun(record);
+      await this.hydrateQuality(record);
     }
     return publicSpans;
   }
@@ -1453,7 +1474,7 @@ class PublicObservabilityStore {
   async recordScore(input: PublicObservabilityScoreInput): Promise<PublicObservabilityScoreRecord> {
     const run = this.runs.get(cleanText(input.runId, 200));
     if (!run) throw new Error('run not found');
-    if (!run.owner) throw new Error('run not owned');
+    if (!run.owner || run.owner !== cleanText(input.owner, 256)) throw new Error('run not found');
     const score: PublicObservabilityScoreRecord = {
       scoreId: `score_${crypto.randomUUID().replace(/-/g, '')}`,
       runId: run.runId,
@@ -1468,12 +1489,14 @@ class PublicObservabilityStore {
     run.scores = [...run.scores, score].slice(-MAX_SCORES_PER_RUN);
     run.scoreCount = run.scores.length;
     run.updatedAt = score.createdAt;
+    await persistPublicObservabilityScore(score).catch(() => undefined);
     return score;
   }
 
   async recordFeedback(input: PublicObservabilityFeedbackInput): Promise<PublicObservabilityFeedbackRecord> {
     const run = this.runs.get(cleanText(input.runId, 200));
     if (!run) throw new Error('run not found');
+    if (!run.owner || run.owner !== cleanText(input.owner, 256)) throw new Error('run not found');
     const feedback: PublicObservabilityFeedbackRecord = {
       feedbackId: `fb_${crypto.randomUUID().replace(/-/g, '')}`,
       runId: run.runId,
@@ -1489,6 +1512,7 @@ class PublicObservabilityStore {
     run.feedback = [...run.feedback, feedback].slice(-MAX_FEEDBACK_PER_RUN);
     run.feedbackCount = run.feedback.length;
     run.updatedAt = feedback.createdAt;
+    await persistPublicObservabilityFeedback(feedback).catch(() => undefined);
     return feedback;
   }
 
