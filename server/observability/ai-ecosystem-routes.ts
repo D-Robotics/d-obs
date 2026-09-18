@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { Router, type Request, type Response } from 'express';
+import express, { Router, type Request, type Response } from 'express';
 import {
   inferAiSpanKind,
   mapAiSpanKindHint,
@@ -15,8 +15,9 @@ import {
   recordUpstreamMetric,
   renderPrometheusMetrics,
 } from './ai-ecosystem-metrics.js';
+import { decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
 
-type Principal = { owner: string; keyId: string };
+export type Principal = { owner: string; keyId: string };
 type JsonObject = Record<string, unknown>;
 
 const store = getPublicObservabilityStore();
@@ -24,7 +25,9 @@ const MAX_OTLP_SPANS = 512;
 const MAX_OTLP_METRIC_POINTS = 512;
 
 function text(value: unknown, max = 256): string {
-  return typeof value === 'string' ? value.replace(/\0/g, '').trim().slice(0, max) : '';
+  if (typeof value === 'string') return value.replace(/\0/g, '').trim().slice(0, max);
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('hex').slice(0, max);
+  return '';
 }
 
 function object(value: unknown): JsonObject {
@@ -85,10 +88,14 @@ function spanId(value: unknown, fallback: string): string {
 }
 
 function tokenFromRequest(req: Request): { token: string; presented: string } | null {
-  const authorization = text(req.header('authorization'), 4_096);
+  return credentialFromHeaders(req.header('authorization'), req.header('x-api-key') ?? req.header('api-key') ?? req.header('x-rdk-observability-token'));
+}
+
+function credentialFromHeaders(authorizationHeader: unknown, apiKeyHeader: unknown): { token: string; presented: string } | null {
+  const authorization = text(authorizationHeader, 4_096);
   const bearer = /^Bearer\s+(.+)$/i.exec(authorization)?.[1];
   const basic = /^Basic\s+(.+)$/i.exec(authorization)?.[1];
-  const headerToken = text(req.header('x-api-key') ?? req.header('api-key') ?? req.header('x-rdk-observability-token'), 4_000);
+  const headerToken = text(apiKeyHeader, 4_000);
   if (bearer) return { token: text(bearer, 4_000), presented: `Bearer ${text(bearer, 4_000)}` };
   if (basic) return { token: `basic:${text(basic, 4_000)}`, presented: `Basic ${text(basic, 4_000)}` };
   if (headerToken) return { token: headerToken, presented: headerToken };
@@ -101,13 +108,20 @@ function sameSecret(actual: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function principal(req: Request): Principal | null {
-  const credential = tokenFromRequest(req);
+function principalForCredential(credential: { token: string; presented: string } | null): Principal | null {
   if (!credential) return null;
   const configured = text(process.env.RDK_PUBLIC_OBSERVABILITY_API_TOKEN, 4_000);
   if (configured && !sameSecret(credential.token, configured) && !sameSecret(credential.presented, configured)) return null;
   const digest = createHash('sha256').update(credential.token).digest('hex');
   return { owner: `public_${digest}`, keyId: digest.slice(0, 32) };
+}
+
+export function principalFromGrpcMetadata(authorization: unknown, apiKey: unknown): Principal | null {
+  return principalForCredential(credentialFromHeaders(authorization, apiKey));
+}
+
+function principal(req: Request): Principal | null {
+  return principalForCredential(tokenFromRequest(req));
 }
 
 function requirePrincipal(req: Request, res: Response): Principal | null {
@@ -224,15 +238,18 @@ function resourceSpans(body: JsonObject): Array<{ resource: Record<string, unkno
   return result;
 }
 
-async function ingestTraces(req: Request, res: Response): Promise<void> {
-  const identity = requirePrincipal(req, res);
-  if (!identity) return;
-  const body = object(req.body);
+export type OtlpIngestResult = {
+  valid: boolean;
+  accepted: number;
+  rejected: number;
+  runs: number;
+};
+
+export async function ingestTracePayload(body: JsonObject, identity: Principal): Promise<OtlpIngestResult> {
   const rows = resourceSpans(body);
   if (!rows.length) {
     recordOtlpRequestError('traces');
-    res.status(400).json({ ok: false, error: 'invalid_otlp_trace_payload', code: 'invalid_otlp_trace_payload' });
-    return;
+    return { valid: false, accepted: 0, rejected: 0, runs: 0 };
   }
   const normalized = rows
     .map((row, index) => normalizeOtlpSpan(row.span, row.resource, index))
@@ -268,7 +285,39 @@ async function ingestTraces(req: Request, res: Response): Promise<void> {
     }
   }
   recordOtlpTraceIngest({ received: rows.length, accepted, rejected, runs });
-  res.status(200).json({ partialSuccess: { rejectedSpans: rejected, ...(rejected ? { errorMessage: 'Some spans were rejected by the low-sensitivity policy.' } : {}) } });
+  return { valid: true, accepted, rejected, runs };
+}
+
+function isProtobufContentType(req: Request): boolean {
+  const contentType = text(req.header('content-type'), 200).toLowerCase().split(';', 1)[0];
+  return contentType === 'application/x-protobuf'
+    || contentType === 'application/protobuf'
+    || contentType === 'application/octet-stream';
+}
+
+function requestBody(req: Request, signal: 'traces' | 'metrics'): JsonObject {
+  if (!isProtobufContentType(req)) return object(req.body);
+  if (!Buffer.isBuffer(req.body)) throw new Error('invalid_otlp_protobuf_body');
+  return signal === 'traces' ? decodeTraceProtobuf(req.body) : decodeMetricsProtobuf(req.body);
+}
+
+async function ingestTraces(req: Request, res: Response): Promise<void> {
+  const identity = requirePrincipal(req, res);
+  if (!identity) return;
+  let body: JsonObject;
+  try {
+    body = requestBody(req, 'traces');
+  } catch {
+    recordOtlpRequestError('traces');
+    res.status(400).json({ ok: false, error: 'invalid_otlp_protobuf_body', code: 'invalid_otlp_protobuf_body' });
+    return;
+  }
+  const result = await ingestTracePayload(body, identity);
+  if (!result.valid) {
+    res.status(400).json({ ok: false, error: 'invalid_otlp_trace_payload', code: 'invalid_otlp_trace_payload' });
+    return;
+  }
+  res.status(200).json({ partialSuccess: { rejectedSpans: result.rejected, ...(result.rejected ? { errorMessage: 'Some spans were rejected by the low-sensitivity policy.' } : {}) } });
 }
 
 function metricPoints(body: JsonObject): Array<{ name: string; value: number; timestampMs: number }> {
@@ -302,18 +351,33 @@ function metricPoints(body: JsonObject): Array<{ name: string; value: number; ti
   return result;
 }
 
-async function ingestMetrics(req: Request, res: Response): Promise<void> {
-  const identity = requirePrincipal(req, res);
-  if (!identity) return;
-  void identity;
-  const points = metricPoints(object(req.body));
+export async function ingestMetricPayload(body: JsonObject, _identity: Principal): Promise<OtlpIngestResult> {
+  const points = metricPoints(body);
   if (!points.length) {
     recordOtlpRequestError('metrics');
-    res.status(400).json({ ok: false, error: 'invalid_otlp_metric_payload', code: 'invalid_otlp_metric_payload' });
-    return;
+    return { valid: false, accepted: 0, rejected: 0, runs: 0 };
   }
   for (const point of points) recordUpstreamMetric(point.name, point.value, point.timestampMs);
   recordOtlpMetricIngest(points.length);
+  return { valid: true, accepted: points.length, rejected: 0, runs: 0 };
+}
+
+async function ingestMetrics(req: Request, res: Response): Promise<void> {
+  const identity = requirePrincipal(req, res);
+  if (!identity) return;
+  let body: JsonObject;
+  try {
+    body = requestBody(req, 'metrics');
+  } catch {
+    recordOtlpRequestError('metrics');
+    res.status(400).json({ ok: false, error: 'invalid_otlp_protobuf_body', code: 'invalid_otlp_protobuf_body' });
+    return;
+  }
+  const result = await ingestMetricPayload(body, identity);
+  if (!result.valid) {
+    res.status(400).json({ ok: false, error: 'invalid_otlp_metric_payload', code: 'invalid_otlp_metric_payload' });
+    return;
+  }
   res.status(200).json({ partialSuccess: {} });
 }
 
@@ -326,6 +390,13 @@ function metricsTokenMatches(req: Request): boolean {
 
 export function createAiEcosystemRouter(): Router {
   const router = Router();
+  // OTLP/HTTP protobuf payloads bypass express.json and stay as bytes until
+  // the signal-specific decoder below. JSON exporters continue through the
+  // app-level express.json middleware.
+  router.use(express.raw({
+    type: ['application/x-protobuf', 'application/protobuf', 'application/octet-stream'],
+    limit: '2mb',
+  }));
   const tracePaths = ['/v1/traces', '/api/public/otel/v1/traces', '/api/v1/otel/v1/traces'];
   const metricPaths = ['/v1/metrics', '/api/public/otel/v1/metrics', '/api/v1/otel/v1/metrics'];
   router.post(tracePaths, (req, res) => {
@@ -353,10 +424,17 @@ export function createAiEcosystemRouter(): Router {
       data: {
         schema: 'rdk.ai.observability.capabilities.v1',
         signals: ['traces', 'metrics'],
-        protocols: ['otlp/http-json', 'prometheus exposition'],
+        protocols: ['otlp/http-json', 'otlp/http-protobuf', 'otlp/grpc', 'prometheus exposition'],
         traceEndpoints: tracePaths,
         metricsEndpoint: metricPaths[0],
         metricEndpoints: metricPaths,
+        grpc: {
+          serviceNames: [
+            'opentelemetry.proto.collector.trace.v1.TraceService',
+            'opentelemetry.proto.collector.metrics.v1.MetricsService',
+          ],
+          portEnv: 'RDK_OTLP_GRPC_PORT',
+        },
         prometheusEndpoint: '/metrics',
         semanticConventions: ['gen_ai.*', 'moss.*', 'rdk.*', 'openinference.*'],
         payloadPolicy: 'low-sensitivity; prompts, completions, tool arguments/results and credentials are not retained',

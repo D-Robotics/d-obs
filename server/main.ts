@@ -27,6 +27,7 @@ import { createTenant } from './monitoring/tenant-store.js';
 import { createOpsEventIngestRouter } from './monitoring/ops-event-ingest.js';
 import { createPublicObservabilityRouter } from './public-api/public-observability-routes.js';
 import { createAiEcosystemRouter } from './observability/ai-ecosystem-routes.js';
+import { startConfiguredAiEcosystemGrpcServer, type AiEcosystemGrpcRuntime } from './observability/ai-ecosystem-grpc.js';
 import { startTelemetryGovernanceRuntime } from './observability/governance-runtime-service.js';
 import { resolveTrustProxySetting } from './trusted-proxy.js';
 
@@ -121,9 +122,19 @@ void startTelemetryGovernanceRuntime().catch((error) => {
 const server = app.listen(port, () => {
   console.log(`[d-obs] observability workbench listening on http://127.0.0.1:${port}/ops-observability`);
 });
+let grpcRuntime: AiEcosystemGrpcRuntime | null = null;
+void startConfiguredAiEcosystemGrpcServer()
+  .then((runtime) => {
+    grpcRuntime = runtime;
+    if (runtime) console.log(`[d-obs] OTLP/gRPC receiver listening on ${runtime.address}`);
+  })
+  .catch((error) => {
+    console.warn('[d-obs] OTLP/gRPC receiver failed to start:', String(error));
+  });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
+    grpcRuntime?.server.forceShutdown();
     server.close(() => process.exit(0));
   });
 }

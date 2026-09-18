@@ -1,7 +1,7 @@
 # AI 原生生态接入
 
-d-obs 把 AI 观测数据收敛到 OpenTelemetry OTLP/HTTP JSON。这样应用只需要接一次
-OpenTelemetry，Phoenix、Langfuse、OpenInference 以及其他兼容 OTLP 的 SDK 都可以复用
+d-obs 把 AI 观测数据收敛到 OpenTelemetry OTLP。应用可以使用 HTTP JSON、HTTP protobuf
+或标准 OTLP/gRPC，Phoenix、Langfuse、OpenInference 以及其他兼容 OTLP 的 SDK 都可以复用
 同一条数据通道。
 
 ## 入口
@@ -11,6 +11,8 @@ OpenTelemetry，Phoenix、Langfuse、OpenInference 以及其他兼容 OTLP 的 S
 | OTLP traces | `POST /v1/traces` | `Authorization: Bearer/Basic <credential>`、`x-api-key` 或 `api-key` |
 | Phoenix/Langfuse OTLP 别名 | `POST /api/public/otel/v1/traces` | 同上 |
 | OTLP metrics | `POST /v1/metrics` | 同上 |
+| OTLP HTTP protobuf | 上述 traces/metrics 路径 + `Content-Type: application/x-protobuf` | 同上 |
+| OTLP gRPC | `opentelemetry.proto.collector.{trace,metrics}.v1.*Service/Export` | gRPC metadata 中的 `authorization`、`x-api-key` 或 `api-key` |
 | Prometheus scrape | `GET /metrics` | 默认匿名；配置 `RDK_OBSERVABILITY_METRICS_TOKEN` 后需要 Bearer/API key |
 | 能力发现 | `GET /api/v1/ecosystem/capabilities` | 无需鉴权 |
 
@@ -25,14 +27,40 @@ export RDK_PUBLIC_OBSERVABILITY_API_TOKEN='change-me-with-a-long-random-value'
 
 ## OpenTelemetry SDK
 
-当前入口支持 OTLP/HTTP JSON。标准 OpenTelemetry SDK 的默认 protobuf/gRPC exporter 需要
-切换协议：
+HTTP JSON exporter：
 
 ```bash
 export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT='http://127.0.0.1:47110/v1/traces'
 export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL='http/json'
 export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer change-me-with-a-long-random-value'
 ```
+
+HTTP protobuf exporter 只需将协议改为 `http/protobuf`，路径仍然是 `/v1/traces` 或
+`/v1/metrics`：
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:47110'
+export OTEL_EXPORTER_OTLP_PROTOCOL='http/protobuf'
+export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer change-me-with-a-long-random-value'
+```
+
+gRPC receiver 默认不启动，配置端口后启用标准 OTLP Trace/Metrics 服务：
+
+```bash
+export RDK_OTLP_GRPC_HOST='127.0.0.1'
+export RDK_OTLP_GRPC_PORT='4317'
+export RDK_PUBLIC_OBSERVABILITY_API_TOKEN='change-me-with-a-long-random-value'
+```
+
+标准 OpenTelemetry gRPC exporter：
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4317'
+export OTEL_EXPORTER_OTLP_PROTOCOL='grpc'
+export OTEL_EXPORTER_OTLP_HEADERS='authorization=Bearer change-me-with-a-long-random-value'
+```
+
+gRPC 监听器当前使用明文连接，建议只绑定回环或内网地址，并在外部 TLS/mTLS 终止层后面部署。
 
 最小请求示例：
 

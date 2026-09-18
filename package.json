@@ -10,12 +10,14 @@
     "worker:check-config": "tsx server/monitoring/studio-alert-worker.ts --check-config",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test \"server/**/*.test.ts\"",
-    "build": "tsc -p tsconfig.json --outDir dist --noEmit false",
+    "build": "tsc -p tsconfig.json --outDir dist --noEmit false && cp server/observability/otlp-trace.proto server/observability/otlp-metrics.proto dist/server/observability/",
     "build:clean": "rm -rf dist && npm run build"
   },
   "dependencies": {
     "@deepseek-ai/dsh-host-apiproxy": "0.1.1-rc.2",
     "@deepseek-ai/dsh-session": "0.1.1-rc.2",
+    "@grpc/grpc-js": "^1.14.5",
+    "@grpc/proto-loader": "^0.8.1",
     "@supabase/supabase-js": "^2.100.1",
     "express": "^4.22.2",
     "pg": "8.21.0",

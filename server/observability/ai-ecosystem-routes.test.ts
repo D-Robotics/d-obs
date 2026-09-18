@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
+import { Metadata, credentials, type Client } from '@grpc/grpc-js';
 import express from 'express';
 import { after, before, test } from 'node:test';
 import { createPublicObservabilityClient } from '../../shared/public-observability-client.js';
 import { createPublicObservabilityRouter } from '../public-api/public-observability-routes.js';
 import { createAiEcosystemRouter } from './ai-ecosystem-routes.js';
+import { startAiEcosystemGrpcServer } from './ai-ecosystem-grpc.js';
+import {
+  encodeMetricsProtobuf,
+  encodeTraceProtobuf,
+  metricsServiceClient,
+  traceServiceClient,
+} from './ai-ecosystem-protobuf.js';
 
 let server: Server;
 let baseUrl = '';
@@ -116,7 +124,81 @@ test('accepts Phoenix/Langfuse-compatible OTLP aliases and exposes Prometheus me
   assert.match(prometheus, /rdk_upstream_gen_ai_client_token_usage\s+20/);
 
   const capabilities = await (await fetch(`${baseUrl}/api/v1/ecosystem/capabilities`)).json() as { data: { protocols: string[] } };
-  assert.deepEqual(capabilities.data.protocols, ['otlp/http-json', 'prometheus exposition']);
+  assert.deepEqual(capabilities.data.protocols, ['otlp/http-json', 'otlp/http-protobuf', 'otlp/grpc', 'prometheus exposition']);
+});
+
+test('accepts OTLP/HTTP protobuf and standard OTLP/gRPC traces and metrics', async () => {
+  const runId = `protobuf-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const protobufTrace = encodeTraceProtobuf({
+    resourceSpans: [{
+      resource: { attributes: [{ key: 'service.name', value: { stringValue: 'protobuf-agent' } }] },
+      scopeSpans: [{ spans: [{
+        traceId: Buffer.from('33333333333333333333333333333333', 'hex'),
+        spanId: Buffer.from('4444444444444444', 'hex'),
+        name: 'protobuf generation',
+        startTimeUnixNano: String(Date.now() * 1_000_000),
+        endTimeUnixNano: String((Date.now() + 2) * 1_000_000),
+        status: { code: 1 },
+        attributes: [{ key: 'moss.run.id', value: { stringValue: runId } }],
+      }] }],
+    }],
+  });
+  const httpResponse = await fetch(`${baseUrl}/v1/traces`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ecosystem-test-token', 'Content-Type': 'application/x-protobuf' },
+    body: protobufTrace,
+  });
+  assert.equal(httpResponse.status, 200);
+  assert.equal((await httpResponse.json() as { partialSuccess: { rejectedSpans: number } }).partialSuccess.rejectedSpans, 0);
+  const httpMetricResponse = await fetch(`${baseUrl}/v1/metrics`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ecosystem-test-token', 'Content-Type': 'application/x-protobuf' },
+    body: encodeMetricsProtobuf({
+      resourceMetrics: [{ scopeMetrics: [{ metrics: [{
+        name: 'gen_ai.http.protobuf.metric',
+        sum: { dataPoints: [{ asInt: '9', timeUnixNano: String(Date.now() * 1_000_000) }] },
+      }] }] }],
+    }),
+  });
+  assert.equal(httpMetricResponse.status, 200);
+
+  const grpcRuntime = await startAiEcosystemGrpcServer({ host: '127.0.0.1', port: 0 });
+  const metadata = new Metadata();
+  metadata.set('authorization', 'Bearer ecosystem-test-token');
+  const traceClient = new traceServiceClient(grpcRuntime.address, credentials.createInsecure());
+  const metricClient = new metricsServiceClient(grpcRuntime.address, credentials.createInsecure());
+  const grpcCall = <T>(client: Client, request: Record<string, unknown>): Promise<T> => new Promise((resolve, reject) => {
+    (client as unknown as { Export: (body: Record<string, unknown>, metadata: Metadata, callback: (error: Error | null, response: T) => void) => void })
+      .Export(request, metadata, (error, response) => error ? reject(error) : resolve(response));
+  });
+  const grpcTrace = await grpcCall<{ partialSuccess?: { rejectedSpans?: string } }>(traceClient, {
+    resourceSpans: [{
+      resource: { attributes: [{ key: 'service.name', value: { stringValue: 'grpc-agent' } }] },
+      scopeSpans: [{ spans: [{
+        traceId: Buffer.from('55555555555555555555555555555555', 'hex'),
+        spanId: Buffer.from('6666666666666666', 'hex'),
+        name: 'grpc generation',
+        startTimeUnixNano: String(Date.now() * 1_000_000),
+        endTimeUnixNano: String((Date.now() + 2) * 1_000_000),
+        attributes: [{ key: 'moss.run.id', value: { stringValue: `${runId}-grpc` } }],
+      }] }],
+    }],
+  });
+  assert.equal(grpcTrace.partialSuccess?.rejectedSpans, '0');
+  await grpcCall(metricClient, {
+    resourceMetrics: [{ scopeMetrics: [{ metrics: [{
+      name: 'gen_ai.grpc.metric',
+      gauge: { dataPoints: [{ asDouble: 7.5, timeUnixNano: String(Date.now() * 1_000_000) }] },
+    }] }] }],
+  });
+  traceClient.close();
+  metricClient.close();
+  grpcRuntime.server.forceShutdown();
+
+  const run = await createPublicObservabilityClient({ baseUrl, authorization: 'ecosystem-test-token' }).getRun(`${runId}-grpc`);
+  assert.equal(run.service, 'grpc-agent');
+  const prometheus = await (await fetch(`${baseUrl}/metrics`)).text();
+  assert.match(prometheus, /rdk_upstream_gen_ai_grpc_metric\s+7\.5/);
 });
 
 test('rejects OTLP writes without an API key', async () => {
