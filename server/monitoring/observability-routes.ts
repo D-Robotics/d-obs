@@ -14,12 +14,19 @@ import {
   getLatestOpsConfigurationAuditDetails,
   getOpsEventDetail,
   getOpsObservabilityOverview,
+  getOpsObservabilityPool,
   isOpsObservabilityConfigured,
   recordOpsConfigurationAudit,
   recordOpsNotificationTest,
   updateOpsIncident,
 } from './observability-store.js';
 import { sanitizeOpsSummary } from './ops-event-store.js';
+import { renderStatusPage } from './ops-status-page.js';
+import {
+  createMaintenanceWindow,
+  deleteMaintenanceWindow,
+  listMaintenanceWindows,
+} from './alert-maintenance-windows.js';
 import { OPS_OBSERVABILITY_HTML } from './observability-page.js';
 import {
   createPostgresTableCsvExport,
@@ -64,6 +71,7 @@ import {
   type AlertConfigPatch,
 } from './alert-config.js';
 import { getRemediationOverview } from './alert-remediation.js';
+import { isAlertDeliveryChannel } from './alert-notification-channels.js';
 import { sendAlertTestNotification } from './studio-alert-worker.js';
 import { getConfiguredServiceLevelOverview } from './service-level-objectives.js';
 import {
@@ -439,6 +447,27 @@ export function createOpsObservabilityRouter(): Router {
       /* 水合失败按未登录处理 */
     }
     next();
+  });
+
+  // ---- 公开状态页（只读、无身份信息；数据库不可用时降级为「暂不可用」页） ----
+
+  router.get('/status', async (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const html = await renderStatusPage();
+      res.type('html').send(html);
+    } catch (error) {
+      console.warn(
+        '[status-page] render failed:',
+        sanitizeOpsSummary(error, 180) || 'unknown_error',
+      );
+      res
+        .type('html')
+        .status(503)
+        .send(
+          `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>服务状态 · d-obs</title></head><body style="font:14px/1.6 -apple-system,sans-serif;color:#1a1d1f;background:#f6f7f8;margin:0;display:grid;place-items:center;min-height:100vh"><div style="text-align:center"><h1 style="font-size:18px">状态页暂时不可用</h1><p style="color:#6f7478;font-size:12px">中心数据库未配置或不可达；请稍后重试。告警通知不受影响。</p></div></body></html>`,
+        );
+    }
   });
 
   // ---- 主站 SSO 登录中继（组员/管理员账号密码登录） ----
@@ -1122,6 +1151,106 @@ export function createOpsObservabilityRouter(): Router {
     },
   );
 
+  // ---- 维护窗口（计划内静默；平台运营操作，租户 token 只读也不可写） ----
+
+  router.get(
+    '/api/ops/observability/maintenance-windows',
+    requireObservabilityAccess,
+    async (_req: Request, res: Response) => {
+      try {
+        res.setHeader('Cache-Control', 'no-store');
+        const windows = await listMaintenanceWindows(await getOpsObservabilityPool());
+        res.json({ ok: true, windows });
+      } catch (error) {
+        res.status(503).json({
+          ok: false,
+          error: clientErrorCode(error, 'maintenance_windows_unavailable'),
+        });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/maintenance-windows',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      // 租户探针/组员视图不允许变更平台维护窗口。
+      if (req.opsTenantAccess) {
+        res.status(403).json({ ok: false, error: 'tenant_read_only' });
+        return;
+      }
+      const alertKey = String(req.body?.alertKey ?? '').trim();
+      const minutes = Number(req.body?.minutes);
+      const reason = String(req.body?.reason ?? '').trim();
+      if (!Number.isFinite(minutes) || minutes < 5 || minutes > 7 * 24 * 60) {
+        res.status(400).json({ ok: false, error: 'invalid_maintenance_minutes' });
+        return;
+      }
+      if (alertKey && !/^[a-z0-9][a-z0-9.-]{0,159}$/.test(alertKey)) {
+        res.status(400).json({ ok: false, error: 'invalid_maintenance_alert_key' });
+        return;
+      }
+      try {
+        const window = await createMaintenanceWindow(await getOpsObservabilityPool(), {
+          alertKey,
+          minutes: Math.floor(minutes),
+          reason,
+          createdBy: resolveOpsActor(req),
+        });
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'create_maintenance_window',
+          summary: `创建维护窗口（${window.endsAt}，${Math.floor(minutes)} 分钟）：${
+            alertKey || '全部规则'
+          }，原因：${reason.slice(0, 200)}`,
+        }).catch(() => undefined);
+        res.status(201).json({ ok: true, window });
+      } catch (error) {
+        const message = clientErrorCode(error, 'maintenance_window_create_failed');
+        res.status(message === 'maintenance_reason_required' ? 400 : 500).json({
+          ok: false,
+          error: message,
+        });
+      }
+    },
+  );
+
+  router.delete(
+    '/api/ops/observability/maintenance-windows/:windowId',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      if (req.opsTenantAccess) {
+        res.status(403).json({ ok: false, error: 'tenant_read_only' });
+        return;
+      }
+      const windowId = Number(req.params.windowId);
+      if (!Number.isInteger(windowId) || windowId <= 0) {
+        res.status(400).json({ ok: false, error: 'invalid_maintenance_window_id' });
+        return;
+      }
+      try {
+        const removed = await deleteMaintenanceWindow(await getOpsObservabilityPool(), windowId);
+        if (!removed) {
+          res.status(404).json({ ok: false, error: 'maintenance_window_not_found' });
+          return;
+        }
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'delete_maintenance_window',
+          summary: `删除维护窗口 #${windowId}`,
+        }).catch(() => undefined);
+        res.json({ ok: true });
+      } catch (error) {
+        res.status(500).json({
+          ok: false,
+          error: clientErrorCode(error, 'maintenance_window_delete_failed'),
+        });
+      }
+    },
+  );
+
   // ---- 租户管理（平台管理员；组员域部分对 SSO owner 开放） ----
 
   /**
@@ -1778,13 +1907,15 @@ export function createOpsObservabilityRouter(): Router {
         const requestedChannel = req.body?.channel;
         if (
           requestedChannel !== undefined &&
-          requestedChannel !== 'feishu' &&
-          requestedChannel !== 'webhook'
+          !isAlertDeliveryChannel(requestedChannel)
         ) {
           res.status(400).json({ ok: false, error: 'invalid_notification_channel' });
           return;
         }
-        const result = await sendAlertTestNotification(config, requestedChannel);
+        const result = await sendAlertTestNotification(
+          config,
+          requestedChannel ?? config.notification.channel,
+        );
         await recordOpsNotificationTest(result).catch(() => undefined);
         res.status(result.delivered ? 200 : 502).json({ ok: result.delivered, result });
       } catch (error) {

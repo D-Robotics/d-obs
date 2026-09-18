@@ -15,6 +15,7 @@ before(async () => {
   const app = express();
   app.use(express.json());
   app.use(createPublicObservabilityRouter());
+  app.get('/outside', (_req, res) => res.status(200).send('ok'));
   server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
@@ -86,4 +87,10 @@ test('public observability API isolates bearer token scopes', async () => {
 
   const response = await fetch(`${baseUrl}/api/v1/observability/runs`, { headers: { Accept: 'application/json' } });
   assert.equal(response.status, 401);
+});
+
+test('public observability auth does not swallow unrelated routes', async () => {
+  const response = await fetch(`${baseUrl}/outside`);
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), 'ok');
 });

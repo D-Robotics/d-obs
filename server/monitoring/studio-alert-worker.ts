@@ -53,6 +53,14 @@ import {
 import {
   deliverAndRecordTransition,
 } from './studio-alert-notification-policy.js';
+import {
+  collectActiveMaintenanceKeys,
+  maintenanceSuppression,
+} from './alert-maintenance-windows.js';
+import {
+  collectEscalationCandidates,
+  ensureEscalationColumns,
+} from './alert-escalation.js';
 export { sendAlertTestNotification } from './studio-alert-delivery.js';
 export { shouldCoalesceSyntheticTransition } from './studio-alert-notification-policy.js';
 
@@ -995,6 +1003,9 @@ async function runWorker(): Promise<void> {
   const previous = await loadState();
   let state = previous;
   let p: Pool | null = null;
+  // 维护窗口键集合与升级候选：try 块内收集（DB 不可用时为空/空集，投递不受影响）。
+  let maintenanceKeys = new Set<string>();
+  let pendingEscalations: import('./alert-escalation.js').EscalationCandidate[] = [];
   const observations: AlertObservation[] = [];
 
   const internalUrl =
@@ -1070,6 +1081,29 @@ async function runWorker(): Promise<void> {
     const started = Date.now();
     await p.query('select 1');
     await ensureAlertHistorySchema(p);
+    // 升级链列（幂等）+ 维护窗口抑制 + ack 超时升级，见投递编排注释。
+    await ensureEscalationColumns(p).catch((error) => {
+      console.warn(
+        '[alert-worker] escalation columns setup failed:',
+        sanitizeOpsSummary(error, 240),
+      );
+    });
+    maintenanceKeys = await collectActiveMaintenanceKeys(p).catch((error) => {
+      console.warn(
+        '[alert-worker] maintenance windows unavailable:',
+        sanitizeOpsSummary(error, 240),
+      );
+      return new Set<string>();
+    });
+    pendingEscalations = await collectEscalationCandidates(p).catch(
+      (error): import('./alert-escalation.js').EscalationCandidate[] => {
+        console.warn(
+          '[alert-worker] escalation pass failed:',
+          sanitizeOpsSummary(error, 240),
+        );
+        return [];
+      },
+    );
     // 行动环后置验证：executing 状态的行动不依赖操作者保持页面打开，
     // worker 每轮巡检都会按精确 remediation run 复核并推进终态。
     await ensureObservabilityActionSchema(p)
@@ -1190,13 +1224,27 @@ async function runWorker(): Promise<void> {
     return Number.isFinite(parsed) && parsed >= hourAgo;
   });
   const orderedTransitions = prioritizeAlertTransitions(reconciled.transitions);
-  for (const transition of orderedTransitions) {
-    const delivery = await deliverAndRecordTransition(
-      state,
-      transition,
-      orderedTransitions,
-      config,
-    );
+  // 升级链派生 transition 与 reconcile 输出合并投递：升级是「没人响应」信号，
+  // 优先级等同 escalated（排序函数已把 escalated 放最前）。
+  const escalationTransitions: AlertTransition[] = pendingEscalations.map((candidate) => ({
+    kind: 'escalated',
+    key: candidate.alertKey as AlertRuleKey,
+    title: candidate.title,
+    severity: candidate.severity,
+    summary: candidate.summary,
+    at: checkedAt.toISOString(),
+    firstSeenAt: candidate.firstSeenAt,
+  }));
+  const allTransitions = prioritizeAlertTransitions([
+    ...escalationTransitions,
+    ...orderedTransitions,
+  ]);
+  for (const transition of allTransitions) {
+    // 维护窗口抑制：评估与落库照旧，渠道投递抑制（窗口结束后由状态机补发）。
+    const suppression = maintenanceSuppression(transition.key, maintenanceKeys);
+    const delivery = suppression
+      ? { delivered: false, channel: 'suppressed', attempts: 0, error: suppression.reason }
+      : await deliverAndRecordTransition(state, transition, allTransitions, config);
     if (p) {
       await recordIncident(p, transition, delivery.delivered).catch(() => {});
       await p

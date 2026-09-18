@@ -190,6 +190,13 @@ export function createPublicObservabilityRouter(): Router {
   const router = Router();
 
   router.use((req: PublicRequest, res, next) => {
+    // The standalone app mounts this router at `/` for compatibility with
+    // existing public API paths. Do not let its bearer-token gate swallow the
+    // observability workbench, status page, or unrelated application routes.
+    if (!req.path.startsWith('/api/v1/observability/')) {
+      next();
+      return;
+    }
     try {
       req.publicPrincipal = resolvePrincipal(req) ?? undefined;
       if (!req.publicPrincipal) {

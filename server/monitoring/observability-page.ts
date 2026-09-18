@@ -1,4 +1,8 @@
 import { OPS_OBSERVABILITY_STYLE } from './observability-page-style.js';
+import {
+  OPS_OBSERVABILITY_PALETTE_DARK,
+  OPS_OBSERVABILITY_PALETTE_LIGHT,
+} from './observability-page-palette.js';
 import { OPS_OBSERVABILITY_SCRIPT_A } from './observability-page-script-a.js';
 import { OPS_OBSERVABILITY_SCRIPT_OVERVIEW } from './observability-page-script-overview.js';
 import { OPS_OBSERVABILITY_SCRIPT_B } from './observability-page-script-b.js';
@@ -69,14 +73,21 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       if (location.hash === '') {
         history.replaceState(null, '', location.pathname + location.search + '#overview');
       }
+      // 主题在首帧前恢复，避免暗色偏好下白闪（FOUC）。
+      try {
+        if (localStorage.getItem('ops-theme') === 'dark') {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      } catch (e) { /* localStorage 不可用（隐私模式等）则默认亮色 */ }
     })();
   </script>
-  <style>${OPS_OBSERVABILITY_STYLE + '\n' + OPS_OBSERVABILITY_SLO_STYLE + '\n' + OPS_OBSERVABILITY_UNIFIED_STYLE + '\n' + OPS_OBSERVABILITY_INVESTIGATION_STYLE + '\n' + OPS_OBSERVABILITY_COPILOT_STYLE + '\n' + OPS_OBSERVABILITY_TRACES_STYLE + '\n' + OPS_OBSERVABILITY_DATABASE_STYLE + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_STYLE + '\n' + OPS_OBSERVABILITY_LEARNING_STYLE + '\n' + OPS_OBSERVABILITY_OPERATOR_METRICS_STYLE + '\n' + OPS_OBSERVABILITY_COCKPIT_STYLE + '\n' + OPS_OBSERVABILITY_UX_STYLE + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_STYLE + '\n.detail-sections{margin-top:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}.detail-summary{cursor:pointer;display:flex;align-items:center;gap:9px;padding:12px 16px;color:var(--text);font-size:12px}.detail-summary span{color:var(--muted);font-weight:400}.detail-sections[open]>.detail-summary{border-bottom:1px solid var(--line)}.detail-sections>*:not(.detail-summary){margin:12px}.metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.model-pool-toolbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}.model-pool-toolbar h2{margin:0 0 4px}.model-pool-toolbar p{margin:0;color:var(--muted);font-size:11px}.model-pool-editor{padding:16px}.model-pool-editor .section-head{margin-bottom:12px}.model-pool-editor .fields{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}.model-pool-editor .field.full{grid-column:1/-1}.model-pool-summary{margin-bottom:12px}' + OPS_OBSERVABILITY_PRODUCT_STYLE + '\n' + OPS_OBSERVABILITY_MOBILE_TOUR_STYLE + '\n' + OPS_OBSERVABILITY_TENANTS_STYLE}</style>
+  <style>${OPS_OBSERVABILITY_PALETTE_LIGHT + '\n' + OPS_OBSERVABILITY_PALETTE_DARK + '\n' + OPS_OBSERVABILITY_STYLE + '\n' + OPS_OBSERVABILITY_SLO_STYLE + '\n' + OPS_OBSERVABILITY_UNIFIED_STYLE + '\n' + OPS_OBSERVABILITY_INVESTIGATION_STYLE + '\n' + OPS_OBSERVABILITY_COPILOT_STYLE + '\n' + OPS_OBSERVABILITY_TRACES_STYLE + '\n' + OPS_OBSERVABILITY_DATABASE_STYLE + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_STYLE + '\n' + OPS_OBSERVABILITY_LEARNING_STYLE + '\n' + OPS_OBSERVABILITY_OPERATOR_METRICS_STYLE + '\n' + OPS_OBSERVABILITY_COCKPIT_STYLE + '\n' + OPS_OBSERVABILITY_UX_STYLE + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_STYLE + '\n.detail-sections{margin-top:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}.detail-summary{cursor:pointer;display:flex;align-items:center;gap:9px;padding:12px 16px;color:var(--text);font-size:12px}.detail-summary span{color:var(--muted);font-weight:400}.detail-sections[open]>.detail-summary{border-bottom:1px solid var(--line)}.detail-sections>*:not(.detail-summary){margin:12px}.metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.model-pool-toolbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}.model-pool-toolbar h2{margin:0 0 4px}.model-pool-toolbar p{margin:0;color:var(--muted);font-size:11px}.model-pool-editor{padding:16px}.model-pool-editor .section-head{margin-bottom:12px}.model-pool-editor .fields{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}.model-pool-editor .field.full{grid-column:1/-1}.model-pool-summary{margin-bottom:12px}' + OPS_OBSERVABILITY_PRODUCT_STYLE + '\n' + OPS_OBSERVABILITY_MOBILE_TOUR_STYLE + '\n' + OPS_OBSERVABILITY_TENANTS_STYLE}</style>
 </head>
 <body class="ops-observability">
   <a class="skip-link" href="#mainContent">跳到主要内容</a>
   <header>
     <div class="brand"><div class="brand-mark" aria-hidden="true">d</div><div class="brand-copy">可观测中心<small>d-obs · Reliability Operations</small></div></div>
+    <button id="themeToggle" class="theme-toggle" type="button" title="切换亮色 / 暗色主题" aria-label="切换主题">◐</button>
     <div id="headerTelemetryStatus" class="header-live unknown" role="status" aria-live="polite">Telemetry 未确认</div>
   </header>
   <div class="app-shell">
@@ -86,7 +97,8 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       </nav>
       <nav class="module-tabs" aria-label="可观测中心模块">
         <div class="nav-primary">
-          <button class="module-tab" data-view="overview" aria-controls="view-overview" title="判断生产是否影响用户，并查看当前待办">当前态势<span id="overviewCount" class="tab-count" title="进行中事故数" hidden>—</span></button>
+          <button class="module-tab" data-view="overview" aria-controls="view-overview" title="判断生产是否影响用户，并查看当前待办">运营总览<span id="overviewCount" class="tab-count" title="进行中事故数" hidden>—</span></button>
+          <button class="module-tab" data-view="operator-metrics" aria-controls="view-operator-metrics" title="查看新增用户、DAU、对话次数和 Agent Run 趋势">用户增长</button>
         </div>
         <details class="nav-group" id="nav-group-core" data-nav-group="core">
           <summary class="nav-section-toggle" aria-controls="nav-group-core-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">处置与证据</span><span class="nav-group-alert" id="navCoreAlert" hidden></span></summary>
@@ -100,7 +112,6 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         <details class="nav-group" id="nav-group-data" data-nav-group="data">
           <summary class="nav-section-toggle" aria-controls="nav-group-data-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">数据与资产</span></summary>
           <div class="nav-group-items" id="nav-group-data-items">
-            <button class="module-tab" data-view="operator-metrics" aria-controls="view-operator-metrics" title="按天查看 token、新增用户、DAU、对话和 Agent Run">运营指标</button>
             <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据健康</button>
             <button class="module-tab" data-view="database" aria-controls="view-database" title="查看 PostgreSQL 运行状态、关系与数据表">数据库</button>
           </div>
@@ -149,7 +160,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div id="dataHealthContent" class="database-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取数据健康状态</strong><small>仅查询聚合数量和最近写入时间…</small></div></div>
     </section>
     <section id="view-operator-metrics" class="view hidden" aria-labelledby="operatorMetricsHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 数据与资产</div><h2 id="operatorMetricsHeading">运营指标</h2><p>按天查看 token、新增用户、DAU、对话次数和 Agent Run，帮助运营判断真实使用趋势。</p></div><div id="operatorMetricsWindowLabel" class="right">近 30 天 · 独立运营窗口</div></div>
+      <div class="view-head"><div><div class="eyebrow">可观测中心 / 用户增长</div><h2 id="operatorMetricsHeading">用户增长</h2><p>在同一套可观测数据里查看新增用户、DAU、对话次数和 Agent Run，判断用户从注册到使用的增长趋势。</p></div><div id="operatorMetricsWindowLabel" class="right">近 30 天 · 独立运营窗口</div></div>
       <div id="operatorMetricsContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取运营指标</strong><small>汇总中心库日粒度数据…</small></div></div>
     </section>
     <section id="view-database" class="view hidden" aria-labelledby="databaseHeading">

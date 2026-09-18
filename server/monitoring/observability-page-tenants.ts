@@ -20,9 +20,9 @@ export const OPS_OBSERVABILITY_TENANTS_STYLE = `
     .tenant-row .tenant-status .state-dot{margin-right:5px}
     .tenant-row .tenant-last{font-size:12px;color:var(--muted)}
     .tenant-row .tenant-actions{display:flex;gap:6px;justify-self:end}
-    .tenant-token-result{margin-top:10px;padding:12px 14px;border:1px dashed var(--line2);border-radius:8px;background:#fffdf3}
-    .tenant-token-result strong{display:block;font-size:12px;color:#8a6100;margin-bottom:6px}
-    .tenant-token-result code{display:block;padding:8px 10px;border-radius:6px;background:#f6f7f5;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all;color:#39443f}
+    .tenant-token-result{margin-top:10px;padding:12px 14px;border:1px dashed var(--line2);border-radius:8px;background:var(--c519)}
+    .tenant-token-result strong{display:block;font-size:12px;color:var(--c66);margin-bottom:6px}
+    .tenant-token-result code{display:block;padding:8px 10px;border-radius:6px;background:var(--c520);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;word-break:break-all;color:var(--c376)}
     .tenant-token-result .btn{margin-top:8px}
     .tenant-empty{padding:26px 20px;border:1px dashed var(--line2);border-radius:8px;color:var(--muted);font-size:12px;text-align:center}
     .member-toolbar{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:10px}
@@ -35,8 +35,8 @@ export const OPS_OBSERVABILITY_TENANTS_STYLE = `
     .member-row .member-role{font-size:11px}
     .member-row .member-actions{display:flex;gap:6px;justify-self:end}
     .role-chip{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:650}
-    .role-chip.owner{background:#e8f0fe;color:#1a56db}
-    .role-chip.member{background:#f1f5f4;color:#4b5b57}
+    .role-chip.owner{background:var(--c521);color:var(--c522)}
+    .role-chip.member{background:var(--c523);color:var(--c524)}
     .obs-account-bar{display:flex;align-items:center;gap:10px;margin-left:auto}
     .obs-user-chip{font-size:12px;color:var(--text);border:1px solid var(--line);border-radius:999px;padding:4px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .obs-tenant-select{font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);max-width:200px}

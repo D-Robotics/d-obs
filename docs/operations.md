@@ -9,7 +9,8 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/ops-observability` | 工作台 HTML（可直接打开，数据请求才鉴权） |
+| GET | `/ops-observability` | 工作台 HTML（可直接打开，数据请求才鉴权）；`#themeToggle` 切换亮/暗主题（localStorage 持久化） |
+| GET | `/status` | 公开只读状态页（不鉴权）：worker 存活、检查通过率、进行中事故；输出经脱敏（URL/email 占位），不含 token/租户/通道字段 |
 | GET | `/api/ops/observability/access` | 当前请求是否运营 admin（探活/自检） |
 | GET | `/api/ops/observability/overview?hours=24` | 总览：检查、事故、告警状态、行动队列 |
 | GET | `/api/ops/observability/config` | 告警配置（definitions + rules + 通道） |
@@ -27,6 +28,7 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 | PUT | `/api/ops/observability/model-pool/routing` | 调整 fallback 顺序 / 权重 |
 | PUT | `/api/ops/observability/model-pool/replace` | 替换上游目标（需 confirm:REPLACE；先预探测新目标，失败不写入，旧目标存快照） |
 | POST | `/api/ops/observability/model-pool/rollback` | 回滚到最近一次替换前的目标（需 confirm:ROLLBACK + 重新提供旧 Key；Key 不落盘） |
+| GET/POST/DELETE | `/api/ops/observability/maintenance-windows[/:id]` | 维护窗口（静默期）：`POST {alertKey, minutes(5..10080), reason≥3}` 抑制投递；`alertKey` 支持 `*` 全局或单规则；事故照常记录，窗口结束后由状态机自动补发 |
 | POST | `/api/health/external-probe-report` | 外部探针数据回传（独立 token：`x-rdk-external-probe-token` 头，64-hex 文件） |
 | GET/POST | `/api/ops/observability/actions/*` | 证据化行动环（提案/审批/执行/验收/重提案） |
 | POST | `/api/ops/observability/remediate` | 直连自愈（已退役：恒 410 `action_proposal_required`，引导走行动环） |
@@ -50,6 +52,20 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 
 **影子模式**：`notification.shadowMode=true` 时只评估和记录、不真实投递——
 新环境接入建议先影子跑 24h。
+
+**通知渠道**：`notification.channel` 支持 `feishu` / `dingtalk` / `wecom` /
+`slack` / `telegram` / `webhook`（通用 JSON POST）。各渠道消息格式在
+`alert-notification-channels.ts`；对外 API（`/config`）只回 `*Configured` /
+`*Host` 标志，永不回原始 webhook/secret。
+
+**维护窗口（静默期）**：`POST /api/ops/observability/maintenance-windows` 建
+5 分钟～7 天的窗口，期间事故照常 open/记录但**不投递**；窗口结束后下一轮
+状态机转移（含补发路径）自动恢复投递。与 Grafana mute-timings 语义一致。
+
+**值班升级链**：worker 每轮对 `status='open'` 且 `ack` 超时
+（`RDK_ALERT_ACK_TIMEOUT_MINUTES`，默认 15，clamp 5..720）的事故自动升级
+重发通知（每事故最多 3 次，`escalation_count` 计数）；在工作台确认事故
+（acknowledge）即止住升级。升级重发在通知记录里是独立的 transition。
 
 ## 3. 行动环（所有变更的安全路径）
 
@@ -142,3 +158,9 @@ d-obs 不自带独立迁移工具；数据表（`studio_alert_*`、`studio_ops_e
 `studio_external_probe_status` 的 `(tenant_id, source)` 复合主键。老库升级由
 ingest 代码自动迁移（删除单列 source 主键、补复合主键），也可以直接重跑
 `tools/init-schema.sql`。
+
+值班升级链与维护窗口的 schema 也是双端幂等：`studio_alert_incidents` 的
+`escalation_count` / `last_escalated_at` 列、`studio_alert_maintenance_windows`
+表在 web 端 store（`observability-store.ts`）与 worker
+（`studio-alert-worker.ts`）各自 ensure——即使某个库只跑过老版本 worker（或
+从没跑过 worker），看板/状态页也不会因缺列查询失败。

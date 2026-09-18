@@ -10,6 +10,16 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 
+import {
+  ALERT_CHANNEL_LABELS,
+  ALERT_CHANNEL_WEBHOOK_FIELDS,
+  ALERT_DELIVERY_CHANNELS,
+  alertChannelOptions,
+  type AlertDeliveryChannel,
+} from './alert-notification-channels.js';
+
+const ALERT_DELIVERY_CHANNEL_VALUES = ALERT_DELIVERY_CHANNELS;
+
 export const ALERT_CONFIG_VERSION = 1 as const;
 export const DEFAULT_PRODUCTION_ALERT_CONFIG_PATH = '/var/lib/rdstudio-alert-worker/config.json';
 
@@ -252,7 +262,10 @@ export const LOWER_IS_WORSE_ALERT_RULE_KEYS: ReadonlySet<AlertRuleKey> = new Set
 ]);
 
 export type AlertRuleCategory = (typeof ALERT_RULE_DEFINITIONS)[number]['category'];
-export type AlertNotificationChannel = 'default' | 'feishu' | 'webhook' | 'none';
+export type AlertNotificationChannel =
+  | 'default'
+  | AlertDeliveryChannel
+  | 'none';
 
 export interface AlertRuleConfig {
   enabled: boolean;
@@ -293,12 +306,17 @@ export interface AlertConfig {
   notification: {
     enabled: boolean;
     shadowMode: boolean;
-    channel: 'feishu' | 'webhook';
+    channel: AlertDeliveryChannel;
     minSeverity: 'warning' | 'critical';
     titlePrefix: string;
     messageTemplate: string;
     actionGuide: string;
     dashboardUrl: string;
+    dingtalkWebhookUrl: string;
+    wecomWebhookUrl: string;
+    slackWebhookUrl: string;
+    telegramWebhookUrl: string;
+    dingtalkSignSecret: string;
     feishuWebhookUrl: string;
     webhookUrl: string;
     bearerSecret: string;
@@ -357,6 +375,11 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
     messageTemplate: DEFAULT_ALERT_MESSAGE_TEMPLATE,
     actionGuide: '查看可观测看板、服务日志、中心遥测和依赖健康状态。',
     dashboardUrl: 'http://127.0.0.1:47110/ops-observability#alerts',
+    dingtalkWebhookUrl: '',
+    wecomWebhookUrl: '',
+    slackWebhookUrl: '',
+    telegramWebhookUrl: '',
+    dingtalkSignSecret: '',
     feishuWebhookUrl: '',
     webhookUrl: '',
     bearerSecret: '',
@@ -561,14 +584,22 @@ const ruleSchema = z
     ratePercent: z.number().min(0).max(100),
     openAfter: z.number().int().min(1).max(60),
     resolveAfter: z.number().int().min(1).max(60),
-    notificationChannel: z.enum(['default', 'feishu', 'webhook', 'none']),
+    notificationChannel: z.enum(['default', ...ALERT_DELIVERY_CHANNEL_VALUES, 'none']),
   })
   .strict();
 
+const alertDeliveryChannelSchema = z.enum(ALERT_DELIVERY_CHANNEL_VALUES);
 const ruleKeys = ALERT_RULE_DEFINITIONS.map((item) => item.key) as [
   AlertRuleKey,
   ...AlertRuleKey[],
 ];
+type AlertChannelWebhookField = (typeof ALERT_CHANNEL_WEBHOOK_FIELDS)[AlertDeliveryChannel];
+type AlertChannelSecretFieldMap = {
+  [K in keyof typeof ALERT_CHANNEL_WEBHOOK_FIELDS as `${K}WebhookUrl`]: string;
+};
+const alertChannelWebhookUrlFields = ALERT_DELIVERY_CHANNELS.map(
+  (channel) => ALERT_CHANNEL_WEBHOOK_FIELDS[channel],
+) as [AlertChannelWebhookField, ...AlertChannelWebhookField[]];
 
 const alertConfigSchema = z
   .object({
@@ -590,7 +621,7 @@ const alertConfigSchema = z
       .object({
         enabled: z.boolean(),
         shadowMode: z.boolean(),
-        channel: z.enum(['feishu', 'webhook']),
+        channel: alertDeliveryChannelSchema,
         minSeverity: z.enum(['warning', 'critical']),
         titlePrefix: z.string().trim().min(1).max(80),
         messageTemplate: z.string().trim().min(1).max(2_000),
@@ -600,6 +631,11 @@ const alertConfigSchema = z
         webhookUrl: z.string().max(2_048),
         bearerSecret: z.string().max(512),
         feishuSignSecret: z.string().max(512),
+        dingtalkWebhookUrl: z.string().max(2_048),
+        wecomWebhookUrl: z.string().max(2_048),
+        slackWebhookUrl: z.string().max(2_048),
+        telegramWebhookUrl: z.string().max(2_048),
+        dingtalkSignSecret: z.string().max(512),
       })
       .strict(),
     synthetic: z
@@ -647,7 +683,7 @@ const alertConfigSchema = z
         });
       }
     }
-    for (const field of ['feishuWebhookUrl', 'webhookUrl'] as const) {
+    for (const field of alertChannelWebhookUrlFields) {
       const raw = value.notification[field].trim();
       if (!raw) continue;
       try {
@@ -718,11 +754,17 @@ function applyEnvironmentFallbacks(config: AlertConfig): AlertConfig {
   }
 
   // 旧环境变量只作为首次迁移 fallback；一旦配置文件写入，它就是唯一真源。
-  if (!next.notification.webhookUrl && !next.notification.feishuWebhookUrl) {
+  const anyChannelUrlConfigured = ALERT_DELIVERY_CHANNELS.some(
+    (channel) => next.notification[ALERT_CHANNEL_WEBHOOK_FIELDS[channel]],
+  );
+  if (!anyChannelUrlConfigured) {
     const fallbackUrl = String(process.env.RDK_ALERT_WEBHOOK_URL ?? '').trim();
     next.notification.bearerSecret = String(process.env.RDK_ALERT_WEBHOOK_SECRET ?? '').trim();
     next.notification.feishuSignSecret = String(
       process.env.RDK_ALERT_FEISHU_SIGN_SECRET ?? '',
+    ).trim();
+    next.notification.dingtalkSignSecret = String(
+      process.env.RDK_ALERT_DINGTALK_SIGN_SECRET ?? '',
     ).trim();
     if (fallbackUrl) {
       next.notification.enabled = true;
@@ -731,19 +773,22 @@ function applyEnvironmentFallbacks(config: AlertConfig): AlertConfig {
           .trim()
           .toLowerCase(),
       );
-      next.notification.channel =
-        process.env.RDK_ALERT_FEISHU_WEBHOOK === '1' ||
-        /open\.(?:feishu|larksuite)\./i.test(fallbackUrl)
-          ? 'feishu'
-          : 'webhook';
-      if (next.notification.channel === 'feishu') {
-        next.notification.feishuWebhookUrl = fallbackUrl;
-      } else {
-        next.notification.webhookUrl = fallbackUrl;
-      }
+      next.notification.channel = detectChannelFromUrl(fallbackUrl);
+      next.notification[ALERT_CHANNEL_WEBHOOK_FIELDS[next.notification.channel]] = fallbackUrl;
     }
   }
   return next;
+}
+
+/** 按 URL 形状猜渠道：只用于环境变量迁移；配置文件才是最终真源。 */
+function detectChannelFromUrl(url: string): AlertDeliveryChannel {
+  if (process.env.RDK_ALERT_FEISHU_WEBHOOK === '1') return 'feishu';
+  if (/open\.(?:feishu|larksuite)\./i.test(url)) return 'feishu';
+  if (/oapi\.dingtalk\.com\/robot\/send/i.test(url)) return 'dingtalk';
+  if (/qyapi\.weixin\.qq\.com\/cgi-bin\/webhook\/send/i.test(url)) return 'wecom';
+  if (/hooks\.slack\.com\/services\//i.test(url)) return 'slack';
+  if (/api\.telegram\.org\/bot\//i.test(url)) return 'telegram';
+  return 'webhook';
 }
 
 const LEGACY_MODEL_TARGET_RULE_KEY = 'moss-model-target-degraded';
@@ -1198,20 +1243,19 @@ export async function applyPanelAlertConfigPatch(
 export type AlertConfigPatch = {
   global?: Partial<AlertConfig['global']>;
   notification?: Partial<
-    Omit<
-      AlertConfig['notification'],
-      'feishuWebhookUrl' | 'webhookUrl' | 'bearerSecret' | 'feishuSignSecret'
-    >
-  > & {
-    feishuWebhookUrl?: string;
-    webhookUrl?: string;
-    bearerSecret?: string;
-    feishuSignSecret?: string;
-    clearFeishuWebhookUrl?: boolean;
-    clearWebhookUrl?: boolean;
-    clearBearerSecret?: boolean;
-    clearFeishuSignSecret?: boolean;
-  };
+    Omit<AlertConfig['notification'], keyof AlertChannelSecretFieldMap>
+  > &
+    Partial<Record<keyof AlertChannelSecretFieldMap, string>> & {
+      clearDingtalkWebhookUrl?: boolean;
+      clearWecomWebhookUrl?: boolean;
+      clearSlackWebhookUrl?: boolean;
+      clearTelegramWebhookUrl?: boolean;
+      clearDingtalkSignSecret?: boolean;
+      clearFeishuWebhookUrl?: boolean;
+      clearWebhookUrl?: boolean;
+      clearBearerSecret?: boolean;
+      clearFeishuSignSecret?: boolean;
+    };
   synthetic?: Partial<AlertConfig['synthetic']> & {
     clearPassword?: boolean;
   };
@@ -1246,6 +1290,21 @@ export function mergeAndValidateAlertConfig(
       feishuSignSecret: notificationPatch.clearFeishuSignSecret
         ? ''
         : notificationPatch.feishuSignSecret || current.notification.feishuSignSecret,
+      dingtalkWebhookUrl: notificationPatch.clearDingtalkWebhookUrl
+        ? ''
+        : notificationPatch.dingtalkWebhookUrl?.trim() || current.notification.dingtalkWebhookUrl,
+      dingtalkSignSecret: notificationPatch.clearDingtalkSignSecret
+        ? ''
+        : notificationPatch.dingtalkSignSecret || current.notification.dingtalkSignSecret,
+      wecomWebhookUrl: notificationPatch.clearWecomWebhookUrl
+        ? ''
+        : notificationPatch.wecomWebhookUrl?.trim() || current.notification.wecomWebhookUrl,
+      slackWebhookUrl: notificationPatch.clearSlackWebhookUrl
+        ? ''
+        : notificationPatch.slackWebhookUrl?.trim() || current.notification.slackWebhookUrl,
+      telegramWebhookUrl: notificationPatch.clearTelegramWebhookUrl
+        ? ''
+        : notificationPatch.telegramWebhookUrl?.trim() || current.notification.telegramWebhookUrl,
     },
     synthetic: {
       ...current.synthetic,
@@ -1265,6 +1324,11 @@ export function mergeAndValidateAlertConfig(
   delete (next.notification as Record<string, unknown>).clearWebhookUrl;
   delete (next.notification as Record<string, unknown>).clearBearerSecret;
   delete (next.notification as Record<string, unknown>).clearFeishuSignSecret;
+  delete (next.notification as Record<string, unknown>).clearDingtalkWebhookUrl;
+  delete (next.notification as Record<string, unknown>).clearDingtalkSignSecret;
+  delete (next.notification as Record<string, unknown>).clearWecomWebhookUrl;
+  delete (next.notification as Record<string, unknown>).clearSlackWebhookUrl;
+  delete (next.notification as Record<string, unknown>).clearTelegramWebhookUrl;
   delete (next.synthetic as Record<string, unknown>).clearPassword;
   for (const key of ruleKeys) {
     next.rules[key] = { ...current.rules[key], ...(patch.rules?.[key] ?? {}) };
@@ -1336,10 +1400,24 @@ export function toPublicAlertConfig(
   options: { fileRuleKeys?: string[] | null } = {},
 ) {
   const defaultWebhookUrl =
-    config.notification.channel === 'feishu'
-      ? config.notification.feishuWebhookUrl
-      : config.notification.webhookUrl;
+    ALERT_CHANNEL_WEBHOOK_FIELDS[config.notification.channel] != null
+      ? config.notification[ALERT_CHANNEL_WEBHOOK_FIELDS[config.notification.channel]]
+      : '';
   const fileRuleKeys = options.fileRuleKeys ?? null;
+  const channelStatus = alertChannelOptions().map((option) => {
+    const field = ALERT_CHANNEL_WEBHOOK_FIELDS[option.value];
+    const rawUrl = String(config.notification[field] ?? '');
+    return {
+      channel: option.value,
+      label: option.label,
+      description: option.description,
+      webhookConfigured: Boolean(rawUrl),
+      webhookHost: configuredHost(rawUrl),
+    };
+  });
+  const defaultChannelEntry = channelStatus.find(
+    (item) => item.channel === config.notification.channel,
+  );
   return {
     version: config.version,
     updatedAt: config.updatedAt,
@@ -1363,19 +1441,30 @@ export function toPublicAlertConfig(
       enabled: config.notification.enabled,
       shadowMode: config.notification.shadowMode,
       channel: config.notification.channel,
+      channelLabel: ALERT_CHANNEL_LABELS[config.notification.channel],
       minSeverity: config.notification.minSeverity,
       titlePrefix: config.notification.titlePrefix,
       messageTemplate: config.notification.messageTemplate,
       actionGuide: config.notification.actionGuide,
       dashboardUrl: config.notification.dashboardUrl,
-      webhookConfigured: Boolean(defaultWebhookUrl),
-      webhookHost: configuredHost(defaultWebhookUrl),
+      webhookConfigured: defaultChannelEntry?.webhookConfigured ?? false,
+      webhookHost: defaultChannelEntry?.webhookHost ?? null,
       feishuWebhookConfigured: Boolean(config.notification.feishuWebhookUrl),
       feishuWebhookHost: configuredHost(config.notification.feishuWebhookUrl),
       genericWebhookConfigured: Boolean(config.notification.webhookUrl),
       genericWebhookHost: configuredHost(config.notification.webhookUrl),
+      dingtalkWebhookConfigured: Boolean(config.notification.dingtalkWebhookUrl),
+      dingtalkWebhookHost: configuredHost(config.notification.dingtalkWebhookUrl),
+      wecomWebhookConfigured: Boolean(config.notification.wecomWebhookUrl),
+      wecomWebhookHost: configuredHost(config.notification.wecomWebhookUrl),
+      slackWebhookConfigured: Boolean(config.notification.slackWebhookUrl),
+      slackWebhookHost: configuredHost(config.notification.slackWebhookUrl),
+      telegramWebhookConfigured: Boolean(config.notification.telegramWebhookUrl),
+      telegramWebhookHost: configuredHost(config.notification.telegramWebhookUrl),
       bearerSecretConfigured: Boolean(config.notification.bearerSecret),
       feishuSignSecretConfigured: Boolean(config.notification.feishuSignSecret),
+      dingtalkSignSecretConfigured: Boolean(config.notification.dingtalkSignSecret),
+      channels: channelStatus,
     },
     synthetic: {
       intervalMinutes: config.synthetic.intervalMinutes,

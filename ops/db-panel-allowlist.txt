@@ -45,5 +45,6 @@ studio_trace_ingestion_receipts
 studio_trace_span_conflicts
 studio_trace_spans
 
+studio_alert_maintenance_windows
 studio_public_observability_feedback
 studio_public_observability_scores

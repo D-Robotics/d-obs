@@ -1,5 +1,13 @@
 import { sendWebhookPayload } from '../analytics-cloud-forward.js';
 import {
+  ALERT_CHANNEL_LABELS,
+  ALERT_CHANNEL_SECRET_FIELDS,
+  ALERT_CHANNEL_WEBHOOK_FIELDS,
+  isAlertDeliveryChannel,
+  sendAlertChannelPayload,
+  type AlertDeliveryChannel,
+} from './alert-notification-channels.js';
+import {
   ALERT_MESSAGE_TEMPLATE_VARIABLES,
   ALERT_RULE_DEFINITIONS,
   type AlertConfig,
@@ -447,7 +455,7 @@ export async function recordWorkerStatus(
         config.notification.channel === 'feishu'
           ? config.notification.feishuWebhookUrl
           : config.notification.webhookUrl,
-      ),
+      ) || configuredAlertChannelSummary(config) !== 'none',
       config.notification.channel,
       config.updatedAt,
       checkCount,
@@ -591,10 +599,35 @@ export async function sendAlertWebhookWithRetry(
   };
 }
 
+/** 渠道对应的 Webhook URL（trim 后）。 */
+export function alertChannelUrl(
+  channel: AlertDeliveryChannel,
+  config: AlertConfig,
+): string {
+  const field = ALERT_CHANNEL_WEBHOOK_FIELDS[channel] as
+    | 'feishuWebhookUrl'
+    | 'dingtalkWebhookUrl'
+    | 'wecomWebhookUrl'
+    | 'slackWebhookUrl'
+    | 'telegramWebhookUrl'
+    | 'webhookUrl';
+  return String(config.notification[field] ?? '').trim();
+}
+
+/** 渠道可选密钥（钉钉加签 / 飞书加签 / 通用 Bearer）。 */
+function alertChannelSecret(
+  channel: AlertDeliveryChannel,
+  config: AlertConfig,
+): string {
+  const field = ALERT_CHANNEL_SECRET_FIELDS[channel as keyof typeof ALERT_CHANNEL_SECRET_FIELDS];
+  if (!field) return '';
+  return String(config.notification[field as 'feishuSignSecret'] ?? '').trim();
+}
+
 export async function deliverTransition(
   transition: AlertTransition,
   config: AlertConfig,
-  options?: { forceTest?: boolean; channel?: 'feishu' | 'webhook' },
+  options?: { forceTest?: boolean; channel?: AlertDeliveryChannel },
 ): Promise<{ delivered: boolean; channel: string; attempts: number; error?: string }> {
   const ruleChannel = config.rules[transition.key]?.notificationChannel ?? 'default';
   if (!options?.forceTest && ruleChannel === 'none') {
@@ -605,9 +638,9 @@ export async function deliverTransition(
       error: 'rule_notification_disabled',
     };
   }
-  const channel =
+  const rawChannel =
     options?.channel ?? (ruleChannel === 'default' ? config.notification.channel : ruleChannel);
-  if (channel !== 'feishu' && channel !== 'webhook') {
+  if (!isAlertDeliveryChannel(rawChannel)) {
     return {
       delivered: false,
       channel: 'suppressed',
@@ -615,10 +648,9 @@ export async function deliverTransition(
       error: 'notification_channel_not_selected',
     };
   }
-  const url =
-    channel === 'feishu'
-      ? config.notification.feishuWebhookUrl.trim()
-      : config.notification.webhookUrl.trim();
+  const channel: AlertDeliveryChannel = rawChannel;
+  const channelField = ALERT_CHANNEL_WEBHOOK_FIELDS[channel];
+  const url = alertChannelUrl(channel, config);
   const message = buildNotificationText(transition, config);
   if (!options?.forceTest && transition.kind === 'resolved' && !config.global.notifyOnRecovery) {
     return {
@@ -649,7 +681,7 @@ export async function deliverTransition(
       channel: url ? 'shadow' : 'unconfigured',
       attempts: 0,
       error: !url
-        ? `${channel}_contact_point_not_configured`
+        ? `${channelField}_not_configured`
         : !config.notification.enabled
           ? 'notification_disabled'
           : 'shadow_mode',
@@ -660,7 +692,7 @@ export async function deliverTransition(
       delivered: false,
       channel: 'unconfigured',
       attempts: 0,
-      error: `${channel}_contact_point_not_configured`,
+      error: `${channelField}_not_configured`,
     };
   }
   const payload = {
@@ -679,17 +711,30 @@ export async function deliverTransition(
         : config.notification.actionGuide,
     dashboardUrl: config.notification.dashboardUrl,
   };
-  const result = await sendAlertWebhookWithRetry(url, payload, {
-    bearerSecret: channel === 'webhook' ? config.notification.bearerSecret || undefined : undefined,
-    feishuSignSecret:
-      channel === 'feishu' ? config.notification.feishuSignSecret || undefined : undefined,
-    forceFeishuFormat: channel === 'feishu',
-    feishuText: message,
-    feishuCard:
-      channel === 'feishu' ? buildFeishuAlertCard(transition, config, options) : undefined,
-    logTag: 'alert-worker',
-    suppressResponseBodyInLogs: true,
-  });
+  const result = await sendAlertWebhookWithRetry(
+    url,
+    payload,
+    {
+      bearerSecret: undefined,
+      feishuSignSecret: undefined,
+      logTag: 'alert-worker',
+      suppressResponseBodyInLogs: true,
+    },
+    alertNotificationRetryPolicy(),
+    async (target, body, sendOptions) =>
+      sendAlertChannelPayload(channel, target, {
+        message,
+        title: transition.title,
+        secret: alertChannelSecret(channel, config) || undefined,
+        payload: body,
+        feishuCard:
+          channel === 'feishu' ? buildFeishuAlertCard(transition, config, options) : undefined,
+      }).then((sendResult) => ({
+        ok: sendResult.ok,
+        ...(sendResult.status == null ? {} : { status: sendResult.status }),
+        ...(sendResult.error == null ? {} : { error: sendResult.error }),
+      })),
+  );
   return {
     delivered: result.delivered,
     channel,
@@ -700,7 +745,7 @@ export async function deliverTransition(
 
 export async function sendAlertTestNotification(
   config: AlertConfig,
-  channel: 'feishu' | 'webhook' = config.notification.channel,
+  channel: AlertDeliveryChannel = config.notification.channel,
 ): Promise<{ delivered: boolean; channel: string; error?: string }> {
   return deliverTransition(
     {
@@ -715,3 +760,13 @@ export async function sendAlertTestNotification(
     { forceTest: true, channel },
   );
 }
+
+/** Worker 状态单例行：所有已配置渠道（供看板如实展示通知能力）。 */
+export function configuredAlertChannelSummary(config: AlertConfig): string {
+  const configured = (Object.keys(ALERT_CHANNEL_WEBHOOK_FIELDS) as AlertDeliveryChannel[]).filter(
+    (channel) => alertChannelUrl(channel, config),
+  );
+  return configured.join(',') || 'none';
+}
+
+export { ALERT_CHANNEL_LABELS };

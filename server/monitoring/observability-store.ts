@@ -12,6 +12,7 @@ import {
 } from './ops-event-store.js';
 import { validTenantId } from './tenant-store.js';
 import { loadAlertConfig } from './alert-config.js';
+import { ackTimeoutMinutes, MAX_ESCALATIONS_PER_INCIDENT } from './alert-escalation.js';
 import { CLIENT_ERROR_NON_ACTIONABLE_API_CODES } from '../../shared/client-error-telemetry.js';
 import type {
   OpsEventContextSummary,
@@ -62,6 +63,14 @@ async function pool(): Promise<Pool> {
     });
   }
   return poolReady;
+}
+
+/**
+ * 维护窗口路由等平台运营面板入口共享的池访问器：
+ * 与 store 内部同一份池（含测试注入语义），调用方拿到后只做有界 SQL。
+ */
+export async function getOpsObservabilityPool(): Promise<Pool> {
+  return pool();
 }
 
 function number(value: unknown): number {
@@ -229,7 +238,26 @@ export interface OpsObservabilityOverview {
     assignee: string | null;
     silenceUntil: string | null;
     silenceReason: string | null;
+    escalationCount: number;
+    lastEscalatedAt: string | null;
+    lastNotifiedAt: string | null;
   }>;
+  /** 计划内维护窗口（仅平台视图；租户视图恒为空数组）。 */
+  maintenanceWindows: Array<{
+    id: number;
+    scope: 'global' | 'rule';
+    alertKey: string;
+    startsAt: string;
+    endsAt: string;
+    reason: string;
+    createdBy: string;
+    active: boolean;
+  }>;
+  /** 值班升级链配置回显（仅平台视图）：ack 超时分钟数与每事故最大升级次数。 */
+  escalationPolicy: {
+    ackTimeoutMinutes: number;
+    maxEscalations: number;
+  } | null;
   incidentActivity: Array<{
     occurredAt: string | null;
     alertKey: string;
@@ -344,6 +372,12 @@ export async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
     `alter table public.studio_alert_incidents add column if not exists silence_until timestamptz null`,
     `alter table public.studio_alert_incidents add column if not exists silence_reason text null`,
     `alter table public.studio_alert_incidents add column if not exists tenant_id text not null default 'platform'`,
+    // 值班升级链 / 维护窗口：web 端 store 幂等建列（与 alert-escalation.ts /
+    // alert-maintenance-windows.ts 的定义一致），保证只跑过老版本 worker
+    // （或从没跑过）的库也能出看板、状态页。表结构以维护模块为准，这里只
+    // 补 incidents 的两列，避免两份 create table 漂移。
+    `alter table public.studio_alert_incidents add column if not exists escalation_count int not null default 0`,
+    `alter table public.studio_alert_incidents add column if not exists last_escalated_at timestamptz null`,
     `create index if not exists studio_alert_incidents_tenant_idx on public.studio_alert_incidents (tenant_id)`,
     `create index if not exists studio_alert_incidents_silence_idx on public.studio_alert_incidents (silence_until) where status = 'silenced'`,
     `create table if not exists public.studio_alert_incident_activity (
@@ -534,6 +568,11 @@ export async function getOpsObservabilityOverview(
   await ensureOpsEventSchema();
   const p = await pool();
   await ensureIncidentOperationsSchema(p);
+  // 维护窗口表由维护模块自己的 ensure 幂等建（含约束），失败不阻塞总览。
+  const { ensureMaintenanceWindowSchema } = await import('./alert-maintenance-windows.js');
+  if (!tenantScope) {
+    await ensureMaintenanceWindowSchema(p).catch(() => undefined);
+  }
   // 平台告警配置只服务于平台视图；租户视图不读它，避免把通道/影子模式等
   // 平台运营配置带进租户响应（与 /config 对租户返回 tenantReadOnly 的收敛一致）。
   const alertConfig = tenantScope ? null : await loadAlertConfig();
@@ -558,6 +597,7 @@ export async function getOpsObservabilityOverview(
     signalTrendResult,
     eventsResult,
     evolution,
+    maintenanceWindowsResult,
   ] = await Promise.all([
     p.query(
       `select alert_key, title, category, enabled, severity, unhealthy, active, summary, checked_at,
@@ -591,7 +631,7 @@ export async function getOpsObservabilityOverview(
     p.query(
       `select alert_key, title, severity, status, summary, first_seen_at, last_seen_at,
               resolved_at, occurrence_count, acknowledged_at, acknowledged_by, assignee,
-              silence_until, silence_reason
+              silence_until, silence_reason, escalation_count, last_escalated_at, last_notified_at
        from public.studio_alert_incidents
        ${tenantScope ? 'where (last_seen_at >= now() - make_interval(hours => $1::int) or status = \'open\') and coalesce(tenant_id, $3::text) = $2::text' : 'where last_seen_at >= now() - make_interval(hours => $1::int) or status = \'open\''}
        order by (status = 'open') desc, last_seen_at desc
@@ -913,6 +953,18 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
       throw error;
     }),
     tenantScope ? Promise.resolve(null) : getEvolutionOverview(p),
+    // 维护窗口与升级策略是平台运营配置：租户视图不读（恒为空）。
+    tenantScope
+      ? Promise.resolve({ rows: [] })
+      : p
+          .query(
+            `select id, alert_key, starts_at, ends_at, reason, created_by
+             from public.studio_alert_maintenance_windows
+             where starts_at >= now() - interval '7 days'
+             order by starts_at desc
+             limit 50`,
+          )
+          .catch(() => ({ rows: [] })),
   ]);
 
   const checks = checksResult.rows.map((row) => {
@@ -1103,6 +1155,9 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
       assignee: row.assignee ? text(row.assignee, 160) : null,
       silenceUntil: iso(row.silence_until),
       silenceReason: row.silence_reason ? text(row.silence_reason, 400) : null,
+      escalationCount: number(row.escalation_count),
+      lastEscalatedAt: iso(row.last_escalated_at),
+      lastNotifiedAt: iso(row.last_notified_at),
     })),
     incidentActivity: incidentActivityResult.rows.map((row) => ({
       occurredAt: iso(row.occurred_at),
@@ -1137,6 +1192,34 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
       metadata: safeMetadata(row.metadata),
       context: eventContextFromRow(row),
     })),
+    maintenanceWindows: tenantScope
+      ? []
+      : maintenanceWindowsResult.rows.map((row) => {
+          const startsAt = iso(row.starts_at);
+          const endsAt = iso(row.ends_at);
+          const now = Date.now();
+          return {
+            id: number(row.id),
+            scope: (row.alert_key ? 'rule' : 'global') as 'global' | 'rule',
+            alertKey: text(row.alert_key, 160),
+            startsAt: startsAt ?? '',
+            endsAt: endsAt ?? '',
+            reason: text(row.reason, 400),
+            createdBy: text(row.created_by, 160),
+            active: Boolean(
+              startsAt &&
+                endsAt &&
+                Date.parse(startsAt) <= now &&
+                Date.parse(endsAt) > now,
+            ),
+          };
+        }),
+    escalationPolicy: tenantScope
+      ? null
+      : {
+          ackTimeoutMinutes: ackTimeoutMinutes(),
+          maxEscalations: MAX_ESCALATIONS_PER_INCIDENT,
+        },
   };
 }
 
