@@ -1,17 +1,19 @@
 # VictoriaMetrics 高可用指标存储
 
 生产机使用 VictoriaMetrics Cluster 接收 Prometheus `remote_write`：两个
-`vmstorage` 节点保存副本，`vminsert` 的复制因子为 2，`vmselect` 查询时按 15 秒去重。
-数据保留 90 天，Prometheus 本地 TSDB 仍然保留即时查询、规则评估和告警入口。
+`vmstorage` 节点保存副本，两个 `vminsert` / `vmselect` 由 HAProxy 做故障转移，
+`vminsert` 的复制因子为 2，`vmselect` 查询时按 15 秒去重。数据保留 90 天，Prometheus
+本地 TSDB 仍然保留即时查询、规则评估和告警入口。
 
 ```text
 Prometheus (scrape / rules / UI)
         │ remote_write
         ▼
-  vminsert :8480  ── replicationFactor=2 ──┬─ vmstorage-a
-                                           └─ vmstorage-b
-        ▲
-  vmselect :8481 (PromQL / 长期历史)
+  HAProxy :8480  ──┬─ vminsert-a ──┐
+                   └─ vminsert-b ──┴─ replicationFactor=2 ──┬─ vmstorage-a
+                                                             └─ vmstorage-b
+  HAProxy :8481  ──┬─ vmselect-a ──┐
+                   └─ vmselect-b ──┴─ PromQL / 长期历史
 ```
 
 部署目录：`/opt/d-obs/storage/victoria-metrics`；数据目录：
@@ -22,8 +24,8 @@ Prometheus (scrape / rules / UI)
 | `127.0.0.1:8480` | Prometheus remote_write |
 | `127.0.0.1:8481` | 长期历史 PromQL（vmselect） |
 | `127.0.0.1:8482` / `8483` | vmstorage-a/b 自监控 |
-| `127.0.0.1:8484` | vminsert 自监控 |
-| `127.0.0.1:8485` | vmselect 自监控 |
+| `127.0.0.1:8484` / `8488` | vminsert-a/b 自监控 |
+| `127.0.0.1:8485` / `8489` | vmselect-a/b 自监控 |
 
 验证：
 

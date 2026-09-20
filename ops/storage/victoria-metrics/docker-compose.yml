@@ -39,7 +39,7 @@ services:
 
   vminsert:
     image: victoriametrics/vminsert:v1.150.0-cluster
-    container_name: d-obs-vminsert
+    container_name: d-obs-vminsert-a
     restart: unless-stopped
     command:
       - -storageNode=vmstorage-a:8400,vmstorage-b:8400
@@ -51,12 +51,27 @@ services:
       - vmstorage-b
     networks: [d-obs-metrics]
     ports:
-      - 127.0.0.1:8480:8480
       - 127.0.0.1:8484:8480
+
+  vminsert-b:
+    image: victoriametrics/vminsert:v1.150.0-cluster
+    container_name: d-obs-vminsert-b
+    restart: unless-stopped
+    command:
+      - -storageNode=vmstorage-a:8400,vmstorage-b:8400
+      - -replicationFactor=2
+      - -httpListenAddr=:8480
+      - -memory.allowedPercent=10
+    depends_on:
+      - vmstorage-a
+      - vmstorage-b
+    networks: [d-obs-metrics]
+    ports:
+      - 127.0.0.1:8488:8480
 
   vmselect:
     image: victoriametrics/vmselect:v1.150.0-cluster
-    container_name: d-obs-vmselect
+    container_name: d-obs-vmselect-a
     restart: unless-stopped
     command:
       - -storageNode=vmstorage-a:8401,vmstorage-b:8401
@@ -69,8 +84,40 @@ services:
       - vmstorage-b
     networks: [d-obs-metrics]
     ports:
-      - 127.0.0.1:8481:8481
       - 127.0.0.1:8485:8481
+
+  vmselect-b:
+    image: victoriametrics/vmselect:v1.150.0-cluster
+    container_name: d-obs-vmselect-b
+    restart: unless-stopped
+    command:
+      - -storageNode=vmstorage-a:8401,vmstorage-b:8401
+      - -replicationFactor=2
+      - -dedup.minScrapeInterval=15s
+      - -httpListenAddr=:8481
+      - -memory.allowedPercent=10
+    depends_on:
+      - vmstorage-a
+      - vmstorage-b
+    networks: [d-obs-metrics]
+    ports:
+      - 127.0.0.1:8489:8481
+
+  metrics-proxy:
+    image: haproxy:3.1-alpine
+    container_name: d-obs-metrics-proxy
+    restart: unless-stopped
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - vminsert
+      - vminsert-b
+      - vmselect
+      - vmselect-b
+    networks: [d-obs-metrics]
+    ports:
+      - 127.0.0.1:8480:8480
+      - 127.0.0.1:8481:8481
 
 networks:
   d-obs-metrics:

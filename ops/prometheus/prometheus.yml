@@ -96,6 +96,17 @@ scrape_configs:
           component: ingest
     scrape_timeout: 10s
 
+  - job_name: vminsert-b
+    static_configs:
+      - targets: ['127.0.0.1:8488']
+        labels:
+          plane: cloud
+          signal_source: metrics-storage
+          platform: storage
+          component: ingest
+          replica: b
+    scrape_timeout: 10s
+
   - job_name: vmselect
     static_configs:
       - targets: ['127.0.0.1:8485']
@@ -104,4 +115,15 @@ scrape_configs:
           signal_source: metrics-storage
           platform: storage
           component: query
+    scrape_timeout: 10s
+
+  - job_name: vmselect-b
+    static_configs:
+      - targets: ['127.0.0.1:8489']
+        labels:
+          plane: cloud
+          signal_source: metrics-storage
+          platform: storage
+          component: query
+          replica: b
     scrape_timeout: 10s
