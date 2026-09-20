@@ -114,6 +114,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <div class="nav-group-items" id="nav-group-data-items">
             <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据健康</button>
             <button class="module-tab" data-view="database" aria-controls="view-database" title="查看 PostgreSQL 运行状态、关系与数据表">数据库</button>
+            <a class="module-tab" href="/dobs/prometheus/graph" target="_blank" rel="noopener noreferrer" title="在 Prometheus 中使用 PromQL 查询时序指标">Prometheus 查询</a>
           </div>
         </details>
         <details class="nav-group" id="nav-group-learning" data-nav-group="learning">
