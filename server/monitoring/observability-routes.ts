@@ -575,6 +575,15 @@ export function createOpsObservabilityRouter(): Router {
     });
   });
 
+  // Nginx uses this read-only gate for the Prometheus UI mounted under the
+  // same RDK Studio origin.  Keep the browser-facing Prometheus endpoint out
+  // of the d-obs app process while reusing the exact SSO/admin decision used
+  // by the operations workbench.  `auth_request` only needs the status code;
+  // never return user/session data from this subrequest.
+  router.get('/api/ops/prometheus/auth', requireObservabilityAccess, (_req, res) => {
+    res.status(204).end();
+  });
+
   // DSH-native evidence/approval/action endpoints share this authenticated
   // operations namespace but do not depend on the removed Moss runtime.
   router.use(createObservabilityActionRouter());
