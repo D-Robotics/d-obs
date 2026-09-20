@@ -2,14 +2,18 @@
 #
 # d-obs 中心库备份：pg_dump custom 格式 + 完整性校验 + sha256 + 保留期清理 + 可选异地。
 #
-# 用法（生产，systemd timer 每日驱动；也可手动执行）：
+# 用法（生产，systemd timer 驱动；也可手动执行）：
 #   RDK_CHAT_CREDITS_DB_URL='postgres://user@localhost:5432/d_obs' ops/backup/pg-backup.sh
 #
 # 环境变量：
 #   RDK_CHAT_CREDITS_DB_URL   必填，与 /etc/d-obs.env 同源
 #   BACKUP_DIR                备份目录（默认 /var/backups/d-obs，权限 0700）
-#   BACKUP_KEEP_DAYS          保留天数（默认 14，只清理本脚本命名模式的文件）
+#   BACKUP_KEEP_DAYS          本地保留天数（默认 14，只清理本脚本命名模式的文件）
 #   BACKUP_OFFSITE_DEST       可选，异地目标（rsync 语法的 host:path，配了就 rsync 推送）
+#   BACKUP_OFFSITE_SSH        可选，异地清理用的 ssh 目标（如 root@host）
+#   BACKUP_OFFSITE_SSH_KEY    可选，异地传输/清理用的专用私钥
+#   BACKUP_OFFSITE_DIR        可选，异地清理扫描的目录（同 DEST 的 path 段）
+#   BACKUP_OFFSITE_KEEP_DAYS  异地保留天数（默认 3；异地盘通常比本机小）
 #   PG_DOCKER                 PG 跑在容器里时填容器名（如 rdk-credits-pg），
 #                             pg_dump/pg_restore 经 docker exec 执行，dump 走 stdout 落盘
 #   PGDUMP_BIN / PGRESTORE_BIN 显式二进制覆盖（优先于 PG_DOCKER；宿主机直装 PG 时才需要）
@@ -27,6 +31,10 @@ DB_URL="${RDK_CHAT_CREDITS_DB_URL:-}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/d-obs}"
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
 OFFSITE="${BACKUP_OFFSITE_DEST:-}"
+OFFSITE_SSH="${BACKUP_OFFSITE_SSH:-}"
+OFFSITE_SSH_KEY="${BACKUP_OFFSITE_SSH_KEY:-}"
+OFFSITE_DIR="${BACKUP_OFFSITE_DIR:-}"
+OFFSITE_KEEP_DAYS="${BACKUP_OFFSITE_KEEP_DAYS:-3}"
 PG_DOCKER="${PG_DOCKER:-}"
 DOCKER_MODE=0
 
@@ -71,13 +79,21 @@ printf '%s  %s\n' "$HASH" "$(basename "$OUT")" > "$OUT.sha256"
 echo "[db-backup] 完成：$OUT（$(du -h "$OUT" | cut -f1)，sha256 ${HASH:0:12}…）"
 
 if [ -n "$OFFSITE" ]; then
+  SSH_OPTS=()
+  [ -n "$OFFSITE_SSH_KEY" ] && SSH_OPTS=(-i "$OFFSITE_SSH_KEY")
   echo "[db-backup] 异地推送 -> $OFFSITE"
-  rsync -a --checksum "$OUT" "$OUT.sha256" "$OFFSITE/"
+  rsync -a --checksum "${SSH_OPTS[@]}" "$OUT" "$OUT.sha256" "$OFFSITE/"
+  # 异地保留期：远端同样只清本脚本的命名前缀，防异地盘被时序备份塞满。
+  if [ -n "$OFFSITE_SSH" ] && [ -n "$OFFSITE_DIR" ]; then
+    PRUNED_OFF="$(ssh "${SSH_OPTS[@]}" "$OFFSITE_SSH" \
+      "find '$OFFSITE_DIR' -maxdepth 1 -name 'd-obs-db-*.dump*' -mtime +$OFFSITE_KEEP_DAYS -print -delete" | wc -l | tr -d ' ')"
+    echo "[db-backup] 异地保留 ${OFFSITE_KEEP_DAYS} 天；本轮清理 ${PRUNED_OFF} 个文件"
+  fi
   echo "[db-backup] 异地完成"
 fi
 
 # 保留期：只清理本脚本产物，别的东西（手动拷贝、别的工具的文件）不动。
 PRUNED="$(find "$BACKUP_DIR" -maxdepth 1 -name 'd-obs-db-*.dump' -mtime +"$KEEP_DAYS" -print -delete | wc -l | tr -d ' ')"
 PRUNED_SHA="$(find "$BACKUP_DIR" -maxdepth 1 -name 'd-obs-db-*.dump.sha256' -mtime +"$KEEP_DAYS" -print -delete | wc -l | tr -d ' ')"
-echo "[db-backup] 保留 ${KEEP_DAYS} 天内备份；本轮清理 dump=${PRUNED} sha256=${PRUNED_SHA}"
+echo "[db-backup] 本地保留 ${KEEP_DAYS} 天内备份；本轮清理 dump=${PRUNED} sha256=${PRUNED_SHA}"
 echo "[db-backup] 现有备份：$(ls -1t "$BACKUP_DIR"/d-obs-db-*.dump 2>/dev/null | wc -l | tr -d ' ') 份"

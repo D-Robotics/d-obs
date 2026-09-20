@@ -1,9 +1,9 @@
 [Unit]
-Description=Run d-obs database backup daily
+Description=Run d-obs database backup hourly (RPO <= 1h)
 
 [Timer]
-OnCalendar=*-*-* 03:30:00
-RandomizedDelaySec=10m
+OnCalendar=*-*-* *:15:00
+RandomizedDelaySec=2m
 Persistent=true
 
 [Install]

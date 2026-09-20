@@ -5,7 +5,7 @@ After=network-online.target postgresql.service
 [Service]
 Type=oneshot
 # 与 d-obs 主服务同源凭据（RDK_CHAT_CREDITS_DB_URL）；备份参数在 /etc/d-obs.env 里可选配置
-# （BACKUP_DIR / BACKUP_KEEP_DAYS / BACKUP_OFFSITE_DEST / PGDUMP_BIN / PGRESTORE_BIN）。
+# （BACKUP_DIR / BACKUP_KEEP_DAYS / BACKUP_OFFSITE_* / PG_DOCKER / PGDUMP_BIN / PGRESTORE_BIN）。
 EnvironmentFile=/etc/d-obs.env
 ExecStart=/opt/d-obs/current/ops/backup/pg-backup.sh
 # 备份含全量业务数据，失败必须显性暴露（journald + timer 状态），不允许静默成功。

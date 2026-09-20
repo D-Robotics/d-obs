@@ -13,7 +13,8 @@
 #     事后没人能说清线上跑的到底是哪份代码。
 #   * 依赖不从本地上传。服务器到 npm registry 不通，但每次传 180MB node_modules 又太慢；
 #     改为在服务器上 `cp -al` 硬链上一版 node_modules（秒级）。硬链而不是软链：删旧 release
-#     不会把新 release 的依赖一起删掉。package.json 变了则直接拒绝，避免悄悄拿旧依赖跑新代码。
+#     不会把新 release 的依赖一起删掉。package.json 只比对 dependencies/devDependencies 段
+#     （scripts 等变更不该触发全量依赖重传）。
 #   * 上传前后都校验 sha256。曾经因为 `tar --czf`（少一个横杠）失败被 `2>/dev/null` 吞掉，
 #     scp 了一个上一轮的旧包，却对外宣称发布成功。所以这里所有命令都不吞 stderr，
 #     并且「本地算哈希 → 服务器上核对解压前/后的文件」。
@@ -151,7 +152,10 @@ if [ "$WITH_DEPS" != "1" ]; then
   if [ ! -d "$PREV/node_modules" ]; then
     echo "上一版没有 node_modules，无法复用；请用 --with-deps 发布" >&2; exit 1
   fi
-  if [ "$(sha256sum "$REL_DIR/package.json" | awk '{print $1}')" != "$(sha256sum "$PREV/package.json" | awk '{print $1}')" ]; then
+  deps_of() {
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps({"dependencies":d.get("dependencies",{}),"devDependencies":d.get("devDependencies",{})},sort_keys=True))' "$1"
+  }
+  if [ "$(deps_of "$REL_DIR/package.json")" != "$(deps_of "$PREV/package.json")" ]; then
     echo "package.json 与上一版不同（依赖可能变了），拒绝复用旧 node_modules。" >&2
     echo "确认本地 node_modules 已装好后，用 --with-deps 重新发布。" >&2
     exit 1
