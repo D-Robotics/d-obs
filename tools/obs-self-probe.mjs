@@ -5,8 +5,9 @@
  *
  * 与 rl-platform-probe 的关键区别：d-obs 是告警平台本身，它挂掉时
  * "上报给 d-obs" 这条路也断了。所以本探针有两条独立通道：
- *   1) 仪表盘通道（可选）：d-obs 可达时，把检查结果按平台探针协议上报，
- *      复用 external-health / external-entry-asset 两个白名单 key；
+ *   1) 仪表盘通道（可选）：d-obs 可达时，把检查结果按平台探针协议上报。
+ *      注意协议要求报文必须包含全部 4 个白名单 key（缺一即 400），
+ *      不适用的 DNS/TLS 按 enabled=false 停用上报（与 rl-platform-probe 同规）。
  *   2) 旁路通知通道（关键）：连续 N 次失败后，直接把告警 POST 到
  *      飞书/通用 Webhook —— 不经过 d-obs，平台死亡也能叫醒人；恢复后发恢复通知。
  *
@@ -152,6 +153,26 @@ async function main() {
       const token = String(await readFile(TOKEN_FILE, 'utf8')).trim();
       if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('token not 64-hex');
       const checks = [
+        {
+          key: 'external-dns',
+          title: 'd-obs 看门狗 DNS',
+          enabled: false,
+          ok: true,
+          active: false,
+          failures: 0,
+          successes: 0,
+          detail: '远端看门狗不适用 DNS 检查（协议要求全 key 上报，停用）',
+        },
+        {
+          key: 'external-tls',
+          title: 'd-obs 看门狗 TLS',
+          enabled: false,
+          ok: true,
+          active: false,
+          failures: 0,
+          successes: 0,
+          detail: '远端看门狗不适用 TLS 检查（协议要求全 key 上报，停用）',
+        },
         {
           key: 'external-health',
           title: `d-obs 状态页 (${TARGET})`,
