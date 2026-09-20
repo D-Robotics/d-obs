@@ -31,10 +31,12 @@ SSO/运营管理员权限。Prometheus 仍只监听 `127.0.0.1:9090`，不能绕
 
 如果暂时不走线上入口，Grafana 或内部运维工具仍可通过本机 `127.0.0.1:9090` 查询。
 
-Prometheus 同时抓取三类数据源：d-obs 的 OTLP/AI 指标、服务器上的 node-exporter，以及
-RDK Studio 私有 OTLP gateway 的 collector 自监控指标。规则文件
-`rules/d-obs-baseline.yml` 提供主机 CPU/内存/磁盘、OTLP 接收率和落库队列的 recording
-rules 与基础告警；通知仍由 d-obs 的事故/通知闭环统一承接。
+Prometheus 按两个数据域抓取四类数据源：云侧的 d-obs OTLP/AI 指标、服务器上的
+node-exporter、RDK Studio 私有 OTLP gateway 的 collector 自监控指标，以及端侧的
+`/edge-metrics` 设备身份/心跳/最新样本。所有目标都带 `plane=cloud` 或 `plane=edge`，
+可用 `sum by (plane)`、`up{plane="edge"}` 直接分域查询。规则文件
+`rules/d-obs-baseline.yml` 提供主机 CPU/内存/磁盘、OTLP 接收率、落库队列和端侧离线设备
+的 recording rules 与基础告警；通知仍由 d-obs 的事故/通知闭环统一承接。
 
 服务器上的 node-exporter 建议只绑定回环地址：
 
@@ -48,8 +50,9 @@ docker run -d --name d-obs-node-exporter --restart unless-stopped --network host
 ```
 
 RDK 板端使用仓库中的 `tools/edge-agent.mjs` 和
-`ops/edge-agent/rdk-edge-agent.service`，设备心跳会进入 d-obs 的“边缘设备”面；弱网
-样本先落本地 outbox，恢复后补传。云端应用仍使用 OTLP traces/metrics/logs，所有信号
-可用 `robot`、`device`、`site`、`firmware` 等受控资源标签关联。
+`ops/edge-agent/rdk-edge-agent.service`，设备心跳会进入端侧域和 d-obs 的“边缘设备”面；
+弱网样本先落本地 outbox，恢复后补传。云端应用仍使用 OTLP traces/metrics/logs，所有信号
+可用 `robot`、`device`、`site`、`firmware` 等受控资源标签关联，但不会和云侧主机指标混在
+同一组查询结果里。
 如果给 `/metrics` 设置 `RDK_OBSERVABILITY_METRICS_TOKEN`，需要同时在 scrape 配置里增加
 `authorization` header，并避免把 token 提交到仓库。

@@ -9,7 +9,23 @@ scrape_configs:
   - job_name: d-obs
     static_configs:
       - targets: ['127.0.0.1:18093']
+        labels:
+          plane: cloud
+          signal_source: d-obs
+          platform: cloud
     metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # Edge device identity/heartbeat/latest-sample metrics are a separate data
+  # domain even though the registry lives in the cloud-side d-obs process.
+  - job_name: edge
+    static_configs:
+      - targets: ['127.0.0.1:18093']
+        labels:
+          plane: edge
+          signal_source: edge-agent
+          platform: robot
+    metrics_path: /edge-metrics
     scrape_timeout: 10s
 
   # Linux host health for the RDK Studio server. The exporter is bound to
@@ -18,6 +34,7 @@ scrape_configs:
     static_configs:
       - targets: ['127.0.0.1:9100']
         labels:
+          plane: cloud
           signal_source: host
           platform: server
     scrape_timeout: 10s
@@ -29,6 +46,7 @@ scrape_configs:
     static_configs:
       - targets: ['127.0.0.1:8888']
         labels:
+          plane: cloud
           signal_source: collector
           platform: cloud
     scrape_timeout: 10s

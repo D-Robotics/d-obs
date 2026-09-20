@@ -22,6 +22,7 @@ import {
 import { insertLogRecords, type NormalizedLogRecord } from './ai-ecosystem-logs-store.js';
 import { enqueueMetricPoints, metricQueueDepth, metricQueueDroppedTotal } from './ai-ecosystem-metrics-store.js';
 import { decodeLogsProtobuf, decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
+import { renderDevicePrometheusMetrics } from '../monitoring/device-prometheus.js';
 
 export type Principal = { owner: string; keyId: string };
 type JsonObject = Record<string, unknown>;
@@ -626,6 +627,17 @@ export function createAiEcosystemRouter(): Router {
     }
     res.type('text/plain; version=0.0.4').send(renderPrometheusMetrics());
   });
+  router.get('/edge-metrics', async (req, res) => {
+    if (!metricsTokenMatches(req)) {
+      res.status(401).type('text/plain').send('invalid metrics token\n');
+      return;
+    }
+    try {
+      res.type('text/plain; version=0.0.4').send(await renderDevicePrometheusMetrics());
+    } catch {
+      res.status(503).type('text/plain').send('edge metrics unavailable\n');
+    }
+  });
   router.get('/api/v1/ecosystem/capabilities', (_req, res) => {
     res.json({
       ok: true,
@@ -647,6 +659,7 @@ export function createAiEcosystemRouter(): Router {
           portEnv: 'RDK_OTLP_GRPC_PORT',
         },
         prometheusEndpoint: '/metrics',
+        edgeMetricsEndpoint: '/edge-metrics',
         semanticConventions: ['gen_ai.*', 'moss.*', 'rdk.*', 'openinference.*'],
         payloadPolicy: 'low-sensitivity; prompts, completions, tool arguments/results and credentials are not retained',
       },

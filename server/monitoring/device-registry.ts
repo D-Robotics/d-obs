@@ -355,6 +355,56 @@ export async function recordDeviceHeartbeat(
 
 export type DeviceSamplePoint = { ts: number; metrics: Record<string, number> };
 
+export type DeviceMetricSnapshot = {
+  device: DeviceRecord;
+  sampleTs: number | null;
+  metrics: Record<string, number>;
+};
+
+/**
+ * 读取每台边缘设备的最新样本，供 Prometheus 的端侧数据域使用。
+ * 查询只返回每台设备一行，避免把设备历史样本重新灌入 Prometheus。
+ */
+export async function listDeviceMetricSnapshots(tenantId?: string): Promise<DeviceMetricSnapshot[]> {
+  const p = await pool();
+  await ensureSchema(p);
+  const params: unknown[] = [];
+  let deviceWhere = '';
+  if (tenantId) {
+    params.push(cleanText(tenantId, 40));
+    deviceWhere = 'where d.tenant_id = $1';
+  }
+  const result = await p.query(
+    `with latest as (
+       select distinct on (s.device_id) s.device_id, s.ts_ms, s.metrics
+         from public.studio_device_samples s
+         join public.studio_devices d on d.device_id = s.device_id
+        ${deviceWhere}
+        order by s.device_id, s.ts_ms desc
+     )
+     select d.*, latest.ts_ms as sample_ts, latest.metrics as sample_metrics
+       from public.studio_devices d
+       left join latest on latest.device_id = d.device_id
+      ${deviceWhere}
+      order by d.device_id
+      limit 500`,
+    params,
+  );
+  return result.rows.map((row) => {
+    const metrics = parseLabels(row.sample_metrics);
+    const numericMetrics: Record<string, number> = {};
+    for (const [key, value] of Object.entries(metrics)) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) numericMetrics[key] = numeric;
+    }
+    return {
+      device: rowToDevice(row),
+      sampleTs: Number.isFinite(Number(row.sample_ts)) ? Number(row.sample_ts) : null,
+      metrics: numericMetrics,
+    };
+  });
+}
+
 export async function queryDeviceSamples(
   deviceId: string,
   options: { fromMs: number; toMs: number; maxPoints?: number },

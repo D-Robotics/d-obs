@@ -12,11 +12,13 @@ groups:
         expr: sum(rate(rdk_ai_otlp_spans_accepted_total[5m])) / clamp_min(sum(rate(rdk_ai_otlp_spans_received_total[5m])), 1)
       - record: d_obs:otlp_metric_queue_depth
         expr: max(rdk_observability_metric_queue_depth)
+      - record: d_obs:edge_devices_online:ratio
+        expr: rdk_edge_devices_online_total / clamp_min(rdk_edge_devices_total, 1)
 
   - name: d-obs-baseline-alerts
     rules:
       - alert: DObsScrapeTargetDown
-        expr: up{job=~"d-obs|node|rdkstudio-otelcol"} == 0
+        expr: up{job=~"d-obs|edge|node|rdkstudio-otelcol"} == 0
         for: 5m
         labels:
           severity: warning
@@ -42,3 +44,12 @@ groups:
         annotations:
           summary: "OTLP metrics 持久化队列积压"
           description: "d-obs 指标异步落库队列连续 10 分钟超过 1000。"
+      - alert: DObsEdgeDeviceOffline
+        expr: rdk_edge_device_info{status="active"} == 1 and on(device) rdk_edge_device_online == 0
+        for: 10m
+        labels:
+          severity: warning
+          service: edge
+        annotations:
+          summary: "边缘设备 {{ $labels.device }} 心跳离线"
+          description: "设备已连续 10 分钟未在心跳窗口内上报。"

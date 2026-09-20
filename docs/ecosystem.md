@@ -16,6 +16,7 @@ d-obs 把 AI 观测数据收敛到 OpenTelemetry OTLP。应用可以使用 HTTP 
 | OTLP gRPC | `opentelemetry.proto.collector.{trace,metrics,logs}.v1.*Service/Export` | gRPC metadata 中的 `authorization`、`x-api-key` 或 `api-key` |
 | 边缘设备心跳 | `POST /api/edge/heartbeat`（`x-rdk-device-token`） | 设备 token（工作台“边缘设备”签发） |
 | Prometheus scrape | `GET /metrics` | 默认匿名；配置 `RDK_OBSERVABILITY_METRICS_TOKEN` 后需要 Bearer/API key |
+| 端侧 Prometheus scrape | `GET /edge-metrics` | 与 `/metrics` 共用鉴权；仅输出设备身份、心跳和最新数值样本 |
 | 能力发现 | `GET /api/v1/ecosystem/capabilities` | 无需鉴权 |
 
 配置写入 token：
@@ -157,9 +158,9 @@ scrape_configs:
 平台提供 OTLP 接入量、接受/拒绝数、创建 run 数，以及最近收到的上游 metric point。
 上游指标只映射 `service`、`version`、`environment`、`provider`、`model`、`project`、`route`、
 `robot`、`device`、`site`、`firmware` 等受控标签，指标名称和 series 数量都有上限，避免把
-用户 ID、trace ID 等高基数字段带入 Prometheus。生产机还抓取 node-exporter 与 RDK Studio
-OTLP gateway 自监控指标，形成应用、采集器、服务器三层查询面。生产机的本机持久化部署
-说明见 [ops/prometheus/README.md](../ops/prometheus/README.md)。
+用户 ID、trace ID 等高基数字段带入 Prometheus。生产机还按 `plane=cloud` 抓取 node-exporter
+与 RDK Studio OTLP gateway 自监控指标，并按 `plane=edge` 暴露设备心跳和最新样本，形成云侧
+与端侧两个独立查询面。生产机的本机持久化部署说明见 [ops/prometheus/README.md](../ops/prometheus/README.md)。
 
 ### 跨机器人、云端与服务器的关联
 

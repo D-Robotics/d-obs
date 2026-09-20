@@ -54,6 +54,15 @@ test('页面不引用已下线功能的 DOM id / 端点', () => {
   }
 });
 
+test('页面明确区分云侧与端侧数据域', () => {
+  const html = OPS_OBSERVABILITY_HTML;
+  assert.match(html, /data-domain-tab="cloud"/);
+  assert.match(html, /data-domain-tab="edge"/);
+  assert.match(html, /端侧数据域/);
+  assert.match(html, /edge-agent/);
+  assert.match(html, /domain-switcher/);
+});
+
 test('页面脚本模板字面量里没有会被吃掉的单反斜杠正则转义', async () => {
   // 页面 JS 全部写在 TS 模板字面量里，`\s` / `\.` / `\+` 这类**单反斜杠**会被模板
   // 字面量当转义吃掉（`\s`→`s`、`\.`→`.`），正则悄悄失效且不报错。真实事故：

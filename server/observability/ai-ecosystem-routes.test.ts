@@ -129,8 +129,9 @@ test('accepts Phoenix/Langfuse-compatible OTLP aliases and exposes Prometheus me
   assert.match(prometheus, /rdk_ai_otlp_spans_accepted_total\s+[1-9]/);
   assert.match(prometheus, /rdk_upstream_gen_ai_client_token_usage\{firmware="fw-2\.1\.0",model="test-model",robot="robot-01",service="metrics-agent"\}\s+20/);
 
-  const capabilities = await (await fetch(`${baseUrl}/api/v1/ecosystem/capabilities`)).json() as { data: { protocols: string[] } };
+  const capabilities = await (await fetch(`${baseUrl}/api/v1/ecosystem/capabilities`)).json() as { data: { protocols: string[]; edgeMetricsEndpoint?: string } };
   assert.deepEqual(capabilities.data.protocols, ['otlp/http-json', 'otlp/http-protobuf', 'otlp/grpc', 'prometheus exposition']);
+  assert.equal(capabilities.data.edgeMetricsEndpoint, '/edge-metrics');
 });
 
 test('accepts OTLP/HTTP protobuf and standard OTLP/gRPC traces and metrics', async () => {
