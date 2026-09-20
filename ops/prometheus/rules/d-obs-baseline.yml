@@ -1,0 +1,44 @@
+groups:
+  - name: d-obs-baseline-recordings
+    interval: 30s
+    rules:
+      - record: instance:node_cpu_utilisation:ratio
+        expr: 1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+      - record: instance:node_memory_utilisation:ratio
+        expr: 1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+      - record: instance:node_filesystem_avail:ratio
+        expr: node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}
+      - record: d_obs:otlp_trace_acceptance:ratio5m
+        expr: sum(rate(rdk_ai_otlp_spans_accepted_total[5m])) / clamp_min(sum(rate(rdk_ai_otlp_spans_received_total[5m])), 1)
+      - record: d_obs:otlp_metric_queue_depth
+        expr: max(rdk_observability_metric_queue_depth)
+
+  - name: d-obs-baseline-alerts
+    rules:
+      - alert: DObsScrapeTargetDown
+        expr: up{job=~"d-obs|node|rdkstudio-otelcol"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: observability
+        annotations:
+          summary: "可观测数据源 {{ $labels.job }} 不可用"
+          description: "{{ $labels.instance }} 已连续 5 分钟无法抓取。"
+      - alert: DObsHostDiskAlmostFull
+        expr: instance:node_filesystem_avail:ratio{mountpoint="/"} < 0.10
+        for: 10m
+        labels:
+          severity: critical
+          service: host
+        annotations:
+          summary: "可观测服务器根分区剩余空间不足"
+          description: "{{ $labels.instance }} 根分区可用空间低于 10%。"
+      - alert: DObsMetricQueueBacklog
+        expr: d_obs:otlp_metric_queue_depth > 1000
+        for: 10m
+        labels:
+          severity: warning
+          service: d-obs
+        annotations:
+          summary: "OTLP metrics 持久化队列积压"
+          description: "d-obs 指标异步落库队列连续 10 分钟超过 1000。"

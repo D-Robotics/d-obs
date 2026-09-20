@@ -155,9 +155,31 @@ scrape_configs:
 ```
 
 平台提供 OTLP 接入量、接受/拒绝数、创建 run 数，以及最近收到的上游 metric point。
-上游指标只映射 `service`、`version`、`environment`、`provider`、`model`、`project`、`route`
-等受控标签，指标名称和 series 数量都有上限，避免把用户 ID、trace ID 等高基数字段带入
-Prometheus。生产机的本机持久化部署说明见 [ops/prometheus/README.md](../ops/prometheus/README.md)。
+上游指标只映射 `service`、`version`、`environment`、`provider`、`model`、`project`、`route`、
+`robot`、`device`、`site`、`firmware` 等受控标签，指标名称和 series 数量都有上限，避免把
+用户 ID、trace ID 等高基数字段带入 Prometheus。生产机还抓取 node-exporter 与 RDK Studio
+OTLP gateway 自监控指标，形成应用、采集器、服务器三层查询面。生产机的本机持久化部署
+说明见 [ops/prometheus/README.md](../ops/prometheus/README.md)。
+
+### 跨机器人、云端与服务器的关联
+
+边缘设备优先使用仓库中的 `tools/edge-agent.mjs`，负责设备资源、温度、磁盘和 BPU
+指标，并通过 `/api/edge/heartbeat` 做带本地 outbox 的弱网上报。云端应用则使用 OTLP
+`resource.attributes` 携带以下稳定身份：
+
+```text
+rdk.robot.id
+rdk.device.id
+rdk.site.id
+rdk.firmware.version
+rdk.model.version
+```
+
+这些字段会被归一为 `robot`、`device`、`site`、`firmware`、`model_version`，可以把一次
+Agent Run、一次模型调用、一次工具/ROS2 动作和一台设备的资源状态放在同一查询上下文里。
+身份字段不能使用用户 ID、session ID 或 trace ID；后者仍只用于 Trace 关联，不进入指标
+标签。高吞吐部署应在板端放置 OpenTelemetry Collector/Alloy，使用批处理、内存限制、
+磁盘队列、重试和 mTLS，再把 OTLP 转发到 d-obs。
 
 ## 数据边界
 

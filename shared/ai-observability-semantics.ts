@@ -22,6 +22,13 @@ export interface AiSemanticAttributes {
   service?: string;
   environment?: string;
   release?: string;
+  /** Stable fleet identity; never use user/session/trace IDs here. */
+  robotId?: string;
+  deviceId?: string;
+  siteId?: string;
+  hostName?: string;
+  firmwareVersion?: string;
+  modelVersion?: string;
   sessionRef?: string;
   objectType?: string;
   objectId?: string;
@@ -43,6 +50,12 @@ const TEXT_ALIASES: Partial<Record<keyof AiSemanticAttributes, readonly string[]
   service: ['service', 'service.name'],
   environment: ['environment', 'deployment.environment.name', 'deployment.environment'],
   release: ['release', 'service.version', 'deployment.version'],
+  robotId: ['robotId', 'robot.id', 'rdk.robot.id', 'robot.serial', 'rdk.robot.serial'],
+  deviceId: ['deviceId', 'device.id', 'rdk.device.id', 'host.id'],
+  siteId: ['siteId', 'site.id', 'rdk.site.id', 'deployment.site'],
+  hostName: ['hostName', 'host.name', 'host.hostname'],
+  firmwareVersion: ['firmwareVersion', 'firmware.version', 'rdk.firmware.version', 'device.firmware.version'],
+  modelVersion: ['modelVersion', 'model.version', 'rdk.model.version', 'gen_ai.response.model.version'],
   sessionRef: ['sessionRef', 'session.id', 'gen_ai.conversation.id', 'conversation.id'],
   objectType: ['objectType', 'rdk.object.type'],
   objectId: ['objectId', 'rdk.object.id'],

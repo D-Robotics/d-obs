@@ -2,9 +2,33 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
 scrape_configs:
   - job_name: d-obs
     static_configs:
       - targets: ['127.0.0.1:18093']
     metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # Linux host health for the RDK Studio server. The exporter is bound to
+  # localhost and is only reachable by this Prometheus instance.
+  - job_name: node
+    static_configs:
+      - targets: ['127.0.0.1:9100']
+        labels:
+          signal_source: host
+          platform: server
+    scrape_timeout: 10s
+
+  # The existing RDK Studio OTLP gateway exposes its own queue/exporter
+  # health on localhost:8888. Keeping it in the same Prometheus gives one
+  # query surface for application, collector and host health.
+  - job_name: rdkstudio-otelcol
+    static_configs:
+      - targets: ['127.0.0.1:8888']
+        labels:
+          signal_source: collector
+          platform: cloud
     scrape_timeout: 10s

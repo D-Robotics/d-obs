@@ -15,10 +15,21 @@ type HistogramData = {
 const counters = new Map<string, number>();
 const upstreamMetrics = new Map<string, UpstreamMetric>();
 const histograms = new Map<string, HistogramData>();
-const MAX_UPSTREAM_SERIES = 256;
 const MAX_HISTOGRAMS = 128;
 let signalQueueDepth = 0;
 let signalQueueDroppedSeen = 0;
+
+/**
+ * Fleet metrics need more than the original single-service pilot limit, but
+ * the bound must remain explicit so a caller cannot turn arbitrary labels into
+ * an unbounded in-memory cardinality sink.  Keep the default conservative and
+ * allow operators to tune it per deployment without changing the contract.
+ */
+function maxUpstreamSeries(): number {
+  const configured = Number(process.env.RDK_OBSERVABILITY_MAX_UPSTREAM_SERIES ?? '');
+  if (!Number.isFinite(configured)) return 10_000;
+  return Math.max(256, Math.min(100_000, Math.floor(configured)));
+}
 
 /** 异步落库队列指标（由 metrics-store 摄取路径回调：depth 为当前深度，dropped 为累计值，内部换算增量）。 */
 export function recordMetricQueueGauges(depth: number, droppedTotal: number): void {
@@ -42,6 +53,24 @@ const LABEL_ALIASES: Record<string, string> = {
   'gen_ai.response.model': 'model',
   'project.id': 'project',
   'http.route': 'route',
+  'robot.id': 'robot',
+  'rdk.robot.id': 'robot',
+  'robot.serial': 'robot',
+  'rdk.robot.serial': 'robot',
+  'device.id': 'device',
+  'rdk.device.id': 'device',
+  'host.id': 'device',
+  'host.name': 'host',
+  'host.hostname': 'host',
+  'site.id': 'site',
+  'rdk.site.id': 'site',
+  'deployment.site': 'site',
+  'firmware.version': 'firmware',
+  'rdk.firmware.version': 'firmware',
+  'device.firmware.version': 'firmware',
+  'model.version': 'model_version',
+  'rdk.model.version': 'model_version',
+  'gen_ai.response.model.version': 'model_version',
 };
 
 function increment(name: string, value = 1): void {
@@ -106,7 +135,11 @@ export function recordUpstreamMetric(name: string, value: number, timestampMs = 
   const normalizedName = metricName(name);
   const normalizedLabels = normalizeMetricLabels(labels);
   const key = seriesKey(normalizedName, normalizedLabels);
-  if (!Number.isFinite(value) || upstreamMetrics.size >= MAX_UPSTREAM_SERIES && !upstreamMetrics.has(key)) return;
+  if (!Number.isFinite(value)) return;
+  if (upstreamMetrics.size >= maxUpstreamSeries() && !upstreamMetrics.has(key)) {
+    increment('rdk_ai_upstream_metric_points_dropped_total');
+    return;
+  }
   const current = upstreamMetrics.get(key) ?? { value: 0, samples: 0, lastTimestampMs: timestampMs, labels: normalizedLabels };
   current.value = value;
   current.samples += 1;
@@ -164,6 +197,7 @@ const COUNTER_LINES: Array<[string, string]> = [
   ['rdk_ai_otlp_metrics_request_errors_total', 'OTLP metric requests rejected before ingestion.'],
   ['rdk_ai_otlp_logs_request_errors_total', 'OTLP log requests rejected before ingestion.'],
   ['rdk_observability_metric_queue_dropped_total', 'OTLP metric points dropped because the async persistence queue was full or the store failed repeatedly.'],
+  ['rdk_ai_upstream_metric_points_dropped_total', 'OTLP metric points rejected after the bounded upstream series limit was reached.'],
 ];
 
 /** Prometheus exposition format; names are bounded to avoid exporter cardinality surprises. */
