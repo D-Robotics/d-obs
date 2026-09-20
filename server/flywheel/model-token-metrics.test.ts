@@ -70,13 +70,30 @@ test('空/未知模型名归一为 unknown，并正常汇总 token', () => {
 
 test('totals 与模型行一致；空输入返回 unconfigured 空结构', () => {
   const metrics = buildModelTokenMetrics([row('m', 7, 3), row('m2', 1, 1)], 30);
-  assert.deepEqual(metrics.totals, { runs: 2, promptTokens: 8, completionTokens: 4, totalTokens: 12 });
+  assert.deepEqual(metrics.totals, { runs: 2, promptTokens: 8, completionTokens: 4, totalTokens: 12, cost: null });
   const empty = emptyModelTokenMetrics(30);
   assert.equal(empty.configured, false);
   assert.deepEqual(empty.models, []);
-  assert.deepEqual(empty.totals, { runs: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+  assert.deepEqual(empty.totals, { runs: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: null });
   const builtEmpty = buildModelTokenMetrics([], 30);
   assert.equal(builtEmpty.configured, true);
   assert.deepEqual(builtEmpty.models, []);
   assert.equal(builtEmpty.totals.totalTokens, 0);
+});
+
+test('配置单价时按模型计算成本，未配置价格的模型保持 null', () => {
+  const metrics = buildModelTokenMetrics(
+    [row('priced', 1_000_000, 500_000), row('unpriced', 10, 10)],
+    30,
+    { priced: { inputPerM: 2, outputPerM: 8, currency: 'CNY' } },
+  );
+  const priced = metrics.models.find((item) => item.model === 'priced')!;
+  assert.equal(priced.cost?.totalCost, 6);
+  assert.equal(priced.cost?.inputCost, 2);
+  assert.equal(priced.cost?.outputCost, 4);
+  assert.equal(priced.cost?.currency, 'CNY');
+  const unpriced = metrics.models.find((item) => item.model === 'unpriced')!;
+  assert.equal(unpriced.cost, null);
+  assert.equal(metrics.totals.cost?.totalCost, 6);
+  assert.equal(metrics.totals.cost?.currency, 'CNY');
 });

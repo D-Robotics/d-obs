@@ -11,8 +11,10 @@ d-obs 把 AI 观测数据收敛到 OpenTelemetry OTLP。应用可以使用 HTTP 
 | OTLP traces | `POST /v1/traces` | `Authorization: Bearer/Basic <credential>`、`x-api-key` 或 `api-key` |
 | Phoenix/Langfuse OTLP 别名 | `POST /api/public/otel/v1/traces` | 同上 |
 | OTLP metrics | `POST /v1/metrics` | 同上 |
-| OTLP HTTP protobuf | 上述 traces/metrics 路径 + `Content-Type: application/x-protobuf` | 同上 |
-| OTLP gRPC | `opentelemetry.proto.collector.{trace,metrics}.v1.*Service/Export` | gRPC metadata 中的 `authorization`、`x-api-key` 或 `api-key` |
+| OTLP logs | `POST /v1/logs`（别名 `/api/public/otel/v1/logs`） | 同上 |
+| OTLP HTTP protobuf | 上述 traces/metrics/logs 路径 + `Content-Type: application/x-protobuf` | 同上 |
+| OTLP gRPC | `opentelemetry.proto.collector.{trace,metrics,logs}.v1.*Service/Export` | gRPC metadata 中的 `authorization`、`x-api-key` 或 `api-key` |
+| 边缘设备心跳 | `POST /api/edge/heartbeat`（`x-rdk-device-token`） | 设备 token（工作台“边缘设备”签发） |
 | Prometheus scrape | `GET /metrics` | 默认匿名；配置 `RDK_OBSERVABILITY_METRICS_TOKEN` 后需要 Bearer/API key |
 | 能力发现 | `GET /api/v1/ecosystem/capabilities` | 无需鉴权 |
 
@@ -92,6 +94,31 @@ curl -X POST http://127.0.0.1:47110/v1/traces \
 
 响应遵循 OTLP partial success 形状：`rejectedSpans` 为 0 表示已接受；低敏感策略、
 非法 ID、无效时间或超限字段会计入 rejected，不会把原始 payload 写入数据库。
+
+## OTLP logs 与指标持久化
+
+三个信号共用低敏感白名单：logs 只保留服务、环境、级别、正文（≤1000 字符）与
+白名单属性（模型/提供商/HTTP 状态等），正文与 prompt/completion 依旧不收。
+traces/metrics/logs 都会落库（metrics/logs/设备样本默认保留 14 天，可用
+`RDK_OBSERVABILITY_SIGNAL_RETENTION_DAYS` 调整），平台内"观测查询"视图可以直接
+画指标折线和查日志；Prometheus 抓取继续提供无限期的历史与 PromQL 查询。
+
+标准 OpenTelemetry SDK 打开 logs 导出即可（`OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` 等
+环境变量与 traces/metrics 同形）；任何支持 OTLP 的日志 SDK 指向 `/v1/logs` 即可。
+
+## 边缘设备接入（RDK 板）
+
+1. 工作台"边缘设备"里注册设备（如 `rdk-x5-01`），拿到一次性设备 token；
+2. 把 `tools/edge-agent.mjs` 复制到板子，token 存入文件；
+3. 板上运行（或装 `ops/edge-agent/rdk-edge-agent.service`）：
+
+```bash
+export RDK_OBS_REPORT_URL='http://<d-obs-host>:<port>'
+export RDK_DEVICE_TOKEN_FILE=/var/lib/rdk-edge-agent/token
+node tools/edge-agent.mjs          # 每分钟采集 CPU/内存/温度/磁盘/BPU 并上报
+```
+
+弱网时样本缓冲在设备本地 `outbox.jsonl`，恢复后自动补传（回填窗口 7 天）。
 
 ## Phoenix 与 Langfuse
 

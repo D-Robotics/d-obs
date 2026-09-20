@@ -9,14 +9,18 @@ import {
 } from '../../shared/ai-observability-semantics.js';
 import { getPublicObservabilityStore } from '../public-api/public-observability-store.js';
 import {
+  recordOtlpLogIngest,
   recordOtlpMetricIngest,
   recordOtlpRequestError,
   recordOtlpTraceIngest,
   recordUpstreamMetric,
   normalizeMetricLabels,
   renderPrometheusMetrics,
+  observeHistogram,
 } from './ai-ecosystem-metrics.js';
-import { decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
+import { insertLogRecords, type NormalizedLogRecord } from './ai-ecosystem-logs-store.js';
+import { persistMetricPoints } from './ai-ecosystem-metrics-store.js';
+import { decodeLogsProtobuf, decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
 
 export type Principal = { owner: string; keyId: string };
 type JsonObject = Record<string, unknown>;
@@ -24,6 +28,40 @@ type JsonObject = Record<string, unknown>;
 const store = getPublicObservabilityStore();
 const MAX_OTLP_SPANS = 512;
 const MAX_OTLP_METRIC_POINTS = 512;
+const MAX_OTLP_LOGS = 512;
+const MAX_LOG_BODY = 1_000;
+
+/** logs 的低敏感属性白名单：与 traces 的语义映射同族，永不收 payload/凭据/URL query。 */
+const LOG_ATTRIBUTE_ALLOW = new Set([
+  'service.name',
+  'service.version',
+  'deployment.environment.name',
+  'gen_ai.system',
+  'gen_ai.provider.name',
+  'gen_ai.request.model',
+  'gen_ai.response.model',
+  'project.id',
+  'http.route',
+  'http.status_code',
+  'http.method',
+  'error.type',
+  'error.kind',
+  'otel.scope.name',
+  'otel.scope.version',
+]);
+
+const SEVERITY_NAMES: Array<{ max: number; name: string }> = [
+  { max: 4, name: 'TRACE' },
+  { max: 8, name: 'DEBUG' },
+  { max: 12, name: 'INFO' },
+  { max: 16, name: 'WARN' },
+  { max: 20, name: 'ERROR' },
+  { max: 24, name: 'FATAL' },
+];
+
+function severityFromNumber(value: number): string {
+  return SEVERITY_NAMES.find((entry) => value <= entry.max)?.name ?? 'INFO';
+}
 
 function text(value: unknown, max = 256): string {
   if (typeof value === 'string') return value.replace(/\0/g, '').trim().slice(0, max);
@@ -296,16 +334,19 @@ function isProtobufContentType(req: Request): boolean {
     || contentType === 'application/octet-stream';
 }
 
-function requestBody(req: Request, signal: 'traces' | 'metrics'): JsonObject {
+function requestBody(req: Request, signal: 'traces' | 'metrics' | 'logs'): JsonObject {
   if (!isProtobufContentType(req)) return object(req.body);
   if (!Buffer.isBuffer(req.body)) throw new Error('invalid_otlp_protobuf_body');
-  return signal === 'traces' ? decodeTraceProtobuf(req.body) : decodeMetricsProtobuf(req.body);
+  if (signal === 'traces') return decodeTraceProtobuf(req.body);
+  if (signal === 'metrics') return decodeMetricsProtobuf(req.body);
+  return decodeLogsProtobuf(req.body);
 }
 
 async function ingestTraces(req: Request, res: Response): Promise<void> {
   const identity = requirePrincipal(req, res);
   if (!identity) return;
   let body: JsonObject;
+  const startedAt = Date.now();
   try {
     body = requestBody(req, 'traces');
   } catch {
@@ -314,11 +355,38 @@ async function ingestTraces(req: Request, res: Response): Promise<void> {
     return;
   }
   const result = await ingestTracePayload(body, identity);
+  observeHistogram('rdk_ai_otlp_trace_ingest_duration_ms', Date.now() - startedAt);
   if (!result.valid) {
     res.status(400).json({ ok: false, error: 'invalid_otlp_trace_payload', code: 'invalid_otlp_trace_payload' });
     return;
   }
   res.status(200).json({ partialSuccess: { rejectedSpans: result.rejected, ...(result.rejected ? { errorMessage: 'Some spans were rejected by the low-sensitivity policy.' } : {}) } });
+}
+
+async function ingestLogs(req: Request, res: Response): Promise<void> {
+  const identity = requirePrincipal(req, res);
+  if (!identity) return;
+  let body: JsonObject;
+  try {
+    body = requestBody(req, 'logs');
+  } catch {
+    recordOtlpRequestError('logs');
+    res.status(400).json({ ok: false, error: 'invalid_otlp_protobuf_body', code: 'invalid_otlp_protobuf_body' });
+    return;
+  }
+  const startedAt = Date.now();
+  const result = await ingestLogPayload(body, identity);
+  observeHistogram('rdk_ai_otlp_log_ingest_duration_ms', Date.now() - startedAt);
+  if (!result.valid) {
+    res.status(400).json({ ok: false, error: 'invalid_otlp_log_payload', code: 'invalid_otlp_log_payload' });
+    return;
+  }
+  res.status(200).json({
+    partialSuccess: {
+      rejectedLogRecords: result.rejectedRecords,
+      ...(result.rejectedRecords ? { errorMessage: 'Some log records were rejected by the low-sensitivity policy or storage limit.' } : {}),
+    },
+  });
 }
 
 function metricPoints(body: JsonObject): Array<{ name: string; value: number; timestampMs: number; labels: Record<string, string> }> {
@@ -358,21 +426,130 @@ function metricPoints(body: JsonObject): Array<{ name: string; value: number; ti
   return result;
 }
 
-export async function ingestMetricPayload(body: JsonObject, _identity: Principal): Promise<OtlpIngestResult> {
+export async function ingestMetricPayload(body: JsonObject, identity: Principal): Promise<OtlpIngestResult> {
   const points = metricPoints(body);
   if (!points.length) {
     recordOtlpRequestError('metrics');
     return { valid: false, accepted: 0, rejected: 0, runs: 0 };
   }
   for (const point of points) recordUpstreamMetric(point.name, point.value, point.timestampMs, point.labels);
+  // 内存 gauge 只承担 /metrics 当前值；持久化失败会计入 rejected 并通过
+  // partialSuccess 暴露，不阻断摄取路径。
+  let rejected = 0;
+  try {
+    await persistMetricPoints(identity.owner, points);
+  } catch {
+    rejected = points.length;
+  }
   recordOtlpMetricIngest(points.length);
-  return { valid: true, accepted: points.length, rejected: 0, runs: 0 };
+  return { valid: true, accepted: points.length - rejected, rejected, runs: 0 };
+}
+
+function logBody(value: unknown): string {
+  const anyValue = object(value);
+  if ('stringValue' in anyValue || 'string_value' in anyValue) {
+    return text(anyValue.stringValue ?? anyValue.string_value, MAX_LOG_BODY);
+  }
+  const scalarValue = scalar(anyValue);
+  if (scalarValue === undefined || scalarValue === null) return '';
+  if (typeof scalarValue === 'string') return text(scalarValue, MAX_LOG_BODY);
+  try {
+    return JSON.stringify(scalarValue).slice(0, MAX_LOG_BODY);
+  } catch {
+    return '';
+  }
+}
+
+function normalizedLogAttributes(raw: Record<string, unknown>): Record<string, string | number | boolean> {
+  const result: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!LOG_ATTRIBUTE_ALLOW.has(key) || Object.keys(result).length >= 24) continue;
+    if (typeof value === 'string') {
+      const cleaned = text(value, 256);
+      if (cleaned) result[key] = cleaned;
+    } else if (typeof value === 'number' && Number.isFinite(value)) {
+      result[key] = Math.max(-1e9, Math.min(1e9, value));
+    } else if (typeof value === 'boolean') {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function resourceLogs(body: JsonObject): Array<{ resource: Record<string, unknown>; record: unknown }> {
+  const result: Array<{ resource: Record<string, unknown>; record: unknown }> = [];
+  const groups = Array.isArray(body.resourceLogs ?? body.resource_logs) ? body.resourceLogs ?? body.resource_logs : [];
+  for (const group of groups as unknown[]) {
+    const row = object(group);
+    const resource = resourceAttributes(row.resource);
+    const scopes = Array.isArray(row.scopeLogs) ? row.scopeLogs : Array.isArray(row.scope_logs) ? row.scope_logs : [];
+    for (const scope of scopes as unknown[]) {
+      const scopeRow = object(scope);
+      const records = Array.isArray(scopeRow.logRecords) ? scopeRow.logRecords : Array.isArray(scopeRow.log_records) ? scopeRow.log_records : [];
+      for (const record of records) {
+        result.push({ resource, record });
+        if (result.length >= MAX_OTLP_LOGS) return result;
+      }
+    }
+  }
+  return result;
+}
+
+function normalizeOtlpLog(raw: unknown, resource: Record<string, unknown>): NormalizedLogRecord | null {
+  const item = object(raw);
+  const rawAttributes = attributes(item.attributes);
+  const merged = { ...resource, ...rawAttributes };
+  const filtered = normalizedLogAttributes(merged);
+  const severityNumberRaw = Number(item.severityNumber ?? item.severity_number);
+  const severityNumber = Number.isFinite(severityNumberRaw)
+    ? Math.max(1, Math.min(24, Math.trunc(severityNumberRaw)))
+    : 9;
+  const severityText = text(item.severityText ?? item.severity_text, 32) || severityFromNumber(severityNumber);
+  const body = logBody(item.body);
+  if (!body) return null;
+  const observedRaw = item.timeUnixNano ?? item.time_unix_nano ?? item.observedTimeUnixNano ?? item.observed_time_unix_nano;
+  const timestampMs = otlpTime(observedRaw, Date.now());
+  const traceRaw = text(item.traceId ?? item.trace_id, 64).toLowerCase();
+  const spanRaw = text(item.spanId ?? item.span_id, 32).toLowerCase();
+  return {
+    service: text(resource['service.name'], 160) || 'unknown',
+    environment: text(resource['deployment.environment.name'], 120) || 'unknown',
+    severityText: severityText.toUpperCase(),
+    severityNumber,
+    body,
+    attributes: filtered,
+    traceId: /^[0-9a-f]{32}$/.test(traceRaw) && !/^0+$/.test(traceRaw) ? traceRaw : null,
+    spanId: /^[0-9a-f]{16}$/.test(spanRaw) && !/^0+$/.test(spanRaw) ? spanRaw : null,
+    timestampMs,
+  };
+}
+
+export async function ingestLogPayload(body: JsonObject, identity: Principal): Promise<OtlpIngestResult & { rejectedRecords: number }> {
+  const rows = resourceLogs(body);
+  if (!rows.length) {
+    recordOtlpRequestError('logs');
+    return { valid: false, accepted: 0, rejected: 0, rejectedRecords: 0, runs: 0 };
+  }
+  const normalized = rows
+    .map((row) => normalizeOtlpLog(row.record, row.resource))
+    .filter((item): item is NormalizedLogRecord => Boolean(item));
+  const rejected = rows.length - normalized.length;
+  let inserted = 0;
+  try {
+    inserted = await insertLogRecords(identity.owner, normalized);
+  } catch {
+    recordOtlpLogIngest({ received: rows.length, accepted: 0, rejected: rows.length });
+    return { valid: true, accepted: 0, rejected: rows.length, rejectedRecords: rows.length, runs: 0 };
+  }
+  recordOtlpLogIngest({ received: rows.length, accepted: inserted, rejected });
+  return { valid: true, accepted: inserted, rejected, rejectedRecords: rejected + (normalized.length - inserted), runs: 0 };
 }
 
 async function ingestMetrics(req: Request, res: Response): Promise<void> {
   const identity = requirePrincipal(req, res);
   if (!identity) return;
   let body: JsonObject;
+  const startedAt = Date.now();
   try {
     body = requestBody(req, 'metrics');
   } catch {
@@ -381,11 +558,17 @@ async function ingestMetrics(req: Request, res: Response): Promise<void> {
     return;
   }
   const result = await ingestMetricPayload(body, identity);
+  observeHistogram('rdk_ai_otlp_metric_ingest_duration_ms', Date.now() - startedAt);
   if (!result.valid) {
     res.status(400).json({ ok: false, error: 'invalid_otlp_metric_payload', code: 'invalid_otlp_metric_payload' });
     return;
   }
-  res.status(200).json({ partialSuccess: {} });
+  res.status(200).json({
+    partialSuccess: {
+      rejectedDataPoints: result.rejected,
+      ...(result.rejected ? { errorMessage: 'Some metric points could not be persisted.' } : {}),
+    },
+  });
 }
 
 function metricsTokenMatches(req: Request): boolean {
@@ -406,6 +589,7 @@ export function createAiEcosystemRouter(): Router {
   }));
   const tracePaths = ['/v1/traces', '/api/public/otel/v1/traces', '/api/v1/otel/v1/traces'];
   const metricPaths = ['/v1/metrics', '/api/public/otel/v1/metrics', '/api/v1/otel/v1/metrics'];
+  const logPaths = ['/v1/logs', '/api/public/otel/v1/logs', '/api/v1/otel/v1/logs'];
   router.post(tracePaths, (req, res) => {
     void ingestTraces(req, res).catch(() => {
       recordOtlpRequestError('traces');
@@ -416,6 +600,12 @@ export function createAiEcosystemRouter(): Router {
     void ingestMetrics(req, res).catch(() => {
       recordOtlpRequestError('metrics');
       if (!res.headersSent) res.status(503).json({ ok: false, error: 'otlp_metric_ingest_unavailable', code: 'otlp_metric_ingest_unavailable', retryable: true });
+    });
+  });
+  router.post(logPaths, (req, res) => {
+    void ingestLogs(req, res).catch(() => {
+      recordOtlpRequestError('logs');
+      if (!res.headersSent) res.status(503).json({ ok: false, error: 'otlp_log_ingest_unavailable', code: 'otlp_log_ingest_unavailable', retryable: true });
     });
   });
   router.get('/metrics', (req, res) => {
@@ -429,16 +619,19 @@ export function createAiEcosystemRouter(): Router {
     res.json({
       ok: true,
       data: {
-        schema: 'rdk.ai.observability.capabilities.v1',
-        signals: ['traces', 'metrics'],
+        schema: 'rdk.ai.observability.capabilities.v2',
+        signals: ['traces', 'metrics', 'logs'],
         protocols: ['otlp/http-json', 'otlp/http-protobuf', 'otlp/grpc', 'prometheus exposition'],
         traceEndpoints: tracePaths,
         metricsEndpoint: metricPaths[0],
         metricEndpoints: metricPaths,
+        logsEndpoint: logPaths[0],
+        logEndpoints: logPaths,
         grpc: {
           serviceNames: [
             'opentelemetry.proto.collector.trace.v1.TraceService',
             'opentelemetry.proto.collector.metrics.v1.MetricsService',
+            'opentelemetry.proto.collector.logs.v1.LogsService',
           ],
           portEnv: 'RDK_OTLP_GRPC_PORT',
         },

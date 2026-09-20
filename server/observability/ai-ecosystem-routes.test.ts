@@ -213,3 +213,60 @@ test('rejects OTLP writes without an API key', async () => {
   });
   assert.equal(response.status, 401);
 });
+
+test('accepts OTLP logs (and aliases), rejects bodyless records, and reports logs capability', async () => {
+  const logPayload = {
+    resourceLogs: [{
+      resource: { attributes: [
+        { key: 'service.name', value: { stringValue: 'logs-agent' } },
+        { key: 'deployment.environment.name', value: { stringValue: 'test' } },
+      ] },
+      scopeLogs: [{ logRecords: [
+        {
+          timeUnixNano: String(Date.now() * 1_000_000),
+          severityNumber: 17,
+          severityText: 'ERROR',
+          body: { stringValue: 'upstream request failed' },
+          attributes: [
+            { key: 'http.status_code', value: { intValue: '502' } },
+            // 低敏感白名单之外的字段必须被丢弃，即使内容像机密。
+            { key: 'user.password', value: { stringValue: 'hunter2' } },
+          ],
+          traceId: '11111111111111111111111111111111',
+          spanId: '2222222222222222',
+        },
+        // 无 body 的记录按 OTLP 语义计入 rejected。
+        { severityText: 'INFO' },
+      ] }],
+    }],
+  };
+  const authed = { Authorization: 'Bearer ecosystem-test-token', 'Content-Type': 'application/json' };
+  const response = await fetch(`${baseUrl}/v1/logs`, { method: 'POST', headers: authed, body: JSON.stringify(logPayload) });
+  assert.equal(response.status, 200);
+  const parsed = await response.json() as { partialSuccess: { rejectedLogRecords: number } };
+  assert.ok(parsed.partialSuccess.rejectedLogRecords >= 1);
+
+  const alias = await fetch(`${baseUrl}/api/public/otel/v1/logs`, {
+    method: 'POST',
+    headers: { 'x-api-key': 'ecosystem-test-token', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resourceLogs: [] }),
+  });
+  assert.equal(alias.status, 400);
+
+  const unauthenticated = await fetch(`${baseUrl}/v1/logs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(logPayload),
+  });
+  assert.equal(unauthenticated.status, 401);
+
+  const prometheus = await (await fetch(`${baseUrl}/metrics`)).text();
+  assert.match(prometheus, /rdk_ai_otlp_log_records_received_total\s+[1-9]/);
+  assert.match(prometheus, /rdk_ai_otlp_log_ingest_duration_ms_bucket\{le="[0-9.]+"\}\s+[0-9]/);
+
+  const capabilities = await (await fetch(`${baseUrl}/api/v1/ecosystem/capabilities`)).json() as {
+    data: { signals: string[]; logsEndpoint?: string };
+  };
+  assert.ok(capabilities.data.signals.includes('logs'));
+  assert.equal(capabilities.data.logsEndpoint, '/v1/logs');
+});

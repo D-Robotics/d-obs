@@ -172,3 +172,6 @@ alter table public.studio_observability_actions
 -- agent_run_observability）：governance scope discovery 与保留清理函数
 -- 依赖这些表存在（缺失会导致治理 runtime 恢复门失败）。
 \ir unified-observability-schema.sql
+
+-- 扩展信号面：OTLP logs、metrics 持久化、边缘设备、模型单价、自定义面板。
+\ir observability-signals-schema.sql

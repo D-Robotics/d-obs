@@ -54,6 +54,8 @@ import {
   OPS_OBSERVABILITY_TENANTS_STYLE,
   OPS_OBSERVABILITY_SCRIPT_TENANTS,
 } from './observability-page-tenants.js';
+import { OPS_OBSERVABILITY_SIGNALS_STYLE } from './observability-page-signals-style.js';
+import { OPS_OBSERVABILITY_SCRIPT_SIGNALS } from './observability-page-script-signals.js';
 
 /**
  * 独立生产可观测与告警工作台。
@@ -81,7 +83,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       } catch (e) { /* localStorage 不可用（隐私模式等）则默认亮色 */ }
     })();
   </script>
-  <style>${OPS_OBSERVABILITY_PALETTE_LIGHT + '\n' + OPS_OBSERVABILITY_PALETTE_DARK + '\n' + OPS_OBSERVABILITY_STYLE + '\n' + OPS_OBSERVABILITY_SLO_STYLE + '\n' + OPS_OBSERVABILITY_UNIFIED_STYLE + '\n' + OPS_OBSERVABILITY_INVESTIGATION_STYLE + '\n' + OPS_OBSERVABILITY_COPILOT_STYLE + '\n' + OPS_OBSERVABILITY_TRACES_STYLE + '\n' + OPS_OBSERVABILITY_DATABASE_STYLE + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_STYLE + '\n' + OPS_OBSERVABILITY_LEARNING_STYLE + '\n' + OPS_OBSERVABILITY_OPERATOR_METRICS_STYLE + '\n' + OPS_OBSERVABILITY_COCKPIT_STYLE + '\n' + OPS_OBSERVABILITY_UX_STYLE + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_STYLE + '\n.detail-sections{margin-top:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}.detail-summary{cursor:pointer;display:flex;align-items:center;gap:9px;padding:12px 16px;color:var(--text);font-size:12px}.detail-summary span{color:var(--muted);font-weight:400}.detail-sections[open]>.detail-summary{border-bottom:1px solid var(--line)}.detail-sections>*:not(.detail-summary){margin:12px}.metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.model-pool-toolbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}.model-pool-toolbar h2{margin:0 0 4px}.model-pool-toolbar p{margin:0;color:var(--muted);font-size:11px}.model-pool-editor{padding:16px}.model-pool-editor .section-head{margin-bottom:12px}.model-pool-editor .fields{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}.model-pool-editor .field.full{grid-column:1/-1}.model-pool-summary{margin-bottom:12px}' + OPS_OBSERVABILITY_PRODUCT_STYLE + '\n' + OPS_OBSERVABILITY_MOBILE_TOUR_STYLE + '\n' + OPS_OBSERVABILITY_TENANTS_STYLE}</style>
+  <style>${OPS_OBSERVABILITY_PALETTE_LIGHT + '\n' + OPS_OBSERVABILITY_PALETTE_DARK + '\n' + OPS_OBSERVABILITY_STYLE + '\n' + OPS_OBSERVABILITY_SLO_STYLE + '\n' + OPS_OBSERVABILITY_UNIFIED_STYLE + '\n' + OPS_OBSERVABILITY_INVESTIGATION_STYLE + '\n' + OPS_OBSERVABILITY_COPILOT_STYLE + '\n' + OPS_OBSERVABILITY_TRACES_STYLE + '\n' + OPS_OBSERVABILITY_DATABASE_STYLE + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_STYLE + '\n' + OPS_OBSERVABILITY_LEARNING_STYLE + '\n' + OPS_OBSERVABILITY_OPERATOR_METRICS_STYLE + '\n' + OPS_OBSERVABILITY_COCKPIT_STYLE + '\n' + OPS_OBSERVABILITY_UX_STYLE + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_STYLE + '\n.detail-sections{margin-top:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}.detail-summary{cursor:pointer;display:flex;align-items:center;gap:9px;padding:12px 16px;color:var(--text);font-size:12px}.detail-summary span{color:var(--muted);font-weight:400}.detail-sections[open]>.detail-summary{border-bottom:1px solid var(--line)}.detail-sections>*:not(.detail-summary){margin:12px}.metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.model-pool-toolbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}.model-pool-toolbar h2{margin:0 0 4px}.model-pool-toolbar p{margin:0;color:var(--muted);font-size:11px}.model-pool-editor{padding:16px}.model-pool-editor .section-head{margin-bottom:12px}.model-pool-editor .fields{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px}.model-pool-editor .field.full{grid-column:1/-1}.model-pool-summary{margin-bottom:12px}' + OPS_OBSERVABILITY_PRODUCT_STYLE + '\n' + OPS_OBSERVABILITY_MOBILE_TOUR_STYLE + '\n' + OPS_OBSERVABILITY_TENANTS_STYLE + '\n' + OPS_OBSERVABILITY_SIGNALS_STYLE}</style>
 </head>
 <body class="ops-observability">
   <a class="skip-link" href="#mainContent">跳到主要内容</a>
@@ -112,6 +114,8 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         <details class="nav-group" id="nav-group-data" data-nav-group="data">
           <summary class="nav-section-toggle" aria-controls="nav-group-data-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">数据与资产</span></summary>
           <div class="nav-group-items" id="nav-group-data-items">
+            <button class="module-tab" data-view="signals" aria-controls="view-signals" title="查询 OTLP 指标与日志，维护自定义面板">观测查询</button>
+            <button class="module-tab" data-view="devices" aria-controls="view-devices" title="查看边缘设备心跳、在线状态与板级指标">边缘设备</button>
             <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据健康</button>
             <button class="module-tab" data-view="database" aria-controls="view-database" title="查看 PostgreSQL 运行状态、关系与数据表">数据库</button>
             <a class="module-tab" href="/dobs/prometheus/graph" target="_blank" rel="noopener noreferrer" title="在 Prometheus 中使用 PromQL 查询时序指标">Prometheus 查询</a>
@@ -155,6 +159,44 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     <section id="view-service-levels" class="view hidden" aria-labelledby="serviceLevelsHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / SLO</div><h2 id="serviceLevelsHeading">SLO 与错误预算</h2><p>用 28 天用户旅程定义目标；内部参考线只用于运营判断，不构成合同 SLA。</p></div><div class="right" id="serviceLevelPolicyVersion">策略版本由服务端返回</div></div>
       <div id="serviceLevelContent" class="overview-stack" aria-live="polite"></div>
+    </section>
+    <section id="view-signals" class="view hidden" aria-labelledby="signalsHeading">
+      <div class="view-head"><div><div class="eyebrow">可观测中心 / 观测查询</div><h2 id="signalsHeading">指标、日志与自定义面板</h2><p>查询 OTLP 落库的指标与日志，把常用查询保存为面板；深度历史仍可到 Prometheus 查询。</p></div><div class="right">OTLP 落库 · 管理员只读</div></div>
+      <details id="signals-metrics" class="detail-sections" open><summary class="detail-summary"><strong>指标查询</strong><span>OTLP metrics 持久化后的平台内查询</span></summary>
+        <div class="signals-toolbar">
+          <label>指标名<input id="signalMetricInput" list="signalMetricList" type="text" autocomplete="off" spellcheck="false" placeholder="如 rdk_ai_otlp_spans_received_total" /><datalist id="signalMetricList"></datalist></label>
+          <label>时间窗口<select id="signalMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option></select></label>
+          <button id="signalQueryBtn" class="btn primary" type="button">查询</button>
+          <button id="signalSavePanelBtn" class="btn" type="button">保存为面板</button>
+        </div>
+        <div id="signalsMetricChart" class="signals-chart-wrap" aria-live="polite"><div class="signals-empty">输入指标名并点击查询</div></div>
+      </details>
+      <details id="signals-logs" class="detail-sections" open><summary class="detail-summary"><strong>日志查询</strong><span>OTLP logs 落库后的平台内检索（低敏感字段）</span></summary>
+        <div class="signals-toolbar">
+          <label>服务<input id="signalLogService" type="text" autocomplete="off" spellcheck="false" placeholder="service.name，可留空" /></label>
+          <label>最低级别<select id="signalLogSeverity"><option value="1">全部</option><option value="9" selected>INFO+</option><option value="13">WARN+</option><option value="17">ERROR+</option></select></label>
+          <label>时间窗口<select id="signalLogMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option></select></label>
+          <button id="signalLogQueryBtn" class="btn primary" type="button">查询</button>
+        </div>
+        <div id="signalsLogTable" aria-live="polite"><div class="signals-empty">设置条件并点击查询</div></div>
+      </details>
+      <details id="signals-panels" class="detail-sections" open><summary class="detail-summary"><strong>自定义面板</strong><span>保存的常用指标查询，一屏总览</span></summary>
+        <div id="signalsPanelGrid" class="signals-panel-grid" aria-live="polite"><div class="signals-empty">正在读取面板…</div></div>
+      </details>
+    </section>
+    <section id="view-devices" class="view hidden" aria-labelledby="devicesHeading">
+      <div class="view-head"><div><div class="eyebrow">可观测中心 / 边缘设备</div><h2 id="devicesHeading">边缘设备与心跳</h2><p>注册 RDK 板级设备、查看心跳与在线状态，下钻板级指标（CPU / 内存 / 温度 / BPU）。</p></div><div class="right">设备 token 只显示一次</div></div>
+      <details id="devices-register" class="detail-sections" open><summary class="detail-summary"><strong>注册设备</strong><span>签发设备 token 并部署 edge-agent</span></summary>
+        <div class="signals-toolbar">
+          <label>设备 ID<input id="newDeviceId" type="text" autocomplete="off" spellcheck="false" placeholder="如 rdk-x5-01" /></label>
+          <label>显示名称<input id="newDeviceName" type="text" autocomplete="off" placeholder="可留空" /></label>
+          <label>型号<input id="newDeviceModel" type="text" autocomplete="off" placeholder="如 RDK X5 / S600" /></label>
+          <button id="registerDeviceBtn" class="btn primary" type="button">注册设备</button>
+        </div>
+        <div id="newDeviceTokenHint" class="token-reveal hidden"></div>
+        <div class="hint">板端部署：把 <code>tools/edge-agent.mjs</code> 复制到设备，token 存入文件，配置 <code>RDK_OBS_REPORT_URL</code> 与 <code>RDK_DEVICE_TOKEN_FILE</code> 后运行（或挂载 systemd 单元）；弱网时样本会缓冲在设备本地并自动补传。</div>
+      </details>
+      <details id="devices-list" class="detail-sections" open><summary class="detail-summary"><strong>设备清单</strong><span>在线状态、最近心跳与板级指标下钻</span></summary><div id="devicesContent" aria-live="polite"><div class="signals-empty">正在读取设备清单…</div></div></details>
     </section>
     <section id="view-data-health" class="view hidden" aria-labelledby="dataHealthHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 数据健康</div><h2 id="dataHealthHeading">业务数据新鲜度</h2><p>检查关键业务数据是否持续入库，只展示数量、趋势和最近写入时间。</p></div><div class="right">业务入库 · 只读聚合</div></div>
@@ -234,6 +276,6 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     <section class="command-palette"><div class="command-palette-head"><div class="command-palette-head-copy"><h2 id="commandPaletteTitle">跳转到可观测模块</h2><p>按任务进入，当前上下文和登录权限保持不变。</p></div><button id="closeCommandPalette" class="btn command-palette-close" type="button">关闭</button></div><label class="command-search-wrap" aria-label="搜索模块"><input id="commandPaletteSearch" class="command-search" type="search" autocomplete="off" placeholder="搜索事故、告警、Trace、SLO…" /></label><div id="commandPaletteResults" class="command-results" role="listbox" aria-label="可观测模块结果"></div><div class="command-palette-foot"><span><kbd>↑</kbd><kbd>↓</kbd>选择</span><span><kbd>Enter</kbd>打开</span><span><kbd>Esc</kbd>关闭</span></div></section>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-  <script>${OPS_TENANT_SCOPE_JS + OPS_OBSERVABILITY_SCRIPT_A + '\n' + OPS_OBSERVABILITY_SCRIPT_INVESTIGATION + '\n' + OPS_OBSERVABILITY_SCRIPT_USABILITY + '\n' + OPS_OBSERVABILITY_SCRIPT_COPILOT + '\n' + OPS_OBSERVABILITY_SCRIPT_TRACES + '\n' + OPS_OBSERVABILITY_SCRIPT_DATABASE + '\n' + OPS_OBSERVABILITY_SCRIPT_DATABASE_GRAPH + '\n' + OPS_OBSERVABILITY_SCRIPT_OVERVIEW + '\n' + OPS_OBSERVABILITY_SCRIPT_MODEL_POOL + '\n' + OPS_OBSERVABILITY_SCRIPT_SLO + '\n' + OPS_OBSERVABILITY_SCRIPT_OBJECTS + '\n' + OPS_OBSERVABILITY_SCRIPT_B + '\n' + OPS_OBSERVABILITY_SCRIPT_OPERATOR_METRICS + '\n' + OPS_OBSERVABILITY_SCRIPT_LEARNING + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_SCRIPT + '\n' + OPS_OBSERVABILITY_COCKPIT_SCRIPT + '\n' + OPS_OBSERVABILITY_SCRIPT_UX + '\n' + OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR + '\n' + OPS_OBSERVABILITY_SCRIPT_TENANTS + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT + '\n' + OPS_OBSERVABILITY_SCRIPT_C}</script>
+  <script>${OPS_TENANT_SCOPE_JS + OPS_OBSERVABILITY_SCRIPT_A + '\n' + OPS_OBSERVABILITY_SCRIPT_INVESTIGATION + '\n' + OPS_OBSERVABILITY_SCRIPT_USABILITY + '\n' + OPS_OBSERVABILITY_SCRIPT_COPILOT + '\n' + OPS_OBSERVABILITY_SCRIPT_TRACES + '\n' + OPS_OBSERVABILITY_SCRIPT_DATABASE + '\n' + OPS_OBSERVABILITY_SCRIPT_DATABASE_GRAPH + '\n' + OPS_OBSERVABILITY_SCRIPT_OVERVIEW + '\n' + OPS_OBSERVABILITY_SCRIPT_MODEL_POOL + '\n' + OPS_OBSERVABILITY_SCRIPT_SLO + '\n' + OPS_OBSERVABILITY_SCRIPT_OBJECTS + '\n' + OPS_OBSERVABILITY_SCRIPT_B + '\n' + OPS_OBSERVABILITY_SCRIPT_OPERATOR_METRICS + '\n' + OPS_OBSERVABILITY_SCRIPT_LEARNING + '\n' + OPS_OBSERVABILITY_VERSION_DISTRIBUTION_SCRIPT + '\n' + OPS_OBSERVABILITY_COCKPIT_SCRIPT + '\n' + OPS_OBSERVABILITY_SCRIPT_UX + '\n' + OPS_OBSERVABILITY_SCRIPT_SIGNALS + '\n' + OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR + '\n' + OPS_OBSERVABILITY_SCRIPT_TENANTS + '\n' + OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT + '\n' + OPS_OBSERVABILITY_SCRIPT_C}</script>
 </body>
 </html>`;

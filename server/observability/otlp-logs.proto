@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package opentelemetry.proto.collector.logs.v1;
+
+// Wire-compatible OTLP logs messages used by the d-obs bridge. Unknown
+// fields are ignored so newer exporters remain forward compatible.
+message AnyValue {
+  oneof value {
+    string string_value = 1;
+    bool bool_value = 2;
+    int64 int_value = 3;
+    double double_value = 4;
+    ArrayValue array_value = 5;
+    KeyValueList kvlist_value = 6;
+    bytes bytes_value = 7;
+  }
+}
+message ArrayValue { repeated AnyValue values = 1; }
+message KeyValue { string key = 1; AnyValue value = 2; }
+message KeyValueList { repeated KeyValue values = 1; }
+message Resource {
+  repeated KeyValue attributes = 1;
+  uint32 dropped_attributes_count = 2;
+  string entity_refs_schema_url = 3;
+}
+message InstrumentationScope {
+  string name = 1;
+  string version = 2;
+  repeated KeyValue attributes = 3;
+  uint32 dropped_attributes_count = 4;
+}
+message LogRecord {
+  fixed64 time_unix_nano = 1;
+  fixed64 observed_time_unix_nano = 2;
+  uint32 severity_number = 3;
+  string severity_text = 4;
+  AnyValue body = 5;
+  repeated KeyValue attributes = 6;
+  uint32 dropped_attributes_count = 7;
+  fixed32 flags = 8;
+  bytes trace_id = 9;
+  bytes span_id = 10;
+  string event_name = 11;
+}
+message ResourceLogs {
+  Resource resource = 1;
+  repeated ScopeLogs scope_logs = 2;
+  string schema_url = 3;
+}
+message ScopeLogs {
+  InstrumentationScope scope = 1;
+  repeated LogRecord log_records = 2;
+  string schema_url = 3;
+}
+message ExportLogsServiceRequest { repeated ResourceLogs resource_logs = 1; }
+message ExportLogsPartialSuccess {
+  uint64 rejected_log_records = 1;
+  string error_message = 2;
+}
+message ExportLogsServiceResponse { ExportLogsPartialSuccess partial_success = 1; }
+
+service LogsService {
+  rpc Export(ExportLogsServiceRequest) returns (ExportLogsServiceResponse);
+}

@@ -17,6 +17,7 @@ type Message = Record<string, unknown>;
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const traceProtoPath = join(moduleDir, 'otlp-trace.proto');
 const metricsProtoPath = join(moduleDir, 'otlp-metrics.proto');
+const logsProtoPath = join(moduleDir, 'otlp-logs.proto');
 
 const loaderOptions = {
   keepCase: false,
@@ -29,6 +30,7 @@ const loaderOptions = {
 
 const tracePackageDefinition = loadSync(traceProtoPath, loaderOptions);
 const metricsPackageDefinition = loadSync(metricsProtoPath, loaderOptions);
+const logsPackageDefinition = loadSync(logsProtoPath, loaderOptions);
 
 function messageDefinition(
   definition: PackageDefinition,
@@ -60,6 +62,16 @@ export const metricsServiceClient = (
   }
 ).opentelemetry.proto.collector.metrics.v1.MetricsService;
 
+export const logsServiceDefinition = logsPackageDefinition[
+  'opentelemetry.proto.collector.logs.v1.LogsService'
+] as ServiceDefinition;
+
+export const logsServiceClient = (
+  loadPackageDefinition(logsPackageDefinition) as unknown as {
+    opentelemetry: { proto: { collector: { logs: { v1: { LogsService: ServiceClientConstructor } } } } };
+  }
+).opentelemetry.proto.collector.logs.v1.LogsService;
+
 const traceRequest = messageDefinition(
   tracePackageDefinition,
   'opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest',
@@ -68,6 +80,10 @@ const metricsRequest = messageDefinition(
   metricsPackageDefinition,
   'opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest',
 );
+const logsRequest = messageDefinition(
+  logsPackageDefinition,
+  'opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest',
+);
 
 export function decodeTraceProtobuf(payload: Buffer): Message {
   return traceRequest.deserialize(payload);
@@ -75,6 +91,10 @@ export function decodeTraceProtobuf(payload: Buffer): Message {
 
 export function decodeMetricsProtobuf(payload: Buffer): Message {
   return metricsRequest.deserialize(payload);
+}
+
+export function decodeLogsProtobuf(payload: Buffer): Message {
+  return logsRequest.deserialize(payload);
 }
 
 export function encodeTraceProtobuf(value: Message): Buffer {

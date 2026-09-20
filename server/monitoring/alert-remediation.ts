@@ -33,15 +33,53 @@ export type RemediationPlaybookId =
   | 'reload-nginx'
   | 'run-evolution';
 
+/**
+ * 声明式剧本步骤：runner 按 kind 泛化解释（execFile 固定 argv，不经过 shell）。
+ * 新增剧本 = 在 REMEDIATION_PLAYBOOKS 里声明元数据 + 步骤序列，不再改 runner。
+ */
+export type RemediationStepSpec =
+  /** 前置安全闸：systemctl is-active <unit> 必须 active，否则整个剧本拒绝执行。 */
+  | { kind: 'assert-active'; name: string; unit: string; failSummary: string }
+  /** 固定命令（execFile 固定 argv）。失败即中止并落 failSummary。 */
+  | {
+      kind: 'exec';
+      name: string;
+      command: string;
+      args: string[];
+      timeoutMs?: number;
+      failSummary: string;
+    }
+  /** 健康拨测轮询；失败即中止并落 failSummary。 */
+  | {
+      kind: 'poll-health';
+      name: string;
+      url: string;
+      attempts?: number;
+      intervalMs?: number;
+      failSummary: string;
+    };
+
 export interface RemediationPlaybook {
   id: RemediationPlaybookId;
   title: string;
   description: string;
   safety: string;
   appliesTo: AlertRuleKey[];
+  /** 执行目标：local-host = 本机 systemd/nginx；预留 ssh:<device> 形态给边缘剧本。 */
+  target: string;
+  /** 声明式步骤序列（runner 泛化解释；disabled 剧本不执行）。 */
+  steps: RemediationStepSpec[];
+  /** 全部步骤通过后的结果摘要。 */
+  successSummary: string;
+  /** 声明但被禁用的剧本：保留元数据供看板解释，runner 拒绝执行。 */
+  disabledReason?: string;
 }
 
-/** 白名单剧本：runner 只允许执行这些 id 对应的固定命令序列，不接受任意命令。 */
+const INTERNAL_HEALTH_URL = 'http://127.0.0.1:18090/api/health';
+const STANDBY_HEALTH_URL = 'http://127.0.0.1:18091/api/health';
+const PUBLIC_HEALTH_URL = 'https://rdkstudio.d-robotics.cc/rdkstudio/api/health';
+
+/** 白名单剧本：runner 只允许执行这些 id 对应的声明式步骤，不接受任意命令。 */
 export const REMEDIATION_PLAYBOOKS: RemediationPlaybook[] = [
   {
     id: 'restart-app',
@@ -57,6 +95,37 @@ export const REMEDIATION_PLAYBOOKS: RemediationPlaybook[] = [
       'process-unhandled-error',
       'api-5xx-spike',
     ],
+    target: 'local-host',
+    successSummary: '主服务已重启，本机与公网健康检查通过',
+    steps: [
+      {
+        kind: 'assert-active',
+        name: '前置检查：standby active',
+        unit: 'rdstudio-web-opt-standby.service',
+        failSummary: 'standby 不 active，安全闸门拒绝重启主服务',
+      },
+      {
+        kind: 'exec',
+        name: '重启主服务',
+        command: 'systemctl',
+        args: ['restart', 'rdstudio-web-opt.service'],
+        failSummary: 'systemctl restart rdstudio-web-opt 失败',
+      },
+      {
+        kind: 'poll-health',
+        name: '验证：本机健康',
+        url: INTERNAL_HEALTH_URL,
+        failSummary: '主服务已重启，但健康验证未通过',
+      },
+      {
+        kind: 'poll-health',
+        name: '验证：公网健康',
+        url: PUBLIC_HEALTH_URL,
+        attempts: 5,
+        intervalMs: 2_000,
+        failSummary: '主服务已重启，但公网健康验证未通过',
+      },
+    ],
   },
   {
     id: 'restart-standby',
@@ -65,6 +134,29 @@ export const REMEDIATION_PLAYBOOKS: RemediationPlaybook[] = [
       '前置校验 systemctl is-active rdstudio-web-opt.service（不 active 拒绝）→ systemctl restart rdstudio-web-opt-standby.service → 健康拨测 18091。恢复下一次重启窗口的 failover 能力。',
     safety: '主服务不 active 时拒绝执行',
     appliesTo: ['internal-health', 'public-health', 'nginx-5xx-log'],
+    target: 'local-host',
+    successSummary: 'standby 已重启并恢复健康，failover 能力恢复',
+    steps: [
+      {
+        kind: 'assert-active',
+        name: '前置检查：主服务 active',
+        unit: 'rdstudio-web-opt.service',
+        failSummary: '主服务不 active，安全闸门拒绝重启 standby',
+      },
+      {
+        kind: 'exec',
+        name: '重启 standby',
+        command: 'systemctl',
+        args: ['restart', 'rdstudio-web-opt-standby.service'],
+        failSummary: 'systemctl restart rdstudio-web-opt-standby 失败',
+      },
+      {
+        kind: 'poll-health',
+        name: '验证：standby 健康',
+        url: STANDBY_HEALTH_URL,
+        failSummary: 'standby 已重启，但 18091 健康验证未通过',
+      },
+    ],
   },
   {
     id: 'reload-nginx',
@@ -73,6 +165,34 @@ export const REMEDIATION_PLAYBOOKS: RemediationPlaybook[] = [
       '前置校验 nginx -t（不通过拒绝）→ systemctl reload nginx.service → 公网健康拨测。只 reload 不 restart、不修改任何配置文件。',
     safety: '只 reload 不 restart、不改配置；校验失败拒绝执行',
     appliesTo: ['nginx-5xx-log', 'public-health'],
+    target: 'local-host',
+    successSummary: 'nginx 已 reload，公网健康检查通过',
+    steps: [
+      {
+        kind: 'exec',
+        name: '配置校验 nginx -t',
+        command: 'nginx',
+        args: ['-t'],
+        timeoutMs: 15_000,
+        failSummary: 'nginx -t 未通过，拒绝 reload',
+      },
+      {
+        kind: 'exec',
+        name: '重载 nginx',
+        command: 'systemctl',
+        args: ['reload', 'nginx.service'],
+        timeoutMs: 30_000,
+        failSummary: 'systemctl reload nginx 失败',
+      },
+      {
+        kind: 'poll-health',
+        name: '验证：公网健康',
+        url: PUBLIC_HEALTH_URL,
+        attempts: 5,
+        intervalMs: 2_000,
+        failSummary: 'nginx 已 reload，但公网健康验证未通过',
+      },
+    ],
   },
   {
     id: 'run-evolution',
@@ -80,6 +200,10 @@ export const REMEDIATION_PLAYBOOKS: RemediationPlaybook[] = [
     description: '启动 rdstudio-evolution-worker@manual，在隔离副本中生成候选补丁，等待人工审核。',
     safety: 'candidate-only：不自动合并、不自动上线',
     appliesTo: ['evolution-worker-health'],
+    target: 'local-host',
+    successSummary: '进化 worker 已触发',
+    disabledReason: '进化 worker 使用独立 DSH host，当前不允许从 remediation/action 路径触发',
+    steps: [],
   },
 ];
 

@@ -116,81 +116,51 @@ async function pollHealth(
   return false;
 }
 
-const INTERNAL_HEALTH_URL = 'http://127.0.0.1:18090/api/health';
-const STANDBY_HEALTH_URL = 'http://127.0.0.1:18091/api/health';
-const PUBLIC_HEALTH_URL = 'https://rdkstudio.d-robotics.cc/rdkstudio/api/health';
-
+/**
+ * 泛化剧本解释器：按 REMEDIATION_PLAYBOOKS 里的声明式步骤执行（execFile 固定
+ * argv，不经过 shell）。任一步失败即中止，失败摘要取该步骤的 failSummary；
+ * 全部通过取剧本的 successSummary。新增剧本只改声明，不改本函数。
+ */
 async function executePlaybook(
   playbookId: string,
   steps: RemediationStep[],
 ): Promise<{ ok: boolean; summary: string }> {
-  if (playbookId === 'restart-app') {
-    // 零停机前提：standby 必须 active，nginx 才能在重启窗口 failover。
-    if (!(await systemctlIsActive('rdstudio-web-opt-standby.service'))) {
-      steps.push({
-        name: '前置检查：standby active',
-        ok: false,
-        detail: 'rdstudio-web-opt-standby 不 active，拒绝重启主服务',
-      });
-      return { ok: false, summary: 'standby 不 active，安全闸门拒绝重启主服务' };
-    }
-    steps.push({ name: '前置检查：standby active', ok: true, detail: 'failover 能力就绪' });
-    if (!(await runFixed(steps, '重启主服务', 'systemctl', ['restart', 'rdstudio-web-opt.service']))) {
-      return { ok: false, summary: 'systemctl restart rdstudio-web-opt 失败' };
-    }
-    const internal = await pollHealth(steps, '验证：本机健康', INTERNAL_HEALTH_URL);
-    const publicOk = internal
-      ? await pollHealth(steps, '验证：公网健康', PUBLIC_HEALTH_URL, 5, 2_000)
-      : false;
-    return internal && publicOk
-      ? { ok: true, summary: '主服务已重启，本机与公网健康检查通过' }
-      : { ok: false, summary: '主服务已重启，但健康验证未通过' };
+  const playbook = getRemediationPlaybook(playbookId);
+  if (!playbook) {
+    steps.push({ name: '剧本校验', ok: false, detail: `未知剧本 ${playbookId}` });
+    return { ok: false, summary: 'unknown_remediation_playbook' };
   }
-  if (playbookId === 'restart-standby') {
-    if (!(await systemctlIsActive('rdstudio-web-opt.service'))) {
-      steps.push({
-        name: '前置检查：主服务 active',
-        ok: false,
-        detail: 'rdstudio-web-opt 不 active，拒绝重启 standby',
-      });
-      return { ok: false, summary: '主服务不 active，安全闸门拒绝重启 standby' };
-    }
-    steps.push({ name: '前置检查：主服务 active', ok: true, detail: '重启 standby 不影响流量' });
-    if (
-      !(await runFixed(steps, '重启 standby', 'systemctl', [
-        'restart',
-        'rdstudio-web-opt-standby.service',
-      ]))
-    ) {
-      return { ok: false, summary: 'systemctl restart rdstudio-web-opt-standby 失败' };
-    }
-    const ok = await pollHealth(steps, '验证：standby 健康', STANDBY_HEALTH_URL);
-    return ok
-      ? { ok: true, summary: 'standby 已重启并恢复健康，failover 能力恢复' }
-      : { ok: false, summary: 'standby 已重启，但 18091 健康验证未通过' };
+  if (playbook.disabledReason) {
+    steps.push({ name: '剧本校验', ok: false, detail: playbook.disabledReason });
+    return { ok: false, summary: playbook.disabledReason };
   }
-  if (playbookId === 'reload-nginx') {
-    if (!(await runFixed(steps, '配置校验 nginx -t', 'nginx', ['-t'], 15_000))) {
-      return { ok: false, summary: 'nginx -t 未通过，拒绝 reload' };
-    }
-    if (!(await runFixed(steps, '重载 nginx', 'systemctl', ['reload', 'nginx.service'], 30_000))) {
-      return { ok: false, summary: 'systemctl reload nginx 失败' };
-    }
-    const ok = await pollHealth(steps, '验证：公网健康', PUBLIC_HEALTH_URL, 5, 2_000);
-    return ok
-      ? { ok: true, summary: 'nginx 已 reload，公网健康检查通过' }
-      : { ok: false, summary: 'nginx 已 reload，但公网健康验证未通过' };
+  if (playbook.target !== 'local-host') {
+    // 本仓库附带的 systemd 模板只覆盖本机目标；其他目标形态（如 ssh:<device>）
+    // 必须先在 runner 落地对应的执行器才允许声明。
+    steps.push({ name: '剧本校验', ok: false, detail: `不支持的执行目标 ${playbook.target}` });
+    return { ok: false, summary: 'unsupported_remediation_target' };
   }
-  if (playbookId === 'run-evolution') {
-    steps.push({
-      name: '剧本校验：进化 worker',
-      ok: false,
-      detail: '进化 worker 使用独立 DSH host，当前不允许从 remediation/action 路径触发',
-    });
-    return { ok: false, summary: '进化 worker 直达触发已关闭' };
+  for (const step of playbook.steps) {
+    if (step.kind === 'assert-active') {
+      if (!(await systemctlIsActive(step.unit))) {
+        steps.push({ name: step.name, ok: false, detail: step.failSummary });
+        return { ok: false, summary: step.failSummary };
+      }
+      steps.push({ name: step.name, ok: true, detail: `${step.unit} active` });
+      continue;
+    }
+    if (step.kind === 'exec') {
+      if (!(await runFixed(steps, step.name, step.command, step.args, step.timeoutMs ?? 90_000))) {
+        return { ok: false, summary: step.failSummary };
+      }
+      continue;
+    }
+    // poll-health：任何一步失败都会中止后续步骤（restart-app 的公网拨测
+    // 只在本机健康通过后才执行，语义与原 if/else 实现一致）。
+    const ok = await pollHealth(steps, step.name, step.url, step.attempts ?? 10, step.intervalMs ?? 3_000);
+    if (!ok) return { ok: false, summary: step.failSummary };
   }
-  steps.push({ name: '剧本校验', ok: false, detail: `未知剧本 ${playbookId}` });
-  return { ok: false, summary: 'unknown_remediation_playbook' };
+  return { ok: true, summary: playbook.successSummary };
 }
 
 async function run(playbookId: string, trigger: RemediationTrigger, triggeredBy: string): Promise<void> {

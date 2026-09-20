@@ -7,18 +7,20 @@ import {
   type ServerUnaryCall,
 } from '@grpc/grpc-js';
 import {
+  ingestLogPayload,
   ingestMetricPayload,
   ingestTracePayload,
   principalFromGrpcMetadata,
   type OtlpIngestResult,
 } from './ai-ecosystem-routes.js';
 import {
+  logsServiceDefinition,
   metricsServiceDefinition,
   traceServiceDefinition,
 } from './ai-ecosystem-protobuf.js';
 
 type JsonObject = Record<string, unknown>;
-type OtlpResponse = { partialSuccess?: { rejectedSpans?: string; rejectedDataPoints?: string; errorMessage?: string } };
+type OtlpResponse = { partialSuccess?: { rejectedSpans?: string; rejectedDataPoints?: string; rejectedLogRecords?: string; errorMessage?: string } };
 
 function metadataValue(metadata: Metadata, key: string): string | Buffer | undefined {
   const value = metadata.get(key)[0];
@@ -84,9 +86,40 @@ async function exportMetrics(
       callback(grpcError(status.INVALID_ARGUMENT, 'invalid_otlp_metric_payload'));
       return;
     }
-    callback(null, { partialSuccess: {} });
+    callback(null, {
+      partialSuccess: {
+        rejectedDataPoints: String(result.rejected),
+        ...(result.rejected ? { errorMessage: 'Some metric points could not be persisted.' } : {}),
+      },
+    });
   } catch {
     callback(grpcError(status.UNAVAILABLE, 'otlp_metric_ingest_unavailable'));
+  }
+}
+
+async function exportLogs(
+  call: ServerUnaryCall<JsonObject, OtlpResponse>,
+  callback: sendUnaryData<OtlpResponse>,
+): Promise<void> {
+  const identity = identityForCall(call);
+  if (!identity) {
+    callback(grpcError(status.UNAUTHENTICATED, 'invalid_observability_token'));
+    return;
+  }
+  try {
+    const result = await ingestLogPayload(call.request, identity);
+    if (!result.valid) {
+      callback(grpcError(status.INVALID_ARGUMENT, 'invalid_otlp_log_payload'));
+      return;
+    }
+    callback(null, {
+      partialSuccess: {
+        rejectedLogRecords: String(result.rejectedRecords),
+        ...(result.rejectedRecords ? { errorMessage: 'Some log records were rejected by the low-sensitivity policy or storage limit.' } : {}),
+      },
+    });
+  } catch {
+    callback(grpcError(status.UNAVAILABLE, 'otlp_log_ingest_unavailable'));
   }
 }
 
@@ -103,6 +136,7 @@ export function startAiEcosystemGrpcServer(options: {
   const server = new Server();
   server.addService(traceServiceDefinition, { Export: exportTrace });
   server.addService(metricsServiceDefinition, { Export: exportMetrics });
+  server.addService(logsServiceDefinition, { Export: exportLogs });
   return new Promise((resolve, reject) => {
     server.bindAsync(`${host}:${options.port}`, ServerCredentials.createInsecure(), (error, port) => {
       if (error) {

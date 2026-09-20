@@ -214,9 +214,17 @@ export async function getOperatorMetrics(daysInput = 30): Promise<OperatorMetric
 
   // Token split by model.  The model column is optional during rolling
   // upgrades; a missing column degrades to "unconfigured" instead of failing
-  // the whole metrics response.
+  // the whole metrics response.  Prices are additive too: a price-table miss
+  // keeps token counts and simply hides cost.
   let modelTokens = emptyModelTokenMetrics(windowDays);
   try {
+    let prices;
+    try {
+      const { loadModelPriceMap } = await import('./model-prices-store.js');
+      prices = await loadModelPriceMap();
+    } catch {
+      prices = undefined;
+    }
     modelTokens = buildModelTokenMetrics(
       modelRuns.rows.map(
         (row): ModelTokenMetricRow => ({
@@ -227,6 +235,7 @@ export async function getOperatorMetrics(daysInput = 30): Promise<OperatorMetric
         }),
       ),
       windowDays,
+      prices,
     );
   } catch {
     modelTokens = emptyModelTokenMetrics(windowDays);

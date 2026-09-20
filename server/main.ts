@@ -23,6 +23,11 @@ import {
   recordExternalProbeReport,
   resolveProbeReportIdentity,
 } from './monitoring/external-probe-ingest.js';
+import {
+  parseDeviceHeartbeat,
+  recordDeviceHeartbeat,
+  resolveDeviceIdentity,
+} from './monitoring/device-registry.js';
 import { createTenant } from './monitoring/tenant-store.js';
 import { createOpsEventIngestRouter } from './monitoring/ops-event-ingest.js';
 import { createPublicObservabilityRouter } from './public-api/public-observability-routes.js';
@@ -103,6 +108,26 @@ app.post('/api/health/external-probe-report', async (req, res) => {
     res.status(202).json({ ok: true, tenant: identity.scopeId });
   } catch {
     res.status(503).json({ ok: false, error: 'probe_store_unavailable' });
+  }
+});
+// 边缘设备心跳摄取：独立 256-bit 设备 token（x-rdk-device-token），批量样本
+// 支持弱网补传（时间戳允许回填，见 device-registry.ts 的窗口约束）。
+app.post('/api/edge/heartbeat', async (req, res) => {
+  const deviceId = await resolveDeviceIdentity(req.header('x-rdk-device-token'));
+  if (!deviceId) {
+    res.status(401).json({ ok: false, error: 'invalid_device_token' });
+    return;
+  }
+  const heartbeat = parseDeviceHeartbeat(req.body);
+  if (!heartbeat || !heartbeat.samples.length) {
+    res.status(400).json({ ok: false, error: 'invalid_device_heartbeat' });
+    return;
+  }
+  try {
+    const result = await recordDeviceHeartbeat(deviceId, heartbeat, req.ip ?? '');
+    res.status(202).json({ ok: true, device: deviceId, accepted: result.accepted, serverTime: Date.now() });
+  } catch {
+    res.status(503).json({ ok: false, error: 'device_store_unavailable' });
   }
 });
 // 事件级埋点摄取：租户/平台 token 鉴权，逐条消毒去重后写 studio_ops_events。

@@ -1,0 +1,38 @@
+# RDK 边缘设备采集 agent 的 systemd 模板单元（templated unit，%i 为设备 ID）。
+#
+# 部署步骤（板端，root；先在本仓库配好服务端设备 token）：
+#   1. 同步脚本到板子：
+#        ssh root@<board> mkdir -p /opt/d-obs/tools
+#        scp tools/edge-agent.mjs root@<board>:/opt/d-obs/tools/edge-agent.mjs
+#   2. 创建设备 token 文件（64 位 hex，由 d-obs 服务端签发）：
+#        ssh root@<board> mkdir -p /var/lib/rdk-edge-agent
+#        ssh root@<board> 'umask 077; cat > /var/lib/rdk-edge-agent/device-token'
+#        # 粘贴 token 后 Ctrl-D；确认权限 600
+#   3. 写配置 /etc/default/rdk-edge-agent：
+#        RDK_OBS_REPORT_URL=https://<d-obs-host>        # 必配，d-obs 基址
+#        RDK_DEVICE_TOKEN_FILE=/var/lib/rdk-edge-agent/device-token  # 必配
+#        # 可选：RDK_DEVICE_ID / RDK_EDGE_MODEL / RDK_EDGE_FIRMWARE /
+#        #       RDK_EDGE_AGENT_INTERVAL_SECONDS / RDK_EDGE_OUTBOX_PATH
+#   4. 安装并启动：
+#        scp ops/edge-agent/rdk-edge-agent.service root@<board>:/etc/systemd/system/
+#        ssh root@<board> systemctl daemon-reload
+#        ssh root@<board> systemctl enable --now rdk-edge-agent@<device-id>
+#   验证：journalctl -u rdk-edge-agent@<device-id> -f   # 每轮一行 [edge-agent] 日志
+#
+# 同机多块板/多实例共用本模板与 /etc/default/rdk-edge-agent；个别实例需要
+# 覆盖配置时用 drop-in：/etc/systemd/system/rdk-edge-agent@<id>.service.d/env.conf
+
+[Unit]
+Description=RDK Edge Telemetry Agent (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# “-”前缀：配置文件不存在时不算失败（便于先装单元后补配置）
+EnvironmentFile=-/etc/default/rdk-edge-agent
+ExecStart=/usr/bin/env node /opt/d-obs/tools/edge-agent.mjs
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -5,9 +5,21 @@ type UpstreamMetric = {
   labels: Record<string, string>;
 };
 
+type HistogramData = {
+  bounds: number[];
+  counts: number[];
+  sum: number;
+  count: number;
+};
+
 const counters = new Map<string, number>();
 const upstreamMetrics = new Map<string, UpstreamMetric>();
+const histograms = new Map<string, HistogramData>();
 const MAX_UPSTREAM_SERIES = 256;
+const MAX_HISTOGRAMS = 128;
+
+/** OTLP 摄取耗时直方图默认分桶（毫秒）：快速路径与慢持久化路径都要看得到。 */
+export const DEFAULT_INGEST_BUCKETS_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
 
 const LABEL_ALIASES: Record<string, string> = {
   'service.name': 'service',
@@ -69,7 +81,13 @@ export function recordOtlpMetricIngest(accepted: number): void {
   increment('rdk_ai_otlp_metric_points_received_total', accepted);
 }
 
-export function recordOtlpRequestError(signal: 'traces' | 'metrics'): void {
+export function recordOtlpLogIngest(input: { received: number; accepted: number; rejected: number }): void {
+  increment('rdk_ai_otlp_log_records_received_total', input.received);
+  increment('rdk_ai_otlp_log_records_accepted_total', input.accepted);
+  increment('rdk_ai_otlp_log_records_rejected_total', input.rejected);
+}
+
+export function recordOtlpRequestError(signal: 'traces' | 'metrics' | 'logs'): void {
   increment(`rdk_ai_otlp_${signal}_request_errors_total`);
 }
 
@@ -85,29 +103,75 @@ export function recordUpstreamMetric(name: string, value: number, timestampMs = 
   upstreamMetrics.set(key, current);
 }
 
-function help(name: string, description: string, type: 'counter' | 'gauge'): string {
+/**
+ * prom-client 风格的累计直方图：观测值落入升序 bounds 的分桶（含隐式 +Inf），
+ * 并累计 _sum/_count。bounds 上限 32 个，超出或非有限值按默认桶处理。
+ */
+export function observeHistogram(
+  name: string,
+  value: number,
+  options: { buckets?: number[] } = {},
+): void {
+  if (!Number.isFinite(value)) return;
+  const normalizedName = metricName(name);
+  const bounds = (options.buckets ?? DEFAULT_INGEST_BUCKETS_MS)
+    .filter((bound) => Number.isFinite(bound) && bound > 0)
+    .slice(0, 32);
+  if (!histograms.has(normalizedName) && histograms.size >= MAX_HISTOGRAMS) return;
+  const current = histograms.get(normalizedName) ?? { bounds, counts: new Array<number>(bounds.length).fill(0), sum: 0, count: 0 };
+  if (current.bounds.length !== bounds.length) {
+    // bounds 来自固定常量，这里只防御调用方传不同长度的数组。
+    current.bounds = bounds;
+    current.counts = new Array<number>(bounds.length).fill(0);
+  }
+  for (let index = 0; index < current.bounds.length; index += 1) {
+    if (value <= current.bounds[index]) current.counts[index] += 1;
+  }
+  current.sum += value;
+  current.count += 1;
+  histograms.set(normalizedName, current);
+}
+
+function help(name: string, description: string, type: 'counter' | 'gauge' | 'histogram'): string {
   return `# HELP ${name} ${description}\n# TYPE ${name} ${type}`;
 }
 
+function escapeLabel(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+}
+
+const COUNTER_LINES: Array<[string, string]> = [
+  ['rdk_ai_otlp_spans_received_total', 'OTLP trace spans received by d-obs.'],
+  ['rdk_ai_otlp_spans_accepted_total', 'OTLP trace spans accepted by d-obs.'],
+  ['rdk_ai_otlp_spans_rejected_total', 'OTLP trace spans rejected by d-obs.'],
+  ['rdk_ai_otlp_runs_created_total', 'Runs materialized from OTLP trace ingestion.'],
+  ['rdk_ai_otlp_metric_points_received_total', 'OTLP metric data points received by d-obs.'],
+  ['rdk_ai_otlp_log_records_received_total', 'OTLP log records received by d-obs.'],
+  ['rdk_ai_otlp_log_records_accepted_total', 'OTLP log records accepted by d-obs.'],
+  ['rdk_ai_otlp_log_records_rejected_total', 'OTLP log records rejected by d-obs.'],
+  ['rdk_ai_otlp_traces_request_errors_total', 'OTLP trace requests rejected before ingestion.'],
+  ['rdk_ai_otlp_metrics_request_errors_total', 'OTLP metric requests rejected before ingestion.'],
+  ['rdk_ai_otlp_logs_request_errors_total', 'OTLP log requests rejected before ingestion.'],
+];
+
 /** Prometheus exposition format; names are bounded to avoid exporter cardinality surprises. */
 export function renderPrometheusMetrics(): string {
-  const lines = [
-    '# d-obs AI-native observability metrics',
-    help('rdk_ai_otlp_spans_received_total', 'OTLP trace spans received by d-obs.', 'counter'),
-    `rdk_ai_otlp_spans_received_total ${counters.get('rdk_ai_otlp_spans_received_total') ?? 0}`,
-    help('rdk_ai_otlp_spans_accepted_total', 'OTLP trace spans accepted by d-obs.', 'counter'),
-    `rdk_ai_otlp_spans_accepted_total ${counters.get('rdk_ai_otlp_spans_accepted_total') ?? 0}`,
-    help('rdk_ai_otlp_spans_rejected_total', 'OTLP trace spans rejected by d-obs.', 'counter'),
-    `rdk_ai_otlp_spans_rejected_total ${counters.get('rdk_ai_otlp_spans_rejected_total') ?? 0}`,
-    help('rdk_ai_otlp_runs_created_total', 'Runs materialized from OTLP trace ingestion.', 'counter'),
-    `rdk_ai_otlp_runs_created_total ${counters.get('rdk_ai_otlp_runs_created_total') ?? 0}`,
-    help('rdk_ai_otlp_metric_points_received_total', 'OTLP metric data points received by d-obs.', 'counter'),
-    `rdk_ai_otlp_metric_points_received_total ${counters.get('rdk_ai_otlp_metric_points_received_total') ?? 0}`,
-    help('rdk_ai_otlp_traces_request_errors_total', 'OTLP trace requests rejected before ingestion.', 'counter'),
-    `rdk_ai_otlp_traces_request_errors_total ${counters.get('rdk_ai_otlp_traces_request_errors_total') ?? 0}`,
-    help('rdk_ai_otlp_metrics_request_errors_total', 'OTLP metric requests rejected before ingestion.', 'counter'),
-    `rdk_ai_otlp_metrics_request_errors_total ${counters.get('rdk_ai_otlp_metrics_request_errors_total') ?? 0}`,
-  ];
+  const lines = ['# d-obs AI-native observability metrics'];
+  for (const [name, description] of COUNTER_LINES) {
+    lines.push(help(name, description, 'counter'));
+    lines.push(`${name} ${counters.get(name) ?? 0}`);
+  }
+  for (const [name, histogram] of [...histograms.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    lines.push(help(name, `Observations for ${name}.`, 'histogram'));
+    let cumulative = 0;
+    for (let index = 0; index < histogram.bounds.length; index += 1) {
+      cumulative = histogram.counts[index];
+      lines.push(`${name}_bucket{le="${histogram.bounds[index]}"} ${cumulative}`);
+    }
+    lines.push(`${name}_bucket{le="+Inf"} ${histogram.count}`);
+    lines.push(`${name}_sum ${histogram.sum}`);
+    lines.push(`${name}_count ${histogram.count}`);
+  }
   const renderedNames = new Set<string>();
   for (const [key, metric] of [...upstreamMetrics.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const name = key.split('\u0000', 1)[0] || 'unknown';
@@ -119,7 +183,7 @@ export function renderPrometheusMetrics(): string {
     }
     const labels = Object.entries(metric.labels)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([label, value]) => `${label}="${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`)
+      .map(([label, value]) => `${label}="${escapeLabel(value)}"`)
       .join(',');
     const suffix = labels ? `{${labels}}` : '';
     lines.push(`${exported}${suffix} ${Number.isFinite(metric.value) ? metric.value : 0}`);
@@ -131,4 +195,5 @@ export function renderPrometheusMetrics(): string {
 export function resetAiEcosystemMetricsForTest(): void {
   counters.clear();
   upstreamMetrics.clear();
+  histograms.clear();
 }
