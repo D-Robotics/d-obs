@@ -361,37 +361,38 @@ export async function queryDeviceSamples(
 ): Promise<DeviceSamplePoint[]> {
   const p = await pool();
   await ensureSchema(p);
-  const result = await p.query(
-    `select ts_ms, metrics from public.studio_device_samples
-     where device_id = $1 and ts_ms >= $2 and ts_ms <= $3
-     order by ts_ms
-     limit 50000`,
-    [cleanText(deviceId, 64), Math.trunc(options.fromMs), Math.trunc(options.toMs)],
-  );
   const maxPoints = Math.max(20, Math.min(500, Math.floor(options.maxPoints ?? 240)));
   const bucketMs = Math.max(1, Math.ceil((options.toMs - options.fromMs) / maxPoints));
-  const buckets = new Map<number, { sum: Record<string, number>; count: number }>();
-  for (const row of result.rows) {
-    const tsMs = Number(row.ts_ms);
-    if (!Number.isFinite(tsMs)) continue;
-    const bucket = Math.floor(tsMs / bucketMs) * bucketMs;
-    const current = buckets.get(bucket) ?? { sum: {}, count: 0 };
+  // 键级均值聚合下推到 SQL：jsonb_each_text 展开 → 按（桶,键）avg → jsonb_object_agg
+  // 还原。设备样本每行最多 32 个键，原始行先截断在 20000，组合键数有界。
+  const result = await p.query(
+    `with raw as (
+       select (floor(ts_ms / $2::bigint) * $2::bigint)::bigint as b, metrics
+         from public.studio_device_samples
+        where device_id = $1 and ts_ms >= $3 and ts_ms <= $4
+        order by ts_ms
+        limit 20000
+     ), pairs as (
+       select raw.b, kv.key as metric_key, avg(kv.value::double precision) as metric_value
+         from raw cross join lateral jsonb_each_text(raw.metrics) as kv(key, value)
+        where kv.value ~ '^-?[0-9]+(\\.[0-9]+)?([eE][-+]?[0-9]+)?$'
+        group by raw.b, kv.key
+     )
+     select b as bucket_ts, jsonb_object_agg(metric_key, round(metric_value::numeric, 6)) as metrics
+       from pairs
+      group by b
+      order by b`,
+    [cleanText(deviceId, 64), bucketMs, Math.trunc(options.fromMs), Math.trunc(options.toMs)],
+  );
+  return result.rows.map((row) => {
     const metrics = parseLabels(row.metrics);
+    const points: Record<string, number> = {};
     for (const [key, value] of Object.entries(metrics)) {
-      if (typeof value !== 'number') continue;
-      current.sum[key] = (current.sum[key] ?? 0) + value;
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) points[key] = numeric;
     }
-    current.count += 1;
-    buckets.set(bucket, current);
-  }
-  return [...buckets.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([ts, entry]) => ({
-      ts,
-      metrics: Object.fromEntries(
-        Object.entries(entry.sum).map(([key, sum]) => [key, Math.round((sum / entry.count) * 1e6) / 1e6]),
-      ),
-    }));
+    return { ts: Number(row.bucket_ts), metrics: points };
+  });
 }
 
 /** 签发时的明文 token 常量时间自检（仅测试与自检用）。 */

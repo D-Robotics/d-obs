@@ -17,6 +17,17 @@ const upstreamMetrics = new Map<string, UpstreamMetric>();
 const histograms = new Map<string, HistogramData>();
 const MAX_UPSTREAM_SERIES = 256;
 const MAX_HISTOGRAMS = 128;
+let signalQueueDepth = 0;
+let signalQueueDroppedSeen = 0;
+
+/** 异步落库队列指标（由 metrics-store 摄取路径回调：depth 为当前深度，dropped 为累计值，内部换算增量）。 */
+export function recordMetricQueueGauges(depth: number, droppedTotal: number): void {
+  signalQueueDepth = Math.max(0, Math.floor(depth));
+  if (Number.isFinite(droppedTotal) && droppedTotal > signalQueueDroppedSeen) {
+    increment('rdk_observability_metric_queue_dropped_total', droppedTotal - signalQueueDroppedSeen);
+    signalQueueDroppedSeen = droppedTotal;
+  }
+}
 
 /** OTLP 摄取耗时直方图默认分桶（毫秒）：快速路径与慢持久化路径都要看得到。 */
 export const DEFAULT_INGEST_BUCKETS_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
@@ -152,6 +163,7 @@ const COUNTER_LINES: Array<[string, string]> = [
   ['rdk_ai_otlp_traces_request_errors_total', 'OTLP trace requests rejected before ingestion.'],
   ['rdk_ai_otlp_metrics_request_errors_total', 'OTLP metric requests rejected before ingestion.'],
   ['rdk_ai_otlp_logs_request_errors_total', 'OTLP log requests rejected before ingestion.'],
+  ['rdk_observability_metric_queue_dropped_total', 'OTLP metric points dropped because the async persistence queue was full or the store failed repeatedly.'],
 ];
 
 /** Prometheus exposition format; names are bounded to avoid exporter cardinality surprises. */
@@ -172,6 +184,8 @@ export function renderPrometheusMetrics(): string {
     lines.push(`${name}_sum ${histogram.sum}`);
     lines.push(`${name}_count ${histogram.count}`);
   }
+  lines.push(help('rdk_observability_metric_queue_depth', 'Current depth of the async OTLP metric persistence queue.', 'gauge'));
+  lines.push(`rdk_observability_metric_queue_depth ${signalQueueDepth}`);
   const renderedNames = new Set<string>();
   for (const [key, metric] of [...upstreamMetrics.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const name = key.split('\u0000', 1)[0] || 'unknown';

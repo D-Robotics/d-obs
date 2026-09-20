@@ -32,6 +32,7 @@ import { createTenant } from './monitoring/tenant-store.js';
 import { createOpsEventIngestRouter } from './monitoring/ops-event-ingest.js';
 import { createPublicObservabilityRouter } from './public-api/public-observability-routes.js';
 import { createAiEcosystemRouter } from './observability/ai-ecosystem-routes.js';
+import { flushMetricQueueNow } from './observability/ai-ecosystem-metrics-store.js';
 import { startConfiguredAiEcosystemGrpcServer, type AiEcosystemGrpcRuntime } from './observability/ai-ecosystem-grpc.js';
 import { startTelemetryGovernanceRuntime } from './observability/governance-runtime-service.js';
 import { resolveTrustProxySetting } from './trusted-proxy.js';
@@ -160,6 +161,10 @@ void startConfiguredAiEcosystemGrpcServer()
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     grpcRuntime?.server.forceShutdown();
-    server.close(() => process.exit(0));
+    server.close(async () => {
+      // 退出前把异步指标队列刷完（有上限，防卡死退出）。
+      await flushMetricQueueNow().catch(() => undefined);
+      process.exit(0);
+    });
   });
 }

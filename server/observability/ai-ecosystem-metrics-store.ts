@@ -131,6 +131,92 @@ export function maybeCleanupExpiredMetricSamples(): void {
     .catch(() => undefined);
 }
 
+// ===== 有界写队列：OTLP metrics 摄取不等 DB，按批异步落库 =====
+// 摄取路径 enqueue（满则丢弃并计数）；每 5s 或显式触发时按 owner 分组批量写。
+// DB 故障时批次回灌队首，超过容量丢最旧——语义与主流指标管线的 fire-and-forget
+// 一致：响应里的 partialSuccess 不再反映落库失败，丢失量通过 /metrics 的
+// dropped/depth 指标暴露。
+
+type QueuedPoint = { owner: string; point: PersistMetricPoint };
+
+const metricQueue: QueuedPoint[] = [];
+const METRIC_QUEUE_CAPACITY = 8_192;
+const METRIC_FLUSH_BATCH = 2_000;
+const METRIC_FLUSH_INTERVAL_MS = 5_000;
+let metricQueueDropped = 0;
+let metricFlushTimer: NodeJS.Timeout | null = null;
+let metricFlushing = false;
+
+export function enqueueMetricPoints(owner: string, points: PersistMetricPoint[]): number {
+  let dropped = 0;
+  for (const point of points) {
+    if (!Number.isFinite(point.value)) {
+      dropped += 1;
+      continue;
+    }
+    if (metricQueue.length >= METRIC_QUEUE_CAPACITY) {
+      metricQueue.shift();
+      metricQueueDropped += 1;
+      dropped += 1;
+    }
+    metricQueue.push({ owner, point });
+  }
+  scheduleMetricFlush();
+  return dropped;
+}
+
+export function metricQueueDepth(): number {
+  return metricQueue.length;
+}
+
+export function metricQueueDroppedTotal(): number {
+  return metricQueueDropped;
+}
+
+async function flushMetricQueueOnce(): Promise<void> {
+  if (metricFlushing || !metricQueue.length) return;
+  metricFlushing = true;
+  const batch = metricQueue.splice(0, METRIC_FLUSH_BATCH);
+  try {
+    const byOwner = new Map<string, PersistMetricPoint[]>();
+    for (const item of batch) {
+      const current = byOwner.get(item.owner) ?? [];
+      current.push(item.point);
+      byOwner.set(item.owner, current);
+    }
+    for (const [owner, points] of byOwner) await persistMetricPoints(owner, points);
+  } catch {
+    // 写失败整批回灌队首（保序），容量不足丢最旧。
+    metricQueue.unshift(...batch);
+    while (metricQueue.length > METRIC_QUEUE_CAPACITY) {
+      metricQueue.shift();
+      metricQueueDropped += 1;
+    }
+  } finally {
+    metricFlushing = false;
+  }
+}
+
+function scheduleMetricFlush(): void {
+  if (metricFlushTimer) return;
+  metricFlushTimer = setInterval(() => {
+    void flushMetricQueueOnce().catch(() => undefined);
+  }, METRIC_FLUSH_INTERVAL_MS);
+  metricFlushTimer.unref?.();
+}
+
+/** 优雅退出与测试用：把队列里的存量点刷到存储（失败保持入队，由调用方决定重试）。 */
+export async function flushMetricQueueNow(): Promise<void> {
+  for (let guard = 0; guard < 8 && metricQueue.length; guard += 1) {
+    await flushMetricQueueOnce();
+  }
+}
+
+export function resetAiEcosystemMetricQueueForTest(): void {
+  metricQueue.length = 0;
+  metricQueueDropped = 0;
+}
+
 export async function persistMetricPoints(owner: string, points: PersistMetricPoint[]): Promise<number> {
   if (!points.length) return 0;
   const p = await pool();
@@ -227,8 +313,11 @@ export async function queryMetricRanges(options: MetricRangeQuery): Promise<Metr
   const fromMs = Math.trunc(options.fromMs);
   const toMs = Math.trunc(options.toMs);
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return [];
+  const maxPoints = Math.max(20, Math.min(500, Math.floor(options.maxPoints ?? 200)));
+  const bucketMs = Math.max(1, Math.ceil((toMs - fromMs) / maxPoints));
+  // 桶聚合下推到 SQL（floor(ts/bucket) + avg），避免把最多 5 万行原始样本拉到进程内。
   const conditions: string[] = ['m.ts_ms >= $1', 'm.ts_ms <= $2'];
-  const params: unknown[] = [fromMs, toMs];
+  const params: unknown[] = [fromMs, toMs, bucketMs];
   if (options.owner) {
     params.push(options.owner);
     conditions.push(`s.owner = $${params.length}`);
@@ -238,16 +327,17 @@ export async function queryMetricRanges(options: MetricRangeQuery): Promise<Metr
     conditions.push(`s.metric = $${params.length}`);
   }
   const result = await p.query(
-    `select s.series_id, s.metric, s.labels, m.ts_ms, m.value
+    `select s.series_id, s.metric, s.labels,
+            (floor(m.ts_ms / $3::bigint) * $3::bigint)::bigint as bucket_ts,
+            avg(m.value) as bucket_value
        from public.studio_observability_metric_series s
        join public.studio_observability_metric_samples m on m.series_id = s.series_id
        where ${conditions.join(' and ')}
-       order by s.series_id, m.ts_ms
-       limit 50000`,
+       group by s.series_id, s.metric, s.labels, bucket_ts
+       order by s.series_id, bucket_ts
+       limit 20000`,
     params,
   );
-  const maxPoints = Math.max(20, Math.min(500, Math.floor(options.maxPoints ?? 200)));
-  const bucketMs = Math.max(1, Math.ceil((toMs - fromMs) / maxPoints));
   const grouped = new Map<number, MetricRangeSeries>();
   for (const row of result.rows) {
     const seriesId = Number(row.series_id);
@@ -256,17 +346,9 @@ export async function queryMetricRanges(options: MetricRangeQuery): Promise<Metr
       entry = { seriesId, metric: String(row.metric ?? ''), labels: parseLabels(row.labels), bucketMs, points: [] };
       grouped.set(seriesId, entry);
     }
-    const tsMs = Number(row.ts_ms);
-    const value = Number(row.value);
-    if (!Number.isFinite(tsMs) || !Number.isFinite(value)) continue;
-    const bucket = Math.floor(tsMs / bucketMs) * bucketMs;
-    const last = entry.points.at(-1);
-    if (last && last.ts === bucket) {
-      // 同桶均值降采样：增量平均。
-      last.value = last.value + (value - last.value) / 2;
-    } else {
-      entry.points.push({ ts: bucket, value });
-    }
+    const ts = Number(row.bucket_ts);
+    const value = Number(row.bucket_value);
+    if (Number.isFinite(ts) && Number.isFinite(value)) entry.points.push({ ts, value });
   }
   return [...grouped.values()];
 }

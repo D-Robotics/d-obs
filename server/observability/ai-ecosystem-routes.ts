@@ -17,9 +17,10 @@ import {
   normalizeMetricLabels,
   renderPrometheusMetrics,
   observeHistogram,
+  recordMetricQueueGauges,
 } from './ai-ecosystem-metrics.js';
 import { insertLogRecords, type NormalizedLogRecord } from './ai-ecosystem-logs-store.js';
-import { persistMetricPoints } from './ai-ecosystem-metrics-store.js';
+import { enqueueMetricPoints, metricQueueDepth, metricQueueDroppedTotal } from './ai-ecosystem-metrics-store.js';
 import { decodeLogsProtobuf, decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
 
 export type Principal = { owner: string; keyId: string };
@@ -433,14 +434,11 @@ export async function ingestMetricPayload(body: JsonObject, identity: Principal)
     return { valid: false, accepted: 0, rejected: 0, runs: 0 };
   }
   for (const point of points) recordUpstreamMetric(point.name, point.value, point.timestampMs, point.labels);
-  // 内存 gauge 只承担 /metrics 当前值；持久化失败会计入 rejected 并通过
-  // partialSuccess 暴露，不阻断摄取路径。
-  let rejected = 0;
-  try {
-    await persistMetricPoints(identity.owner, points);
-  } catch {
-    rejected = points.length;
-  }
+  // 内存 gauge 承担 /metrics 当前值；落库走有界异步队列（5s 批量 flush），
+  // 摄取延迟不再包含 DB。入队即视为接受，容量丢弃计入 rejected 并在
+  // rdk_observability_metric_queue_dropped_total 暴露。
+  const rejected = enqueueMetricPoints(identity.owner, points);
+  recordMetricQueueGauges(metricQueueDepth(), metricQueueDroppedTotal());
   recordOtlpMetricIngest(points.length);
   return { valid: true, accepted: points.length - rejected, rejected, runs: 0 };
 }
