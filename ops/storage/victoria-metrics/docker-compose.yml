@@ -1,0 +1,77 @@
+services:
+  vmstorage-a:
+    image: victoriametrics/vmstorage:v1.150.0-cluster
+    container_name: d-obs-vmstorage-a
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=90d
+      - -vminsertAddr=:8400
+      - -vmselectAddr=:8401
+      - -httpListenAddr=:8482
+      - -memory.allowedPercent=25
+      - -storage.minFreeDiskSpaceBytes=20GB
+    volumes:
+      - /var/lib/d-obs/victoria-metrics/a:/storage
+    networks: [d-obs-metrics]
+    expose: [8400, 8401, 8482]
+    ports:
+      - 127.0.0.1:8482:8482
+
+  vmstorage-b:
+    image: victoriametrics/vmstorage:v1.150.0-cluster
+    container_name: d-obs-vmstorage-b
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=90d
+      - -vminsertAddr=:8400
+      - -vmselectAddr=:8401
+      - -httpListenAddr=:8482
+      - -memory.allowedPercent=25
+      - -storage.minFreeDiskSpaceBytes=20GB
+    volumes:
+      - /var/lib/d-obs/victoria-metrics/b:/storage
+    networks: [d-obs-metrics]
+    expose: [8400, 8401, 8482]
+    ports:
+      - 127.0.0.1:8483:8482
+
+  vminsert:
+    image: victoriametrics/vminsert:v1.150.0-cluster
+    container_name: d-obs-vminsert
+    restart: unless-stopped
+    command:
+      - -storageNode=vmstorage-a:8400,vmstorage-b:8400
+      - -replicationFactor=2
+      - -httpListenAddr=:8480
+      - -memory.allowedPercent=10
+    depends_on:
+      - vmstorage-a
+      - vmstorage-b
+    networks: [d-obs-metrics]
+    ports:
+      - 127.0.0.1:8480:8480
+      - 127.0.0.1:8484:8480
+
+  vmselect:
+    image: victoriametrics/vmselect:v1.150.0-cluster
+    container_name: d-obs-vmselect
+    restart: unless-stopped
+    command:
+      - -storageNode=vmstorage-a:8401,vmstorage-b:8401
+      - -replicationFactor=2
+      - -dedup.minScrapeInterval=15s
+      - -httpListenAddr=:8481
+      - -memory.allowedPercent=10
+    depends_on:
+      - vmstorage-a
+      - vmstorage-b
+    networks: [d-obs-metrics]
+    ports:
+      - 127.0.0.1:8481:8481
+      - 127.0.0.1:8485:8481
+
+networks:
+  d-obs-metrics:
+    name: d-obs-metrics

@@ -121,6 +121,19 @@ node tools/edge-agent.mjs          # 每分钟采集 CPU/内存/温度/磁盘/BP
 
 弱网时样本缓冲在设备本地 `outbox.jsonl`，恢复后自动补传（回填窗口 7 天）。
 
+如果板子可通过 SSH 访问，可以使用仓库里的 bootstrap 脚本完成注册、token 下发、systemd
+安装和首次启动：
+
+```bash
+ops/edge-agent/bootstrap.sh \
+  --board <board-ip> --device-id rdk-x5-01 --model X5 \
+  --admin-token "$RDK_CREDITS_ADMIN_TOKEN"
+```
+
+脚本不会把设备 token 写进仓库；token 只在服务端一次性响应和板端 `0600` 文件中出现。
+启动后用 `journalctl -u rdk-edge-agent@rdk-x5-01.service` 检查首轮心跳，再在工作台的
+“边缘设备”页面确认在线。
+
 ## Phoenix 与 Langfuse
 
 Phoenix 的 tracing collector 使用 OTLP，因此把 exporter endpoint 指向

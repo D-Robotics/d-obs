@@ -58,3 +58,9 @@ RDK 板端使用仓库中的 `tools/edge-agent.mjs` 和
 同一组查询结果里。
 如果给 `/metrics` 设置 `RDK_OBSERVABILITY_METRICS_TOKEN`，需要同时在 scrape 配置里增加
 `authorization` header，并避免把 token 提交到仓库。
+
+Prometheus 同时把样本 `remote_write` 到 `ops/storage/victoria-metrics/` 定义的
+VictoriaMetrics Cluster。生产部署使用两个 `vmstorage` 副本（90 天保留，复制因子 2），
+用于承接 Prometheus 重启、滚动升级和本地 TSDB 损坏后的长期查询；长期 PromQL 入口为本机
+`127.0.0.1:8481/select/0/prometheus/api/v1/query`。Prometheus UI 仍是默认入口，避免把
+存储集群直接暴露给公网。
