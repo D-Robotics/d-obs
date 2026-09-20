@@ -448,11 +448,65 @@ function normalizedCatalogName(value: unknown): string {
 }
 
 /**
- * 可选的数据库面板表白名单（`RDK_DB_PANEL_TABLES`）。
+ * 数据库面板默认表白名单（内容与 ops/db-panel-allowlist.txt 一致，防漂移测试兜底）。
  *
- * 未配置 = 不限制（与历史行为一致，面板可浏览中心库全部表）。配置后只允许
- * 名单内的表被列出/查看/导出，用来收敛「admin token ≈ 共用中心库整库只读」
- * 这个面：例如只放可观测相关表 `RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_ops_events`。
+ * 为什么内嵌而不是运行时读 ops/：部署产物只带 dist，不带 ops/，默认收敛必须随代码走。
+ * 为什么默认收紧：面板未设限时 admin token ≈ 共用中心库整库只读（含主站凭据表
+ * credit_user_key、redemption_code 等），与本平台其余配置面的 fail-closed 姿态相悖。
+ * 需要整库可见时显式设 `RDK_DB_PANEL_TABLES='*'`。
+ */
+export const DEFAULT_POSTGRES_DASHBOARD_TABLES: readonly string[] = [
+  'agent_evolution_candidates',
+  'agent_run_observability',
+  'agent_run_records',
+  'conversation_turns',
+  'studio_alert_checks',
+  'studio_alert_configuration_audit',
+  'studio_alert_incident_activity',
+  'studio_alert_incidents',
+  'studio_alert_maintenance_windows',
+  'studio_alert_notifications',
+  'studio_alert_worker_status',
+  'studio_daily_usage',
+  'studio_device_samples',
+  'studio_devices',
+  'studio_evolution_runs',
+  'studio_evolution_worker_status',
+  'studio_experience_summaries',
+  'studio_external_probe_status',
+  'studio_north_star_snapshots',
+  'studio_obs_dashboard_panels',
+  'studio_obs_tenant_members',
+  'studio_obs_tenants',
+  'studio_observability_actions',
+  'studio_observability_logs',
+  'studio_observability_metric_samples',
+  'studio_observability_metric_series',
+  'studio_model_prices',
+  'studio_ops_events',
+  'studio_ops_events_tenant',
+  'studio_public_observability_feedback',
+  'studio_public_observability_scores',
+  'studio_remediation_runs',
+  'studio_sli_samples',
+  'studio_telemetry_audit',
+  'studio_telemetry_deletion_ledger',
+  'studio_telemetry_payload_grants',
+  'studio_telemetry_payloads',
+  'studio_telemetry_tombstones',
+  'studio_trace_backend_mappings',
+  'studio_trace_ingestion_receipts',
+  'studio_trace_span_conflicts',
+  'studio_trace_spans',
+];
+
+/**
+ * 数据库面板表白名单（`RDK_DB_PANEL_TABLES`）。
+ *
+ * 未配置 = 内置默认白名单（`DEFAULT_POSTGRES_DASHBOARD_TABLES`，与
+ * ops/db-panel-allowlist.txt 同步）：只允许可观测相关表被列出/查看/导出，收敛
+ * 「admin token ≈ 共用中心库整库只读」这个面。显式设 `*` 恢复整库可见（历史行为）；
+ * 设具体名单则完全按名单放行，例如 `RDK_DB_PANEL_TABLES=studio_alert_incidents,studio_ops_events`。
  *
  * 条目写法：`table`（默认 public schema）或 `schema.table`，逗号/空白分隔。
  * 判定大小写不敏感（Postgres 未加引号的标识符会折叠为小写）。
@@ -461,7 +515,12 @@ export function postgresDashboardTableAllowlist(
   env: Record<string, string | undefined> = process.env,
 ): Set<string> {
   const raw = String(env.RDK_DB_PANEL_TABLES ?? '').trim();
-  if (!raw) return new Set();
+  if (!raw) {
+    return new Set(
+      DEFAULT_POSTGRES_DASHBOARD_TABLES.map((value) => `public.${value}`.toLowerCase()),
+    );
+  }
+  if (raw === '*') return new Set();
   const entries = raw
     .split(/[\s,]+/)
     .map((value) => value.trim())
@@ -470,7 +529,7 @@ export function postgresDashboardTableAllowlist(
   return new Set(entries);
 }
 
-/** 未配置白名单时全部放行；配置后只放行名单内的 `schema.table`。 */
+/** 白名单生效时只放行名单内的 `schema.table`（`*` 或空默认集 = 全部放行）。 */
 export function isPostgresDashboardTableAllowed(
   schemaName: unknown,
   tableName: unknown,

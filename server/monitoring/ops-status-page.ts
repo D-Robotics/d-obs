@@ -7,6 +7,7 @@
  * webhook、token、租户键或任何人的身份。
  */
 import { getOpsObservabilityPool } from './observability-store.js';
+import { escapeHtml } from './observability-html.js';
 
 /** 供路由与测试复用的入口：取共享池 → 聚合 → 渲染（一次调用完成）。 */
 export async function renderStatusPage(): Promise<string> {
@@ -66,12 +67,6 @@ function incidentSummary(value: unknown): string {
     .replace(/https?:\/\/\S+/gi, '[url]')
     .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[email]');
   return bounded(cleaned, 240);
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value ?? '').replace(/[&<>"']/g, (character) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>
-  )[character] ?? character);
 }
 
 function statusLabel(value: unknown): string {
@@ -143,14 +138,6 @@ export async function getStatusPageData(p: QueryPool): Promise<StatusPageData> {
 }
 
 export function renderStatusPageHtml(data: StatusPageData): string {
-  const escapeHtml = (value: unknown): string =>
-    String(value ?? '').replace(
-      /[&<>"']/g,
-      (c) =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
-          c
-        ] ?? c,
-    );
   const statusLabel = (s: string): string =>
     ({ open: '进行中', acknowledged: '已确认', silenced: '已静默' })[s] ?? s;
   const fmtTime = (v: string | null): string => {
@@ -191,7 +178,7 @@ a{color:inherit}
 <div class="sub">d-obs · 每分钟自动巡检 · 本页为公开只读视图（不含配置与用户数据）</div>
 <div class="card">
   <div class="row"><span class="dot ${data.worker.alive ? 'ok' : 'down'}"></span><span class="label">${data.worker.alive ? '巡检系统正常' : '巡检心跳超时'}</span></div>
-  <div class="note">${data.worker.lastCheckedAt ? '最近评估：' + new Date(data.worker.lastCheckedAt).toLocaleString('zh-CN') : '尚无巡检记录'}${data.worker.workerVersion ? ' · Worker v' + data.worker.workerVersion : ''}</div>
+  <div class="note">${data.worker.lastCheckedAt ? '最近评估：' + new Date(data.worker.lastCheckedAt).toLocaleString('zh-CN') : '尚无巡检记录'}${data.worker.workerVersion ? ' · Worker v' + escapeHtml(data.worker.workerVersion) : ''}</div>
 </div>
 <div class="card">
   <div class="row"><span class="dot ${data.checks.firing > 0 ? 'warn' : 'ok'}"></span><span class="label">健康检查 ${data.checks.healthy}/${data.checks.total - data.checks.disabled} 项正常</span></div>

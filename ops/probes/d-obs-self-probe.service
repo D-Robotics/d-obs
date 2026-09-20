@@ -1,0 +1,16 @@
+[Unit]
+Description=d-obs self watchdog probe (runs on a host DIFFERENT from the d-obs server)
+After=network-online.target
+
+[Service]
+Type=oneshot
+# 关键：本单元必须部署在与 d-obs 生产主机不同的机器上，否则平台宕机时看门狗一起死。
+# /etc/d-obs-self-probe.env 至少需要：
+#   RDK_OBS_SELF_PROBE_TARGET=https://<d-obs 对外地址>
+#   RDK_OBS_SELF_PROBE_FEISHU_WEBHOOK=<飞书机器人 webhook>   # 或 RDK_OBS_SELF_PROBE_WEBHOOK_URL
+# 可选：RDK_OBS_SELF_PROBE_REPORT_URL + RDK_OBS_SELF_PROBE_TOKEN_FILE（顺手上报仪表盘）
+#       RDK_OBS_SELF_PROBE_STATE_FILE（默认 /var/lib/d-obs-self-probe/state.json）
+EnvironmentFile=/etc/d-obs-self-probe.env
+# 看门狗机独立布局：node 二进制与脚本都在 /opt/d-obs-watchdog/（node 可从
+# 生产机 /opt/node-v22.19.0-linux-x64/bin/node 复制，glibc 兼容时直接可用）。
+ExecStart=/opt/d-obs-watchdog/bin/node /opt/d-obs-watchdog/obs-self-probe.mjs

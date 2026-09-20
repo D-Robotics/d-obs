@@ -1,0 +1,47 @@
+// d-obs 风险关系图（当前状态，2026-09-20）
+// 节点 = 风险（F1-F8）与其影响的资产/质量属性；边 = 影响/放大关系
+// 再生成：dot -Tsvg risk-map.dot -o risk-map.svg
+digraph risk_map {
+  rankdir=TB;
+  graph [label="d-obs 风险关系图（risk-quality-reviewer，2026-09-20）\n红色=高严重度，橙色=中，黄色=低；证据见 architecture-review.md 发现清单", labelloc=t, fontsize=11, fontname="Helvetica"];
+  node [shape=box, style="rounded,filled", fontsize=10, fontname="Helvetica"];
+  edge [fontsize=9, fontname="Helvetica", color="#666666"];
+
+  // 资产/能力
+  subgraph cluster_assets {
+    label="受影响资产 / 质量属性";
+    style=dashed; color="#999999";
+    alerting [label="告警与投递能力", shape=ellipse, fillcolor="#f5f5f5"];
+    evidence [label="事故/审计/租户数据\n（唯一真源，不可重建）", shape=cylinder, fillcolor="#f5f5f5"];
+    maindb [label="主站共用中心库\n（凭据/商业表）", shape=cylinder, fillcolor="#f5f5f5"];
+    availability [label="平台可用性", shape=ellipse, fillcolor="#f5f5f5"];
+    trust [label="多租户信任边界", shape=ellipse, fillcolor="#f5f5f5"];
+    velocity [label="演进速度 / 拆仓路径", shape=ellipse, fillcolor="#f5f5f5"];
+  }
+
+  // 风险
+  F1 [label="F1 单机共域故障\nWeb+Worker+PG+Prom\netheus+nginx 同机\n（无外部看门狗）", fillcolor="#f8cecc"];
+  F2 [label="F2 备份/DR 无证据\n（待生产核实）", fillcolor="#f8cecc"];
+  F3 [label="F3 密钥兜底链\n轮换耦合", fillcolor="#ffe6cc"];
+  F4 [label="F4 DB 面板默认\n整库可读（fail-open）", fillcolor="#ffe6cc"];
+  F5 [label="F5 手拼 HTML\n转义未系统化\n（待验证）", fillcolor="#ffe6cc"];
+  F6 [label="F6 UI 层零回归测试", fillcolor="#ffe6cc"];
+  F7 [label="F7 observability-routes.ts\n2015 行热点", fillcolor="#ffe6cc"];
+  F8 [label="F8 D-010 Phase 3/4\n（影子双跑）未完成", fillcolor="#fff2cc"];
+
+  // 外因
+  hostFail [label="主机故障 /\n机房故障 / 误操作", shape=hexagon, fillcolor="#f8cecc"];
+
+  hostFail -> F1 [label="触发"];
+  F1 -> alerting [label="告警者与被观测者同时消失"];
+  F1 -> availability [label="单点"];
+  F1 -> F2 [label="放大：故障时无备用副本", style=dashed];
+  F2 -> evidence [label="数据丢失不可恢复"];
+  F3 -> evidence [label="轮换后 locator/审计引用失效"];
+  F4 -> maindb [label="admin token 可导出凭据表"];
+  F4 -> trust [label="横向越过租户隔离"];
+  F5 -> trust [label="（若存在插值漏洞）", style=dashed];
+  F6 -> F5 [label="回归无网，问题更晚发现"];
+  F7 -> velocity [label="变更影响集中，改一处动全身"];
+  F8 -> velocity [label="拆仓门槛缺双跑证据"];
+}

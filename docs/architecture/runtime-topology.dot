@@ -1,0 +1,55 @@
+// d-obs 运行拓扑（生产，当前状态）
+// 再生成：dot -Tsvg runtime-topology.dot -o runtime-topology.svg
+digraph runtime_topology {
+  rankdir=TB;
+  graph [label="d-obs 运行拓扑（生产，当前状态）\n来源：ops/deploy.sh、ops/prometheus/prometheus.yml、ops/probes、ops/retention、server/main.ts、server/trusted-proxy.ts", labelloc=t, fontsize=11, fontname="Helvetica"];
+  node [shape=box, style="rounded,filled", fillcolor="#eef2f7", fontsize=10, fontname="Helvetica"];
+  edge [fontsize=9, fontname="Helvetica", color="#555555"];
+
+  subgraph cluster_dev {
+    label="开发机（发布来源）";
+    style=dashed;
+    deploy [label="ops/deploy.sh\n构建 → tar 打包 → scp → sha256 双向校验\n→ 解压 releases/ → 硬链 node_modules\n→ 软链切换 → systemctl restart → 健康检查\n失败自动回滚上一 release", fillcolor="#fdf6e3"];
+  }
+
+  subgraph cluster_prod {
+    label="生产主机 47.110.142.255（systemd 管理，/opt/d-obs）";
+    style=solid;
+    color="#888888";
+
+    nginx [label="nginx 反向代理\n（信任回环 XFF；server/trusted-proxy.ts）", shape=box, fillcolor="#e8f0fe"];
+    web [label="d-obs Web 服务进程\nsystemd 单元：d-obs\n监听 127.0.0.1:18093\n入口：dist/server/main.js\n含治理运行时 + 可选 OTLP/gRPC receiver", shape=box, fillcolor="#d5e8d4"];
+    releases [label="/opt/d-obs/releases/<tag>-<时间戳>\ncurrent → 最新健康 release（软链）", shape=folder, fillcolor="#f5f5f5"];
+    worker [label="告警评估 Worker\n独立进程（studio-alert-worker.ts）\n每 60s 评估一轮\n配置：/var/lib/rdstudio-alert-worker/config.json", shape=box, fillcolor="#d5e8d4"];
+    pg [label="PostgreSQL（d_obs 库）\n告警/事故/通知/租户/事件/\nrun·trace 投影/审计/保留策略", shape=cylinder, fillcolor="#ffe6cc"];
+    prom [label="Prometheus\nscrape 127.0.0.1:18093/metrics\n间隔 15s（ops/prometheus/prometheus.yml）", shape=component, fillcolor="#e1d5e7"];
+    probeTimer [label="tenant-probe@.timer\n→ rl-platform-probe.mjs\n（平台/租户探针上报）", shape=component, fillcolor="#e1d5e7"];
+    retentionTimer [label="tenant-events-retention.timer\n→ tools/trim-tenant-events.mjs\n（租户事件保留期清理）", shape=component, fillcolor="#e1d5e7"];
+    gateway [label="模型路由网关\nadmin API 127.0.0.1:3100\n（网关目标 3100/3101）", shape=box, fillcolor="#fff2cc"];
+    sso [label="RDK Studio 主站\nSSO 中继 127.0.0.1:18090", shape=box, fillcolor="#fff2cc"];
+  }
+
+  subgraph cluster_ext {
+    label="外部系统与人员";
+    style=dotted;
+    users [label="运营管理员 / 租户团队成员\n（浏览器）", shape=ellipse, fillcolor="#f8cecc"];
+    aiApps [label="AI 应用 / OTel SDK\n（OTLP HTTP JSON·protobuf·gRPC）", shape=ellipse, fillcolor="#f8cecc"];
+    channels [label="通知渠道：飞书/钉钉/企微/\nSlack/Telegram/通用 Webhook", shape=ellipse, fillcolor="#f8cecc"];
+    targets [label="被观测业务系统\n（如 RL 平台 sim2real-web）", shape=ellipse, fillcolor="#f8cecc"];
+  }
+
+  users   -> nginx [label="HTTPS 工作台/API"];
+  nginx   -> web   [label="反代 → 127.0.0.1:18093"];
+  deploy  -> releases [label="scp + 软链切换", style=dashed];
+  releases -> web [label="运行当前 release"];
+  prom    -> web  [label="抓取 /metrics @15s"];
+  aiApps  -> web  [label="OTLP 上报 /v1/*"];
+  probeTimer -> web [label="POST /api/health/external-probe-report"];
+  web     -> pg   [label="SQL 读写（pg）"];
+  worker  -> pg   [label="SQL 读写（pg）"];
+  web     -> sso  [label="登录转发 / /api/sso/me（回环）"];
+  web     -> gateway [label="admin API 探测/路由/替换"];
+  worker  -> targets [label="拨测/健康检查（HMAC 签名）"];
+  worker  -> channels [label="告警/恢复通知投递", style=dashed];
+  retentionTimer -> pg [label="清理过期租户事件"];
+}

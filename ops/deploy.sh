@@ -77,6 +77,9 @@ trap cleanup EXIT
 
 cp -R "$ROOT/dist/server" "$ROOT/dist/shared" "$STAGE/"
 cp "$ROOT/package.json" "$STAGE/"
+# ops/ 与 tools/ 一并随包：systemd 单元（备份 timer、探针、保留期清理）引用
+# /opt/d-obs/current/{ops,tools} 下的脚本，发布必须保持它们与代码同版本。
+cp -R "$ROOT/ops" "$ROOT/tools" "$STAGE/"
 find "$STAGE" -name '*.d.ts' -delete
 if [ "$WITH_DEPS" = "1" ]; then
   say "打包依赖（本地 node_modules 整树）"

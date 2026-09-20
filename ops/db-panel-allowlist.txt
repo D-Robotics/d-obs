@@ -1,17 +1,20 @@
 # 数据库面板表白名单（生产 /etc/d-obs.env 的 RDK_DB_PANEL_TABLES 用这份内容）
 #
-# 为什么需要：/api/ops/observability/database* 是运营只读取证面，表级默认不设限，
+# 为什么需要：/api/ops/observability/database* 是运营只读取证面，
 # 而 d-obs 与主站共用中心库 —— 不设限时 admin token 能导出主站的商业/凭据表
 # （credit_user_key、credit_account、chat_credit_accounts、redemption_code 等）。
+#
+# 默认行为（2026-09 起）：RDK_DB_PANEL_TABLES 未配置时，代码内置
+# DEFAULT_POSTGRES_DASHBOARD_TABLES（server/monitoring/postgres-dashboard-store.ts，
+# 与本文件内容一致，由 postgres-dashboard-allowlist.test.ts 双向防漂移）即本名单生效；
+# 显式设 `RDK_DB_PANEL_TABLES='*'` 才恢复「整库可见」。
+# 生产 env 无需再配本名单；保持配置等价于锁定当前名单（防止代码默认演进带来意外变化）。
 #
 # 名单怎么来的：从 server/main.ts 做一次可达性遍历（**含动态 import()**），收集可达
 # 模块里所有 `from|into|update|join public.<表>` 的表名 —— 即本服务运行时真正读写的表。
 # 不要手写；改了代码用测试兜底：
 #   node --import tsx --test server/monitoring/postgres-dashboard-allowlist.test.ts
-# 该测试会重算可达表集合并断言全部包含在本文件里，漏一张即失败（提醒同步生产 env）。
-#
-# 应用/回退：把下表逗号合并写入 /etc/d-obs.env 的 RDK_DB_PANEL_TABLES 后重启 d-obs；
-# 清空该变量即恢复「全部可见」的旧行为。
+# 该测试会重算可达表集合并断言全部包含在本文件里，漏一张即失败（提醒同步内置名单与生产 env）。
 agent_evolution_candidates
 agent_run_observability
 agent_run_records
@@ -23,14 +26,21 @@ studio_alert_incidents
 studio_alert_notifications
 studio_alert_worker_status
 studio_daily_usage
+studio_device_samples
+studio_devices
 studio_evolution_runs
 studio_evolution_worker_status
 studio_experience_summaries
 studio_external_probe_status
 studio_north_star_snapshots
+studio_obs_dashboard_panels
 studio_obs_tenant_members
 studio_obs_tenants
 studio_observability_actions
+studio_observability_logs
+studio_observability_metric_samples
+studio_observability_metric_series
+studio_model_prices
 studio_ops_events
 studio_ops_events_tenant
 studio_remediation_runs

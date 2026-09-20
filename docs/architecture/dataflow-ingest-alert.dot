@@ -1,0 +1,66 @@
+// d-obs 数据流：摄取 → 告警评估 → 投递（当前状态）
+// 再生成：dot -Tsvg dataflow-ingest-alert.dot -o dataflow-ingest-alert.svg
+digraph dataflow_ingest_alert {
+  rankdir=TB;
+  graph [label="d-obs 数据流：摄取 → 告警评估 → 投递（当前状态）\n来源：server/main.ts、server/monitoring/external-probe-ingest.ts、studio-alert-worker.ts、studio-alert-state.ts、alert-escalation.ts、alert-maintenance-windows.ts", labelloc=t, fontsize=11, fontname="Helvetica"];
+  node [shape=box, style="rounded,filled", fillcolor="#eef2f7", fontsize=10, fontname="Helvetica"];
+  edge [fontsize=9, fontname="Helvetica", color="#555555"];
+
+  // 摄取入口（Web 进程）
+  subgraph cluster_ingest {
+    label="摄取（Web 进程，server/main.ts 挂载）";
+    style=solid; color="#888888";
+
+    probeIn [label="外部探针上报\nPOST /api/health/external-probe-report\n身份：平台 token 文件 或\n租户 token（库内 sha256）", fillcolor="#d5e8d4"];
+    otlpIn [label="OTLP 上报（AI 应用）\n/v1/traces · /v1/metrics\nHTTP JSON / HTTP protobuf\n可选 OTLP/gRPC receiver", fillcolor="#d5e8d4"];
+    eventIn [label="事件级埋点\nops-event-ingest\n（消毒去重）", fillcolor="#d5e8d4"];
+  }
+
+  // 数据面
+  subgraph cluster_data {
+    label="PostgreSQL（d_obs，唯一真源）";
+    style=solid; color="#888888";
+
+    checks [label="studio_alert_checks\n平台检查 + 租户命名空间\nt.<tenantId>.<key>", shape=cylinder, fillcolor="#ffe6cc"];
+    traces [label="run/trace 投影\nstudio-trace-store ·\nrun-trace-list-store · outbox", shape=cylinder, fillcolor="#ffe6cc"];
+    opsevents [label="studio_ops_events\n（租户事件按保留期清理）", shape=cylinder, fillcolor="#ffe6cc"];
+    incidents [label="studio_alert_incidents /\nnotifications（事故与通知记录）", shape=cylinder, fillcolor="#ffe6cc"];
+  }
+
+  // 评估与投递（Worker 进程）
+  subgraph cluster_worker {
+    label="告警评估 Worker（独立进程，每 60s）";
+    style=solid; color="#888888";
+
+    evaluate [label="规则评估\n指标 / 日志 / 拨测\n+ internal-health、磁盘、systemd、\nnginx 日志、PG 容器、公网健康", fillcolor="#d5e8d4"];
+    stateMachine [label="事故状态机（已端到端实测）\nworker 规则：连续 2 轮失败 → open\n连续 2 轮成功 → resolved\nexternal 规则：ingest 即刻 open/resolved\n（探针侧自算，worker 不参与）", fillcolor="#fff2cc"];
+    heartbeat [label="心跳降级\nexternal 检查 >3min 未上报 → critical\nworker >3min 未运行 → 看板标记过期", fillcolor="#fff2cc"];
+    maintWindow [label="维护窗口判定\n静默期：事故照常记录不投递\n窗口结束自动补发", fillcolor="#fff2cc"];
+    delivery [label="通知投递（6 渠道）\n飞书/钉钉/企微/Slack/TG/Webhook\n重试 · 降噪 · 影子模式", fillcolor="#d5e8d4"];
+    escalation [label="值班升级链\nack 超时（默认 15min）重发\n每事故最多 3 次，确认即止", fillcolor="#fff2cc"];
+    remediation [label="自愈剧本（白名单）\nnginx reload 前置校验、重启 worker\n冷却期 + 双人审批", fillcolor="#f8cecc"];
+  }
+
+  // 消费端
+  workbench [label="运营工作台 /ops-observability\nJSON API 只读查询 + 策略管理", fillcolor="#e1d5e7"];
+  statusPage [label="公开状态页 GET /status\n免鉴权只读 · 输出脱敏", fillcolor="#e1d5e7"];
+  channels [label="通知渠道\n（外发）", shape=ellipse, fillcolor="#f8cecc"];
+
+  probeIn   -> checks   [label="recordExternalProbeReport\nactive 检查项即刻 open 事故"];
+  otlpIn    -> traces   [label="低敏感 AI 语义字段\n（不收 prompt/completion/工具参数）"];
+  eventIn   -> opsevents;
+  checks    -> evaluate [label="读取检查项"];
+  traces    -> workbench [label="链路追踪 / 运行证据链"];
+  opsevents -> workbench [label="学习与进化面板"];
+  evaluate  -> stateMachine;
+  heartbeat -> stateMachine [style=dashed, label="降级输入"];
+  stateMachine -> incidents [label="open/resolved + 通知记录"];
+  incidents -> maintWindow [label="待投递通知"];
+  maintWindow -> delivery [label="非静默期"];
+  incidents -> escalation [label="无人 ack"];
+  escalation -> delivery [label="升级重发", style=dashed];
+  delivery  -> channels;
+  incidents -> workbench [label="事故调查 / 告警策略"];
+  incidents -> statusPage [label="存活/通过率/事故摘要"];
+  stateMachine -> remediation [label="满足剧本条件", style=dashed];
+}

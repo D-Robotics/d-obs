@@ -22,7 +22,11 @@
 | **外部拨测接入** | `POST /api/health/external-probe-report` | 异地探针把 DNS/TLS/健康/入口数据回传，计入告警评估 |
 | **租户组员与账号登录** | 工作台登录屏 / 租户管理面板 | 主站账号密码登录（SSO 中继），组员按租户获得隔离只读视图，owner 管理组员与角色（[docs/tenant-members.md](./docs/tenant-members.md)） |
 | **公共可观测 API** | `/api/ops/observability/*` | 全部能力均有 JSON API；访问受运营鉴权保护 |
-| **AI 原生生态接入** | `/v1/traces` / `/v1/metrics` / OTLP/gRPC / `/metrics` | OTLP/HTTP JSON、HTTP protobuf、标准 OTLP/gRPC、GenAI/OpenInference 语义映射、Phoenix/Langfuse OTLP 兼容入口、Prometheus 抓取 |
+| **AI 原生生态接入** | `/v1/traces` / `/v1/metrics` / `/v1/logs` / OTLP/gRPC / `/metrics` | OTLP/HTTP JSON、HTTP protobuf、标准 OTLP/gRPC（traces/metrics/logs 三信号）、GenAI/OpenInference 语义映射、Phoenix/Langfuse OTLP 兼容入口、Prometheus 抓取；OTLP metrics/logs 落库（默认保留 14 天） |
+| **观测查询与自定义面板** | 工作台“观测查询” | 平台内查询 OTLP 落库指标与日志（折线图 + 表格），常用查询可保存为自定义面板卡片，不必跳转外部 UI |
+| **边缘设备面** | 工作台“边缘设备” / `POST /api/edge/heartbeat` | RDK 板级设备注册（独立 256-bit token，库内只存哈希）、心跳在线状态、板级指标下钻（CPU/内存/温度/BPU）；`tools/edge-agent.mjs` 弱网本地缓冲 + 补传 |
+| **token 成本归因** | 工作台“用户增长” | `studio_model_prices` 单价表（每百万 token），按模型聚合成本（输入/输出/合计），未定价模型优雅降级 |
+| **事故副驾模型通道（可选）** | `RDK_COPILOT_MODEL_ENABLED=1` | 启用后副驾先走模型池主路由生成证据约束假设（服务端逐条校验 evidence ref，只读不执行）；失败/未启用回落确定性证据引擎 |
 
 ## 快速开始
 
@@ -235,7 +239,7 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_SSO_RELAY_BASE_URL` |  | 主站 SSO 中继地址（生产 `http://127.0.0.1:18090`）。配了才有账号登录与**同源 Cookie 免登**；不配 = 登录端点 503 fail-closed，token 入口不受影响 |
 | `RDK_SSO_RELAY_LOGIN_RATE_MAX` |  | 登录端点**按客户端地址**的限流上限（默认 20 次/15 分钟） |
 | `RDK_SSO_RELAY_LOGIN_ACCOUNT_RATE_MAX` |  | 登录端点**按目标账号**的限流上限（默认 10 次/15 分钟），挡单账号爆破 |
-| `RDK_DB_PANEL_TABLES` |  | **可选的数据库面板表白名单**（逗号/空白分隔，`table` 或 `schema.table`）。不配 = 面板可浏览中心库全部表（历史行为）；配上则目录、关系图、表详情、整表 CSV 全部只放行名单内的表。用于收敛 admin token 对共用中心库的整库只读面 |
+| `RDK_DB_PANEL_TABLES` |  | **数据库面板表白名单**（逗号/空白分隔，`table` 或 `schema.table`；显式设 `*` = 整库可见）。未配置时使用内置默认名单（`DEFAULT_POSTGRES_DASHBOARD_TABLES`，与 `ops/db-panel-allowlist.txt` 同步），只放行本服务运行时读写的可观测相关表——用于收敛 admin token 对共用中心库的整库只读面（目录、关系图、表详情、整表 CSV 四个面一致生效） |
 | `RDK_TRUST_PROXY` |  | 反代信任范围。默认 `loopback`（只在直连对端是回环时采信 X-Forwarded-For，匹配同机 nginx）；`0`/`off` 关闭；也可填 CIDR 列表。影响登录限流按真实客户端 IP 计数。**注意**：与本仓库 `server/studio-deployment.ts` 里的 `EXPRESS_TRUST_PROXY`（上游部署自检用的声明式开关，不配置 express）不是同一个东西 |
 | `PORT` |  | HTTP 端口，默认 `47110` |
 | `RDK_DATA_DIR` |  | 本地状态/配置目录（默认数据布局） |
@@ -260,6 +264,9 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_CENTRAL_TELEMETRY_LOG_ERRORS` |  | `1` = 中央遥测上报失败打日志 |
 | `RDK_STUDIO_AGENT_TTFT_PROBE_ENABLED` / `_URL` / `_MODEL` / `_INTERVAL_MINUTES` / `_TIMEOUT_MS` 与 `RDK_STUDIO_AGENT_TTFT_SLO_MS` |  | Agent 首字延迟（TTFT）探测与 SLO 阈值 |
 | `RDK_FLYWHEEL_ADMIN_USER_IDS` |  | SSO admin 用户 ID 逗号表（与业务站共用身份时用）。**不配 = 任何 SSO 账号都不是管理员，行动环对所有人 403** |
+| `RDK_OBSERVABILITY_SIGNAL_RETENTION_DAYS` |  | OTLP logs / OTLP metric 样本 / 设备样本的保留天数（默认 14，1–365）；每 30 分钟周期清理 |
+| `RDK_DEVICE_OFFLINE_MINUTES` |  | 边缘设备心跳超时多少分钟判为离线（默认 5，1–120） |
+| `RDK_COPILOT_MODEL_ENABLED` |  | `1` = 事故副驾启用模型研判通道（需同时配置 `GATEWAY_ADMIN_KEY` 可用的模型池）；未配 = 只用确定性证据引擎，行为与以前一致 |
 
 ### 登录限流为何是两段
 
@@ -308,6 +315,43 @@ push/PR 时跑 typecheck + test + 无数据库冒烟启动。
 
 进程模型：`npm start`（Web 服务）+ `npm run worker`（评估循环）双进程，共享同一
 数据库。行动环/自愈的执行由 worker 按白名单剧本派生，不阻塞 Web 进程。
+
+### 备份与恢复演练（ops/backup）
+
+中心库（事故/审计/租户/trace 投影的唯一真源）必须有备份和**演练过的**恢复路径：
+
+```bash
+# 手动备份（pg_dump custom 格式 → 完整性校验 → sha256 → 保留期清理）
+RDK_CHAT_CREDITS_DB_URL='postgres://...' ops/backup/pg-backup.sh
+
+# 恢复演练：把最新备份恢复到临时库 d_obs_drill_<ts>，抽查关键表后自动删除
+RDK_CHAT_CREDITS_DB_URL='postgres://...' ops/backup/restore-drill.sh
+```
+
+生产用 systemd：`cp ops/backup/d-obs-backup.{service,timer} /etc/systemd/system/ &&
+systemctl enable --now d-obs-backup.timer`（每日 03:30，读 `/etc/d-obs.env`）。
+可选环境变量：`BACKUP_DIR`（默认 /var/backups/d-obs）、`BACKUP_KEEP_DAYS`（默认 14）、
+`BACKUP_OFFSITE_DEST`（rsync 异地目标）、`PGDUMP_BIN`/`PGRESTORE_BIN`（PG 在容器里时
+指向 docker exec 包装）。脚本只清理自己 `d-obs-db-*.dump` 命名的文件。
+
+### 平台自身看门狗（异机部署，必配）
+
+d-obs 是告警平台：它自己宕机时，**没有谁能替它发告警**——除非有一台异机在盯着它。
+`tools/obs-self-probe.mjs` 就是那个看门狗，部署在**不同于 d-obs 主机**的机器上：
+
+```bash
+# /etc/d-obs-self-probe.env（异机上）
+RDK_OBS_SELF_PROBE_TARGET=https://<d-obs 对外地址>
+RDK_OBS_SELF_PROBE_FEISHU_WEBHOOK='https://open.feishu.cn/open-apis/bot/v2/hook/xxx'  # 或 RDK_OBS_SELF_PROBE_WEBHOOK_URL
+# 可选：RDK_OBS_SELF_PROBE_REPORT_URL + RDK_OBS_SELF_PROBE_TOKEN_FILE（顺手上报工作台仪表盘）
+
+systemctl enable --now d-obs-self-probe.timer   # ops/probes/ 下的 service+timer，每分钟一跑
+```
+
+行为：检查 `/status` 与 `/ops-observability`；连续 2 轮失败（可调）**直接把宕机告警
+POST 到飞书/Webhook——这条通知路径不经过 d-obs**；持续失败按 30 分钟限频重发；
+连续 2 轮恢复后发恢复通知。防抖状态存 `/var/lib/d-obs-self-probe/state.json`。
+
 
 ## 目录结构
 

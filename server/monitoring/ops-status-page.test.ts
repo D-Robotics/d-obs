@@ -151,3 +151,18 @@ test('渲染 HTML：空事故与不健康 worker 的降级文案', () => {
   assert.ok(html.includes('尚无巡检记录'));
   assert.ok(html.includes('没有进行中的事故'));
 });
+
+test('渲染 HTML：workerVersion 经转义（免鉴权页的动态字符串不留注入面）', () => {
+  const html = renderStatusPageHtml({
+    fetchedAt: new Date().toISOString(),
+    worker: {
+      alive: true,
+      lastCheckedAt: minutesAgo(1),
+      workerVersion: '<script>alert(1)</script>',
+    },
+    checks: { total: 1, healthy: 1, observing: 0, firing: 0, disabled: 0 },
+    incidents: [],
+  });
+  assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+  assert.ok(!html.includes('<script>alert(1)</script>'));
+});

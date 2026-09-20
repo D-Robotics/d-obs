@@ -1,8 +1,9 @@
 /**
  * 数据库面板表白名单回归（RDK_DB_PANEL_TABLES）。
  *
- * 默认不配置 = 不限制（保持历史行为）；配置后目录列表、关系图、表详情、整表
- * CSV 导出四个面都必须一致收敛，否则可以靠猜表名绕过。
+ * 未配置 = 内置默认白名单（与 ops/db-panel-allowlist.txt 同步）；显式 `*` = 整库可见
+ * （历史行为）；配置具体名单则目录列表、关系图、表详情、整表 CSV 导出四个面都必须
+ * 一致收敛，否则可以靠猜表名绕过。
  */
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
@@ -15,6 +16,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 import {
+  DEFAULT_POSTGRES_DASHBOARD_TABLES,
   PostgresTableDetailError,
   collectPostgresTableCsvExport,
   collectPostgresTableDetail,
@@ -35,12 +37,23 @@ afterEach(() => {
   else process.env[ENV_KEY] = saved;
 });
 
-test('未配置白名单：不限制（保持历史行为）', () => {
-  assert.equal(postgresDashboardTableAllowlist({}).size, 0);
+test('未配置白名单：默认名单生效（可观测表可见，主站凭据表不可见）', () => {
+  const allowlist = postgresDashboardTableAllowlist({});
+  assert.equal(allowlist.size, DEFAULT_POSTGRES_DASHBOARD_TABLES.length);
   assert.equal(isPostgresDashboardTableAllowed('public', 'studio_ops_events', {}), true);
-  assert.equal(isPostgresDashboardTableAllowed('anything', 'any_table', {}), true);
-  // 空白配置同样视为未配置。
-  assert.equal(isPostgresDashboardTableAllowed('public', 'x', { [ENV_KEY]: '   ' }), true);
+  assert.equal(isPostgresDashboardTableAllowed('public', 'agent_run_records', {}), true);
+  // 与主站共用的凭据/商业表在默认名单外。
+  assert.equal(isPostgresDashboardTableAllowed('public', 'credit_user_key', {}), false);
+  assert.equal(isPostgresDashboardTableAllowed('public', 'redemption_code', {}), false);
+  assert.equal(isPostgresDashboardTableAllowed('anything', 'any_table', {}), false);
+  // 空白配置同样视为未配置（走默认名单）。
+  assert.equal(isPostgresDashboardTableAllowed('public', 'credit_user_key', { [ENV_KEY]: '   ' }), false);
+});
+
+test("显式 '*'：恢复整库可见（历史行为逃生口）", () => {
+  assert.equal(postgresDashboardTableAllowlist({ [ENV_KEY]: '*' }).size, 0);
+  assert.equal(isPostgresDashboardTableAllowed('public', 'credit_user_key', { [ENV_KEY]: '*' }), true);
+  assert.equal(isPostgresDashboardTableAllowed('anything', 'any_table', { [ENV_KEY]: '*' }), true);
 });
 
 test('白名单条目：裸表名默认 public，schema.table 原样，大小写不敏感', () => {
@@ -154,6 +167,33 @@ test('ops/db-panel-allowlist.txt 覆盖所有运行时可达的表（防漂移�
   assert.deepEqual(
     missing,
     [],
-    `以下运行时可达的表不在 ops/db-panel-allowlist.txt 里，请补上并同步生产 RDK_DB_PANEL_TABLES：${missing.join(', ')}`,
+    `以下运行时可达的表不在 ops/db-panel-allowlist.txt 里，请补上并同步生产 RDK_DB_PANEL_TABLES 与内置默认名单：${missing.join(', ')}`,
+  );
+});
+
+/**
+ * 内置默认名单防漂移：DEFAULT_POSTGRES_DASHBOARD_TABLES 必须与 ops/db-panel-allowlist.txt
+ * 完全一致。内嵌副本是生产部署的默认收敛面（部署产物不含 ops/），两处分叉会导致
+ * 「本地默认可见的表线上看不到」或反向放大暴露面。
+ */
+test('内置默认名单与 ops/db-panel-allowlist.txt 一致（防漂移）', async () => {
+  const listed = new Set(
+    (await readFile(path.join(SERVER_ROOT, 'ops/db-panel-allowlist.txt'), 'utf8'))
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+      .flatMap((line) => line.split(',').map((name) => name.trim()))
+      .filter(Boolean),
+  );
+  const embedded = new Set(DEFAULT_POSTGRES_DASHBOARD_TABLES);
+  assert.deepEqual(
+    [...embedded].filter((table) => !listed.has(table)).sort(),
+    [],
+    '内置默认名单里有 ops/db-panel-allowlist.txt 没有的表',
+  );
+  assert.deepEqual(
+    [...listed].filter((table) => !embedded.has(table)).sort(),
+    [],
+    'ops/db-panel-allowlist.txt 里有内置默认名单没跟上的表',
   );
 });
