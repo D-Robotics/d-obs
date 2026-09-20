@@ -37,18 +37,38 @@ services:
     ports:
       - 127.0.0.1:8483:8482
 
+  vmstorage-c:
+    image: victoriametrics/vmstorage:v1.150.0-cluster
+    container_name: d-obs-vmstorage-c
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=90d
+      - -vminsertAddr=:8400
+      - -vmselectAddr=:8401
+      - -httpListenAddr=:8482
+      - -memory.allowedPercent=25
+      - -storage.minFreeDiskSpaceBytes=20GB
+    volumes:
+      - /var/lib/d-obs/victoria-metrics/c:/storage
+    networks: [d-obs-metrics]
+    expose: [8400, 8401, 8482]
+    ports:
+      - 127.0.0.1:8490:8482
+
   vminsert:
     image: victoriametrics/vminsert:v1.150.0-cluster
     container_name: d-obs-vminsert-a
     restart: unless-stopped
     command:
-      - -storageNode=vmstorage-a:8400,vmstorage-b:8400
+      - -storageNode=vmstorage-a:8400,vmstorage-b:8400,vmstorage-c:8400
       - -replicationFactor=2
       - -httpListenAddr=:8480
       - -memory.allowedPercent=10
     depends_on:
       - vmstorage-a
       - vmstorage-b
+      - vmstorage-c
     networks: [d-obs-metrics]
     ports:
       - 127.0.0.1:8484:8480
@@ -58,13 +78,14 @@ services:
     container_name: d-obs-vminsert-b
     restart: unless-stopped
     command:
-      - -storageNode=vmstorage-a:8400,vmstorage-b:8400
+      - -storageNode=vmstorage-a:8400,vmstorage-b:8400,vmstorage-c:8400
       - -replicationFactor=2
       - -httpListenAddr=:8480
       - -memory.allowedPercent=10
     depends_on:
       - vmstorage-a
       - vmstorage-b
+      - vmstorage-c
     networks: [d-obs-metrics]
     ports:
       - 127.0.0.1:8488:8480
@@ -74,7 +95,7 @@ services:
     container_name: d-obs-vmselect-a
     restart: unless-stopped
     command:
-      - -storageNode=vmstorage-a:8401,vmstorage-b:8401
+      - -storageNode=vmstorage-a:8401,vmstorage-b:8401,vmstorage-c:8401
       - -replicationFactor=2
       - -dedup.minScrapeInterval=15s
       - -httpListenAddr=:8481
@@ -82,6 +103,7 @@ services:
     depends_on:
       - vmstorage-a
       - vmstorage-b
+      - vmstorage-c
     networks: [d-obs-metrics]
     ports:
       - 127.0.0.1:8485:8481
@@ -91,7 +113,7 @@ services:
     container_name: d-obs-vmselect-b
     restart: unless-stopped
     command:
-      - -storageNode=vmstorage-a:8401,vmstorage-b:8401
+      - -storageNode=vmstorage-a:8401,vmstorage-b:8401,vmstorage-c:8401
       - -replicationFactor=2
       - -dedup.minScrapeInterval=15s
       - -httpListenAddr=:8481
@@ -99,6 +121,7 @@ services:
     depends_on:
       - vmstorage-a
       - vmstorage-b
+      - vmstorage-c
     networks: [d-obs-metrics]
     ports:
       - 127.0.0.1:8489:8481
