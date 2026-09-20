@@ -16,7 +16,7 @@ d-obs 把 AI 观测数据收敛到 OpenTelemetry OTLP。应用可以使用 HTTP 
 | OTLP gRPC | `opentelemetry.proto.collector.{trace,metrics,logs}.v1.*Service/Export` | gRPC metadata 中的 `authorization`、`x-api-key` 或 `api-key` |
 | 边缘设备心跳 | `POST /api/edge/heartbeat`（`x-rdk-device-token`） | 设备 token（工作台“边缘设备”签发） |
 | Prometheus scrape | `GET /metrics` | 默认匿名；配置 `RDK_OBSERVABILITY_METRICS_TOKEN` 后需要 Bearer/API key |
-| 端侧 Prometheus scrape | `GET /edge-metrics` | 与 `/metrics` 共用鉴权；仅输出设备身份、心跳和最新数值样本 |
+| 端侧 Prometheus scrape | `GET /edge-metrics` | 默认仅允许回环抓取；配置 `RDK_OBSERVABILITY_EDGE_METRICS_TOKEN` 后使用专用 Bearer/API key；仅输出设备身份、心跳和最新数值样本 |
 | 能力发现 | `GET /api/v1/ecosystem/capabilities` | 无需鉴权 |
 
 配置写入 token：

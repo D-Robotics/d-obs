@@ -590,6 +590,16 @@ function metricsTokenMatches(req: Request): boolean {
   return Boolean(actual) && sameSecret(actual, expected);
 }
 
+function edgeMetricsAccess(req: Request): boolean {
+  const expected = text(process.env.RDK_OBSERVABILITY_EDGE_METRICS_TOKEN, 4_000)
+    || text(process.env.RDK_OBSERVABILITY_METRICS_TOKEN, 4_000);
+  const actual = text(req.header('authorization')?.replace(/^Bearer\s+/i, ''), 4_000)
+    || text(req.header('x-api-key'), 4_000);
+  if (expected) return Boolean(actual) && sameSecret(actual, expected);
+  const address = String(req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  return address === '127.0.0.1' || address === '::1';
+}
+
 export function createAiEcosystemRouter(): Router {
   const router = Router();
   // OTLP/HTTP protobuf payloads bypass express.json and stay as bytes until
@@ -628,7 +638,7 @@ export function createAiEcosystemRouter(): Router {
     res.type('text/plain; version=0.0.4').send(renderPrometheusMetrics());
   });
   router.get('/edge-metrics', async (req, res) => {
-    if (!metricsTokenMatches(req)) {
+    if (!edgeMetricsAccess(req)) {
       res.status(401).type('text/plain').send('invalid metrics token\n');
       return;
     }

@@ -33,7 +33,9 @@ SSO/运营管理员权限。Prometheus 仍只监听 `127.0.0.1:9090`，不能绕
 
 Prometheus 按两个数据域抓取四类数据源：云侧的 d-obs OTLP/AI 指标、服务器上的
 node-exporter、RDK Studio 私有 OTLP gateway 的 collector 自监控指标，以及端侧的
-`/edge-metrics` 设备身份/心跳/最新样本。所有目标都带 `plane=cloud` 或 `plane=edge`，
+`/edge-metrics` 设备身份/心跳/最新样本。端侧 exporter 默认只接受服务器回环抓取，若
+需要跨主机抓取则配置 `RDK_OBSERVABILITY_EDGE_METRICS_TOKEN` 并在该 scrape job 加
+`authorization`。所有目标都带 `plane=cloud` 或 `plane=edge`，
 可用 `sum by (plane)`、`up{plane="edge"}` 直接分域查询。规则文件
 `rules/d-obs-baseline.yml` 提供主机 CPU/内存/磁盘、OTLP 接收率、落库队列和端侧离线设备
 的 recording rules 与基础告警；通知仍由 d-obs 的事故/通知闭环统一承接。

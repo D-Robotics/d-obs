@@ -246,6 +246,7 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_GATEWAY_ADMIN_URL` / `GATEWAY_ADMIN_KEY` |  | 模型池网关 admin API 地址与密钥（默认 `127.0.0.1:3100`） |
 | `RDK_PUBLIC_OBSERVABILITY_API_TOKEN` |  | OTLP 与公共观测写入 token；配置后所有 `/v1/*` 写入必须使用该 Bearer/API key |
 | `RDK_OBSERVABILITY_METRICS_TOKEN` |  | Prometheus `/metrics` 的可选 Bearer/API key；不配时保留本地兼容的匿名抓取 |
+| `RDK_OBSERVABILITY_EDGE_METRICS_TOKEN` |  | 端侧 `/edge-metrics` 的专用 Bearer/API key；未配置时只允许回环抓取 |
 | `RDK_OTLP_GRPC_HOST` / `RDK_OTLP_GRPC_PORT` |  | 可选 OTLP/gRPC receiver 监听地址与端口；配置 `RDK_OTLP_GRPC_PORT` 后启用，默认 host 为 `127.0.0.1` |
 | `RDK_ALERT_INTERNAL_HEALTH_URL` |  | internal-health 检查目标 |
 | `STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL` |  | Langfuse 公开看板 URL，配置后 Agent Trace 面板嵌入它 |
