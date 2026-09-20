@@ -23,6 +23,7 @@ import {
 import { createPanel, deletePanel, listPanels, normalizePanelSpec } from './dashboard-panels-store.js';
 import { analyzeIncidentEvidence, copilotModelEnabled } from '../observability/copilot-model.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
+import { loadQualityTrend } from '../public-api/public-observability-quality-trend.js';
 export function registerSignalsRoutes(router: Router): void {
   // ---- 平台内指标查询（OTLP metrics 落库后的一等查询面，管理员只读） ----
 
@@ -92,6 +93,23 @@ export function registerSignalsRoutes(router: Router): void {
   );
 
   // ---- 边缘设备面（注册 / 状态 / 样本查询；token 只在签发与轮换响应出现一次） ----
+
+  // ---- 质量与反馈趋势（score/feedback 数据的运营侧消费者） ----
+
+  router.get(
+    '/api/ops/observability/quality/summary',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const query = req.query as Record<string, unknown>;
+        const trend = await loadQualityTrend(queryInteger(query, 'days', 30, 1, 90));
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ ok: true, trend });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'quality_summary_unavailable') });
+      }
+    },
+  );
 
   router.get('/api/ops/observability/devices', requireObservabilityAccess, async (_req, res) => {
     try {

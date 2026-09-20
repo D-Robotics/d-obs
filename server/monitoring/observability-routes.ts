@@ -51,8 +51,6 @@ import {
   DEVICE_ID_PATTERN,
 } from './device-registry.js';
 import { createPanel, deletePanel, listPanels, normalizePanelSpec } from './dashboard-panels-store.js';
-import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
-import { analyzeIncidentEvidence, copilotModelEnabled } from '../observability/copilot-model.js';
 import {
   getRunObservability,
   RunObservabilityStoreUnavailableError,

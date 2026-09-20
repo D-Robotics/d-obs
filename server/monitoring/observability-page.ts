@@ -183,6 +183,9 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <details id="signals-panels" class="detail-sections" open><summary class="detail-summary"><strong>自定义面板</strong><span>保存的常用指标查询，一屏总览</span></summary>
         <div id="signalsPanelGrid" class="signals-panel-grid" aria-live="polite"><div class="signals-empty">正在读取面板…</div></div>
       </details>
+      <details id="signals-quality" class="detail-sections" open><summary class="detail-summary"><strong>质量与反馈</strong><span>run 级评分与用户反馈的按天趋势</span></summary>
+        <div id="signalsQualityContent" aria-live="polite"><div class="signals-empty">正在读取质量趋势…</div></div>
+      </details>
     </section>
     <section id="view-devices" class="view hidden" aria-labelledby="devicesHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 边缘设备</div><h2 id="devicesHeading">边缘设备与心跳</h2><p>注册 RDK 板级设备、查看心跳与在线状态，下钻板级指标（CPU / 内存 / 温度 / BPU）。</p></div><div class="right">设备 token 只显示一次</div></div>

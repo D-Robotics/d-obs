@@ -85,6 +85,48 @@ create table if not exists public.studio_model_prices (
   updated_by text not null default ''
 );
 
+-- ===== 告警配置跨副本一致读源（单例行，存原文 text；文件仍是写盘基准） =====
+create table if not exists public.studio_alert_config (
+  singleton boolean primary key default true check (singleton),
+  raw_text text not null,
+  revision bigint not null default 1,
+  updated_at timestamptz not null default now(),
+  updated_by text not null default ''
+);
+
+-- ===== run 级评分/反馈（与 server/public-api/public-observability-quality-store.ts
+-- 的运行时建表 DDL 同源；预置让"质量与反馈"趋势在首次写入前即可查询） =====
+create table if not exists public.studio_public_observability_scores (
+  score_id text primary key,
+  account_scope_id text not null,
+  environment text not null,
+  run_id text not null,
+  name text not null,
+  value double precision not null,
+  data_type text not null,
+  source text not null,
+  comment text,
+  created_at timestamptz not null default now()
+);
+create index if not exists studio_public_observability_scores_run_idx
+  on public.studio_public_observability_scores (account_scope_id, environment, run_id, created_at desc);
+
+create table if not exists public.studio_public_observability_feedback (
+  feedback_id text primary key,
+  account_scope_id text not null,
+  environment text not null,
+  run_id text not null,
+  kind text not null check (kind in ('up', 'down')),
+  message_id text,
+  comment text,
+  user_message text,
+  assistant_message text,
+  timeline text,
+  created_at timestamptz not null default now()
+);
+create index if not exists studio_public_observability_feedback_run_idx
+  on public.studio_public_observability_feedback (account_scope_id, environment, run_id, created_at desc);
+
 -- ===== 自定义面板 =====
 create table if not exists public.studio_obs_dashboard_panels (
   id uuid primary key default gen_random_uuid(),
