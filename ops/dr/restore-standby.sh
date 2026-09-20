@@ -54,11 +54,13 @@ for _ in $(seq 1 30); do
 done
 
 DB_URL="postgresql://postgres:$PG_PASSWORD@127.0.0.1:$PG_PORT/d_obs"
+# 容器内 PG 永远监听 5432（PG_PORT 只是宿主机映射），restore/建库走容器内地址。
+DB_URL_INNER="postgresql://postgres:$PG_PASSWORD@127.0.0.1:5432/d_obs"
 docker exec "$PG_CONTAINER" psql -U postgres -qc "drop database if exists d_obs" 
 docker exec "$PG_CONTAINER" psql -U postgres -qc "create database d_obs"
 echo "[dr] 恢复 dump（464MB 级约 1-2 分钟）…"
 docker cp "$DUMP" "$PG_CONTAINER:/tmp/.dr.dump"
-docker exec "$PG_CONTAINER" pg_restore --no-owner --no-privileges --dbname="$DB_URL" /tmp/.dr.dump
+docker exec "$PG_CONTAINER" pg_restore --no-owner --no-privileges --dbname="$DB_URL_INNER" /tmp/.dr.dump
 docker exec "$PG_CONTAINER" rm -f /tmp/.dr.dump
 echo "[dr] 恢复完成（$(($(date +%s) - START))s）"
 
