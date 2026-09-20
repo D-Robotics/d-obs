@@ -461,6 +461,7 @@ export const DEFAULT_POSTGRES_DASHBOARD_TABLES: readonly string[] = [
   'agent_run_records',
   'conversation_turns',
   'studio_alert_checks',
+  'studio_alert_config',
   'studio_alert_configuration_audit',
   'studio_alert_incident_activity',
   'studio_alert_incidents',

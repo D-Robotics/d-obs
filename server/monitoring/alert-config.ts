@@ -17,6 +17,12 @@ import {
   alertChannelOptions,
   type AlertDeliveryChannel,
 } from './alert-notification-channels.js';
+import {
+  alertConfigPgStoreEnabled,
+  readAlertConfigRawText,
+  warnAlertConfigStoreOnce,
+  writeAlertConfigRawText,
+} from './alert-config-store.js';
 
 const ALERT_DELIVERY_CHANNEL_VALUES = ALERT_DELIVERY_CHANNELS;
 
@@ -928,6 +934,36 @@ export function alertConfigFileStateFromText(rawText: string | null): AlertConfi
 }
 
 export async function alertConfigFileState(): Promise<AlertConfigFileState> {
+  // 解析顺序：PG（可达且行存在）→ 文件（PG 空时自动导入）→ 安全默认。
+  // PG 不可用时整体回落文件语义（与历史行为一致）。RDK_ALERT_CONFIG_PG=0 可关闭。
+  if (alertConfigPgStoreEnabled()) {
+    try {
+      const pgText = await readAlertConfigRawText();
+      if (pgText !== null) {
+        const state = alertConfigFileStateFromText(pgText);
+        if (state.parseable) return state;
+        // PG 行存在但解析不了：视为存储损坏，回落文件。
+        warnAlertConfigStoreOnce('pg config row is not parseable; falling back to file');
+      } else {
+        const fileState = await readAlertConfigFileState();
+        // PG 尚无配置而文件有：首次迁移，把文件原文导入 PG 后继续用文件语义。
+        if (fileState.rawText !== null && fileState.parseable) {
+          try {
+            await writeAlertConfigRawText(fileState.rawText, 'file-import');
+          } catch (error) {
+            warnAlertConfigStoreOnce(`pg config import failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        return fileState;
+      }
+    } catch (error) {
+      warnAlertConfigStoreOnce(`pg config read failed; falling back to file: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return readAlertConfigFileState();
+}
+
+async function readAlertConfigFileState(): Promise<AlertConfigFileState> {
   try {
     return alertConfigFileStateFromText(await readFile(alertConfigPath(), 'utf8'));
   } catch (error) {
@@ -1384,6 +1420,15 @@ export async function writeAlertConfigText(text: string): Promise<void> {
   const temp = `${target}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temp, text, { encoding: 'utf8', mode: 0o600 });
   await rename(temp, target);
+  // 文件仍是写盘基准（面板最小 diff 机制依赖磁盘原文）；PG 是跨副本的一致读源。
+  // PG 写失败不阻断保存（文件已落盘），读路径会继续用文件语义。
+  if (alertConfigPgStoreEnabled()) {
+    try {
+      await writeAlertConfigRawText(text, 'panel');
+    } catch (error) {
+      warnAlertConfigStoreOnce(`pg config write failed; file already saved: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 function configuredHost(rawUrl: string): string | null {
