@@ -267,6 +267,7 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_OBSERVABILITY_SIGNAL_RETENTION_DAYS` |  | OTLP logs / OTLP metric 样本 / 设备样本的保留天数（默认 14，1–365）；每 30 分钟周期清理 |
 | `RDK_DEVICE_OFFLINE_MINUTES` |  | 边缘设备心跳超时多少分钟判为离线（默认 5，1–120） |
 | `RDK_COPILOT_MODEL_ENABLED` |  | `1` = 事故副驾启用模型研判通道（需同时配置 `GATEWAY_ADMIN_KEY` 可用的模型池）；未配 = 只用确定性证据引擎，行为与以前一致 |
+| `RDK_ALERT_CONFIG_PG` |  | `0` = 关闭告警配置的 PG 读源/同步，完全回到本地 JSON 文件行为；默认（配了中心库即启用）读顺序为 PG → 文件 → 安全默认 |
 
 ### 登录限流为何是两段
 
@@ -315,6 +316,14 @@ push/PR 时跑 typecheck + test + 无数据库冒烟启动。
 
 进程模型：`npm start`（Web 服务）+ `npm run worker`（评估循环）双进程，共享同一
 数据库。行动环/自愈的执行由 worker 按白名单剧本派生，不阻塞 Web 进程。
+
+### 告警配置的存储语义（PG 主读 + 文件镜像）
+
+告警配置面板保存时仍按**原子文件写**（最小 diff 机制依赖磁盘原文），同时尽力同步
+中心库 `studio_alert_config`；读取顺序为 **PG → 文件 → 安全默认**：PG 可达且行存在
+即以 PG 为准（web 与 worker 多实例读到同一份，不再分叉）；PG 为空而文件有内容时
+自动导入；PG 不可用整体回落文件语义，行为与单文件时期一致。显式设
+`RDK_ALERT_CONFIG_PG=0` 可完全关闭 PG 层。
 
 ### 备份与恢复演练（ops/backup）
 
