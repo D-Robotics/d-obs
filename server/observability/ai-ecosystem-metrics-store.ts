@@ -245,8 +245,14 @@ export async function persistMetricPoints(owner: string, points: PersistMetricPo
     samples.push({ seriesId, tsMs: Math.trunc(point.timestampMs), value: point.value });
   }
   const CHUNK = 200;
-  for (let offset = 0; offset < samples.length; offset += CHUNK) {
-    const chunk = samples.slice(offset, offset + CHUNK);
+  // 去重后再入 SQL：不同 datapoint 经白名单标签归一化可能坍缩到同一
+  // (series_id, ts_ms)，bulk on conflict 命中同一行两次会令整批落库失败并
+  // 永久卡死写队列。保留后到值，与 upsert 的"重复时间戳取最新"语义一致。
+  const deduped = new Map<string, { seriesId: number; tsMs: number; value: number }>();
+  for (const sample of samples) deduped.set(`${sample.seriesId}:${sample.tsMs}`, sample);
+  const ordered = [...deduped.values()];
+  for (let offset = 0; offset < ordered.length; offset += CHUNK) {
+    const chunk = ordered.slice(offset, offset + CHUNK);
     const values: string[] = [];
     const params: unknown[] = [];
     chunk.forEach((sample, index) => {
