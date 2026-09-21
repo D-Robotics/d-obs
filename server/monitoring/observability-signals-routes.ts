@@ -21,6 +21,8 @@ import {
   DEVICE_ID_PATTERN,
 } from './device-registry.js';
 import { issueIngestToken, invalidateIngestTokenCache, listIngestTokens, revokeIngestToken, rotateIngestToken } from '../observability/ingest-token-store.js';
+import { METRIC_CATALOG } from '../observability/metric-dictionary.js';
+import { nlQuery } from '../observability/nl-query-service.js';
 import { createPanel, deletePanel, listPanels, normalizePanelSpec } from './dashboard-panels-store.js';
 import { analyzeIncidentEvidence, copilotModelEnabled } from '../observability/copilot-model.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
@@ -219,6 +221,97 @@ export function registerSignalsRoutes(router: Router): void {
       res.status(503).json({ ok: false, error: clientErrorCode(error, 'ingest_token_store_unavailable') });
     }
   });
+
+  // ---- 指标字典与自然语言查询（免 PromQL 的查询入口） ----
+
+  router.get('/api/ops/observability/metrics/catalog', requireObservabilityAccess, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, catalog: METRIC_CATALOG });
+  });
+
+  router.post(
+    '/api/ops/observability/nl-query',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const question = typeof body.question === 'string' ? body.question : '';
+      if (!question.trim()) {
+        res.status(400).json({ ok: false, error: 'question_required' });
+        return;
+      }
+      try {
+        // 平台内落库序列索引（metric + service），让规则层与模型都能选到用户应用指标。
+        const series = await queryMetricSeries({ limit: 300 });
+        const indexMap = new Map<string, string>();
+        for (const row of series) {
+          const service = String((row.labels as Record<string, unknown> | null)?.service ?? '');
+          const key = `${row.metric}\u0000${service}`;
+          if (!indexMap.has(key)) indexMap.set(key, service);
+        }
+        const seriesIndex = [...indexMap.entries()].map(([key, service]) => ({
+          metric: key.split('\u0000')[0],
+          service,
+        }));
+        const result = await nlQuery(question, seriesIndex);
+        res.json({ ok: true, ...result });
+      } catch (error) {
+        const message = String((error as Error)?.message ?? '');
+        if (message === 'nl_query_no_match' || message === 'nl_query_empty') {
+          res.status(400).json({ ok: false, error: 'nl_query_no_match' });
+          return;
+        }
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'nl_query_unavailable') });
+      }
+    },
+  );
+
+  router.get(
+    '/api/ops/observability/prom/query',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      const base = String(process.env.RDK_PROMETHEUS_QUERY_URL ?? '').trim().replace(/\/$/, '');
+      if (!base) {
+        res.status(501).json({ ok: false, error: 'prometheus_not_configured' });
+        return;
+      }
+      const query = queryText(req.query as Record<string, unknown>, 'query', 2000) ?? '';
+      if (!query || !/^[a-zA-Z0-9_{}()[\]|,!=<>+\-*/\s"'.:@]+$/.test(query)) {
+        res.status(400).json({ ok: false, error: 'invalid_promql' });
+        return;
+      }
+      const minutes = queryInteger(req.query as Record<string, unknown>, 'minutes', 240, 5, 20_160);
+      const end = Date.now() / 1000;
+      const start = end - minutes * 60;
+      const step = Math.max(15, Math.ceil((minutes * 60) / 240));
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8_000);
+      try {
+        const url = `${base}/api/v1/query_range?query=${encodeURIComponent(query)}&start=${start.toFixed(0)}&end=${end.toFixed(0)}&step=${step}`;
+        const response = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json' } });
+        if (!response.ok) {
+          res.status(502).json({ ok: false, error: 'prometheus_query_failed' });
+          return;
+        }
+        const payload = await response.json() as {
+          status?: string;
+          data?: { result?: Array<{ metric?: Record<string, unknown>; values?: Array<[number, string]> }> };
+        };
+        const series = (payload.data?.result ?? []).slice(0, 24).map((row) => {
+          const labels = { ...(row.metric ?? {}) };
+          delete (labels as Record<string, unknown>).__name__;
+          return {
+            name: `${query.split('{')[0]}${Object.keys(labels).length ? ' ' + JSON.stringify(labels) : ''}`,
+            points: (row.values ?? []).map(([ts, value]) => ({ ts: Math.trunc(ts * 1000), value: Number(value) })).filter((p) => Number.isFinite(p.value)),
+          };
+        }).filter((row) => row.points.length);
+        res.json({ ok: true, promql: query, series });
+      } catch {
+        res.status(502).json({ ok: false, error: 'prometheus_unreachable' });
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  );
 
   router.post(
     '/api/ops/observability/ingest-tokens',

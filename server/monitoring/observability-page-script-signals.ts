@@ -85,12 +85,38 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
       async function issueIngestTokenFlow(){const subjectType=String(($('ingestTokenSubjectType')||{}).value||'');const subjectId=String(($('ingestTokenSubjectId')||{}).value||'').trim();const displayName=String(($('ingestTokenDisplayName')||{}).value||'').trim();if(!subjectId){toast('请填写对象 ID（如 sso 用户 ID / 服务名 / 租户 ID）',false);return}
         try{const response=await fetch(base+'/api/ops/observability/ingest-tokens',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({subjectType:subjectType,subjectId:subjectId,displayName:displayName})});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){toast('凭据已签发');showIngestTokenSecret(data.token,'对象 '+data.record.subjectId+' 的 token（只显示一次，立即保存）：');loadIngestTokens()}else toast(data&&data.error==='invalid_subject_id'?'对象 ID 格式不合法（2-128 位字母数字与.@_:-）':'签发失败',false)}catch{toast('签发失败，请检查网络',false)}}
 
-      function renderSignalsView(){loadSignalMetricNames();loadSignalPanels();runSignalsMetricQuery();runSignalsLogQuery();loadQualitySummary();loadIngestTokens()}
+      // ============ 自然语言查询与指标字典 ============
+      async function renderNlChart(series, minutes){const target=$('nlQueryResult');if(!target)return;const chartWrap=make('div','signals-chart-wrap');target.appendChild(chartWrap);renderSignalsChart(chartWrap,series,minutes)}
+      async function executePromql(promql,minutes){const target=$('nlQueryResult');if(!target)return;const status=make('div','signals-empty','正在执行 PromQL…');target.appendChild(status);
+        try{const response=await fetch(base+'/api/ops/observability/prom/query?query='+encodeURIComponent(promql)+'&minutes='+encodeURIComponent(String(minutes)),{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);status.remove();if(!response.ok||!data||!data.ok){const note=make('div','signals-empty',data&&data.error==='prometheus_not_configured'?'未配置 RDK_PROMETHEUS_QUERY_URL，无法直接执行；语句已生成，可在 Prometheus 里查询':'Prometheus 查询失败');target.appendChild(note);return}
+          renderNlChart(data.series||[],minutes)}catch{status.remove();target.appendChild(make('div','signals-empty','Prometheus 查询失败，请检查网络'))}}
+      async function runNlQuery(){const input=$('nlQueryInput');const target=$('nlQueryResult');if(!input||!target)return;const question=String(input.value||'').trim();if(!question){toast('先用一句中文描述你想查什么',false);return}
+        target.replaceChildren();target.appendChild(make('div','signals-empty','正在理解问题…'));
+        try{const response=await fetch(base+'/api/ops/observability/nl-query',{method:'POST',headers:apiHeaders(false),credentials:'same-origin',body:JSON.stringify({question:question})});const data=await response.json().catch(()=>null);target.replaceChildren();if(!response.ok||!data||!data.ok){target.appendChild(make('div','signals-empty',data&&data.error==='nl_query_no_match'?'没能识别目标指标；换个问法，或在指标字典里直接选。':'智能查询暂时不可用'));return}
+          const spec=data.spec||{};const head=make('div','signals-legend');const badge=make('span','signals-log-sev '+(data.source==='model'?'INFO':'WARN'));badge.textContent=data.source==='model'?'AI':'规则';head.appendChild(badge);
+          const explain=add(head,'span','',spec.explanation||'');head.style.gap='6px';target.appendChild(head);
+          if(spec.metric&&(spec.plane==='prometheus'||spec.plane==='otlp')&&data.promql){const code=add(target,'code','',data.promql);code.style.display='block';code.style.margin='6px 0';const run=add(target,'button','btn primary','执行查询');run.type='button';run.addEventListener('click',()=>executePromql(data.promql,spec.windowMinutes||240))}
+          if(spec.metric&&spec.plane==='otlp'){
+            const loading=make('div','signals-empty','正在查询平台内指标 '+spec.metric+' …');target.appendChild(loading);
+            const params='/api/ops/observability/metrics/query?metric='+encodeURIComponent(spec.metric)+'&minutes='+encodeURIComponent(String(spec.windowMinutes||240))+'&points=240';
+            fetch(base+params,{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data2=>{loading.remove();const series=(data2&&data2.ok?data2.series:[]).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));if(!series.length){target.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}renderNlChart(series,spec.windowMinutes||240)}).catch(()=>{loading.textContent='平台内指标查询失败'})}
+          if(!spec.metric){target.appendChild(make('div','signals-empty','未能定位到具体指标；试试「指标字典」页签，或在下方直接输入指标名。'))}
+        }catch{target.replaceChildren();target.appendChild(make('div','signals-empty','智能查询失败，请检查网络'))}}
+      async function loadMetricCatalog(){const target=$('metricCatalogContent');if(!target)return;try{const response=await fetch(base+'/api/ops/observability/metrics/catalog',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);target.replaceChildren();if(!response.ok||!data||!data.ok){target.appendChild(make('div','signals-empty','指标字典读取失败'));return}
+          const groups=new Map();for(const entry of (data.catalog||[])){if(!groups.has(entry.category))groups.set(entry.category,[]);groups.get(entry.category).push(entry)}
+          for(const [category,entries] of groups){const details=make('details','detail-sections');const summary=add(details,'summary','detail-summary');add(summary,'strong','',category+'（'+entries.length+'）');details.appendChild(summary);
+            const table=make('table','signals-log-table');const thead=make('thead');const headRow=make('tr');['指标','说明','标签'].forEach(h=>add(headRow,'th','',h));thead.appendChild(headRow);table.appendChild(thead);const tbody=make('tbody');
+            entries.forEach(entry=>{const tr=make('tr');const nameTd=add(tr,'td');if(entry.metric.startsWith('otlp://')){add(nameTd,'em','',entry.zhName)}else{const btn=add(nameTd,'button','btn','');btn.type='button';btn.textContent=entry.zhName+' · '+entry.metric;btn.addEventListener('click',()=>{const input=$('signalMetricInput');if(input&&entry.metric&&!entry.metric.includes('*')){input.value=entry.metric;toast('已填入指标查询');}})}add(tr,'td','',entry.description);add(tr,'td','',entry.labels.join(', ')||'—');tbody.appendChild(tr)});
+            table.appendChild(tbody);details.appendChild(table);target.appendChild(details)}}catch{target.replaceChildren();target.appendChild(make('div','signals-empty','指标字典读取失败，请检查网络'))}}
+
+      function renderSignalsView(){loadSignalMetricNames();loadSignalPanels();runSignalsMetricQuery();runSignalsLogQuery();loadQualitySummary();loadIngestTokens();loadMetricCatalog()}
       (function bindSignalsControls(){const bind=(id,event,handler)=>{const node=$(id);if(node)node.addEventListener(event,handler)};
         bind('signalQueryBtn','click',runSignalsMetricQuery);
         bind('signalMetricInput','keydown',event=>{if(event.key==='Enter')runSignalsMetricQuery()});
         bind('signalSavePanelBtn','click',saveSignalsPanel);
         bind('signalLogQueryBtn','click',runSignalsLogQuery);
         bind('registerDeviceBtn','click',registerDeviceFlow);
+        bind('nlQueryBtn','click',runNlQuery);
+        bind('nlQueryInput','keydown',event=>{if(event.key==='Enter')runNlQuery()});
         bind('ingestTokenIssueBtn','click',issueIngestTokenFlow)})();
 `

@@ -90,6 +90,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
   <header>
     <div class="brand"><div class="brand-mark" aria-hidden="true">d</div><div class="brand-copy">可观测中心<small>d-obs · Reliability Operations</small></div></div>
     <div id="domainSwitcher" class="domain-switcher" role="tablist" aria-label="观测数据域"><button class="domain-tab" data-domain-tab="cloud" type="button" role="tab" aria-selected="true">云侧</button><button class="domain-tab" data-domain-tab="edge" type="button" role="tab" aria-selected="false">端侧</button><span id="domainHint" class="domain-hint">RDK Studio · 服务 · 服务器</span></div>
+    <button id="globalSearchTrigger" class="global-search-trigger" type="button" aria-haspopup="dialog" aria-controls="commandPaletteBackdrop"><span class="global-search-copy"><strong>快速搜索</strong><small>指标、事故、Trace、SLO 或任意模块</small></span><kbd>⌘ K</kbd></button>
     <button id="themeToggle" class="theme-toggle" type="button" title="切换亮色 / 暗色主题" aria-label="切换主题">◐</button>
     <div id="headerTelemetryStatus" class="header-live unknown" role="status" aria-live="polite">Telemetry 未确认</div>
   </header>
@@ -144,14 +145,15 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div class="page-head-copy"><div id="pageKicker" class="page-kicker">可观测中心 / 总览</div><h1 id="pageTitle">生产可观测与告警</h1><p id="pageIntro" class="page-intro">先判断生产影响，再处理事故、维护告警，最后下钻到链路证据。</p><p id="fresh" role="status" aria-live="polite">正在读取策略与巡检状态…</p></div>
       <div class="page-head-actions"><span class="env-pill">production</span><button id="runChecks" class="btn" type="button">立即评估</button><button id="refresh" class="btn" type="button">刷新数据</button></div>
     </div>
+    <div class="workspace-toolbar">
     <div id="overviewScopeBar" class="scope-bar" role="region" aria-label="总览与 Trace 共用观察范围">
-      <div class="scope-copy"><strong>可靠性证据范围</strong><span>production</span><small>仅总览 / Trace 继承</small></div>
+      <div class="scope-copy"><strong>观察范围</strong><small>总览与链路追踪</small></div>
       <label class="scope-control" for="overviewWindow">时间窗口<select id="overviewWindow" aria-label="选择总览与 Trace 时间窗口"><option value="2">最近 2 小时</option><option value="24" selected>最近 24 小时</option><option value="168">最近 7 天</option></select></label>
       <span id="scopeStatus" class="scope-status unknown" role="status" aria-live="polite">等待真实数据</span>
     </div>
     <div class="global-command-bar" role="region" aria-label="快速导航">
-      <button id="globalSearchTrigger" class="global-search-trigger" type="button" aria-haspopup="dialog" aria-controls="commandPaletteBackdrop"><span class="global-search-copy"><strong>快速搜索</strong><small>指标、事故、Trace、SLO 或任意模块</small></span><kbd>⌘ K</kbd></button>
-      <div class="workspace-facts" aria-label="工作区状态"><span id="globalIncidentFact" class="workspace-fact"><strong>— 个进行中</strong></span><span id="globalFreshnessFact" class="workspace-fact">等待评估</span><span id="globalViewFact" class="workspace-fact">当前视图</span></div>
+        <div class="workspace-facts" aria-label="工作区状态"><span id="globalIncidentFact" class="workspace-fact"><strong>— 个进行中</strong></span><span id="globalFreshnessFact" class="workspace-fact">等待评估</span><span id="globalViewFact" class="workspace-fact">当前视图</span></div>
+    </div>
     </div>
     <section id="view-overview" class="view hidden" aria-labelledby="overviewHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 总览</div><h2 id="overviewHeading">当前态势与行动</h2><p>先看用户影响和待办，再按证据进入对应调查链路。</p></div><div class="right" id="overviewWindowLabel">统一窗口 · 最近 24 小时</div></div>
@@ -164,8 +166,13 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     </section>
     <section id="view-signals" class="view hidden" aria-labelledby="signalsHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 观测查询</div><h2 id="signalsHeading">指标、日志与自定义面板</h2><p>查询 OTLP 落库的指标与日志，把常用查询保存为面板；深度历史仍可到 Prometheus 查询。</p></div><div class="right">OTLP 落库 · 管理员只读</div></div>
-      <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义面板<small>常用查询一屏总览</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/tokens" aria-selected="false">接入凭据<small>按人/服务/租户签发上报凭据</small></button></div>
+      <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义面板<small>常用查询一屏总览</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/catalog" aria-selected="false">指标字典<small>有哪些指标、都是啥意思</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/tokens" aria-selected="false">接入凭据<small>按人/服务/租户签发上报凭据</small></button></div>
       <div class="view-module is-active" data-view-module="signals/metrics" role="tabpanel" aria-label="指标查询">
+        <div class="signals-toolbar">
+          <label>自然语言查询<input id="nlQueryInput" type="text" autocomplete="off" spellcheck="false" placeholder="例如：最近1小时有多少 span 被拒绝 / checkout-api 最近的请求量" /></label>
+          <button id="nlQueryBtn" class="btn primary" type="button">智能查询</button>
+        </div>
+        <div id="nlQueryResult" aria-live="polite"><div class="signals-empty">用一句中文描述你想看什么；也会在指标字典里帮你定位指标</div></div>
         <div class="signals-toolbar">
           <label>指标名<input id="signalMetricInput" list="signalMetricList" type="text" autocomplete="off" spellcheck="false" placeholder="如 rdk_ai_otlp_spans_received_total" /><datalist id="signalMetricList"></datalist></label>
           <label>时间窗口<select id="signalMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option></select></label>
@@ -188,6 +195,10 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       </div>
       <div class="view-module" data-view-module="signals/quality" role="tabpanel" aria-label="质量与反馈" hidden>
         <div id="signalsQualityContent" aria-live="polite"><div class="signals-empty">正在读取质量趋势…</div></div>
+      </div>
+      <div class="view-module" data-view-module="signals/catalog" role="tabpanel" aria-label="指标字典" hidden>
+        <p class="domain-note">不确定指标名？先在这里找：每个指标都有中文说明和标签；点指标名可自动填入指标查询。<strong>应用指标</strong>类走平台内查询（保留 14 天），<strong>其余</strong>走 Prometheus 深度历史。</p>
+        <div id="metricCatalogContent" aria-live="polite"><div class="signals-empty">正在读取指标字典…</div></div>
       </div>
       <div class="view-module" data-view-module="signals/tokens" role="tabpanel" aria-label="接入凭据" hidden><details id="signals-tokens" class="detail-sections" open><summary class="detail-summary"><strong>生态接入凭据</strong><span>身份只在凭据层：遥测数据按 owner 归账、零 PII，注册表负责 owner → 对象映射</span></summary>
         <div class="signals-toolbar">
@@ -241,8 +252,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 事故调查</div><h2 id="investigationHeading">异常、证据与影响范围</h2><p>形成可复核的根因假设；只读调查，不直接执行处置。</p></div><div class="right">证据先行 · 只读调查</div></div>
       <div id="investigationContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在建立调查视图</strong><small>关联异常趋势、代表事件与影响范围…</small></div></div>
     </section>
-    <section id="view-traces" class="view hidden" aria-labelledby="tracesHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 链路追踪</div><h2 id="tracesHeading">单次运行证据链</h2><p>定位单次 Agent / 会话运行，适合从事故证据继续下钻。</p></div><div class="right">只读调查</div></div>
+    <section id="view-traces" class="view hidden" aria-label="链路追踪">
       <div class="module-switcher" role="tablist" aria-label="链路追踪子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="traces/runs" aria-selected="true">运行证据链<small>单次运行下钻</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="traces/agent" aria-selected="false">Agent Trace<small>调用树 · token · 工具</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="traces/session" aria-selected="false">会话 Trace<small>按会话重放</small></button></div>
       <div class="view-module is-active" data-view-module="traces/runs" role="tabpanel" aria-label="运行证据链">
       <div id="nativeTraceContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取链路证据</strong><small>加载运行、模型、工具调用和审批记录…</small></div></div>

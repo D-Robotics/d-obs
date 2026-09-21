@@ -63,7 +63,7 @@ function normalizeEvidenceIndex(value: unknown): CopilotEvidenceRef[] {
   return result;
 }
 
-async function resolveGatewayChatTarget(): Promise<{ baseUrl: string; model: string; apiKey: string } | null> {
+export async function resolveGatewayChatTarget(): Promise<{ baseUrl: string; model: string; apiKey: string } | null> {
   const config = await getGatewayConfigSummary();
   const mappings = config.modelMapping ?? {};
   const candidates = Object.values(mappings)
@@ -74,7 +74,7 @@ async function resolveGatewayChatTarget(): Promise<{ baseUrl: string; model: str
   return candidates[0] ?? null;
 }
 
-async function callGatewayChat(
+export async function callGatewayChat(
   target: { baseUrl: string; model: string; apiKey: string },
   messages: Array<{ role: string; content: string }>,
   timeoutMs: number,
@@ -112,7 +112,7 @@ async function callGatewayChat(
   }
 }
 
-function extractJson(raw: string): Record<string, unknown> | null {
+export function extractJson(raw: string): Record<string, unknown> | null {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw);
   const candidate = (fenced ? fenced[1] : raw).trim();
   const start = candidate.indexOf('{');
