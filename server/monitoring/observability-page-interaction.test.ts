@@ -111,6 +111,11 @@ function setup(): Harness {
       getAttribute(k: string) {
         return node.attrs[k] ?? null;
       },
+      removeAttribute(k: string) {
+        delete node.attrs[k];
+      },
+      querySelector: () => null,
+      querySelectorAll: () => [] as StubNode[],
       addEventListener(type: string, fn: (e?: unknown) => unknown) {
         (listeners[type] ||= []).push(fn);
       },
