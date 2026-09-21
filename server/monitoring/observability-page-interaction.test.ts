@@ -63,6 +63,7 @@ interface Harness {
   text(node: StubNode): string;
   all(node: StubNode): StubNode[];
   byClass(node: StubNode, cls: string): StubNode[];
+  byIdNode(id: string): StubNode | undefined;
 }
 
 function setup(): Harness {
@@ -101,6 +102,9 @@ function setup(): Harness {
         const i = node.children.indexOf(child);
         if (i >= 0) node.children.splice(i, 1);
         return child;
+      },
+      replaceChildren(...replacements: StubNode[]) {
+        node.children.splice(0, node.children.length, ...replacements);
       },
       remove() {
         if (node.parentNode) node.parentNode.removeChild(node);
@@ -257,7 +261,12 @@ function setup(): Harness {
     const hook =
       ";globalThis.__obs={" +
       "renderActionCenter:typeof renderActionCenter!=='undefined'?renderActionCenter:null," +
-      "renderMaintenancePanel:typeof renderMaintenancePanel!=='undefined'?renderMaintenancePanel:null" +
+      "renderMaintenancePanel:typeof renderMaintenancePanel!=='undefined'?renderMaintenancePanel:null," +
+      "setView:typeof setView!=='undefined'?setView:null," +
+      "resolveViewRequest:typeof resolveViewRequest!=='undefined'?resolveViewRequest:null," +
+      "renderSettings:typeof renderSettings!=='undefined'?renderSettings:null," +
+      "setObsState:(patch)=>Object.assign(state,patch)," +
+      "getObsState:()=>state" +
       "};})();";
     return s.slice(0, -'})();'.length) + hook;
   })();
@@ -267,11 +276,11 @@ function setup(): Harness {
   assert.equal(typeof obs.renderMaintenancePanel, 'function', '主 IIFE 内应能取到 renderMaintenancePanel');
 
   const text = (node: StubNode): string =>
-    (node.textContent ?? '') + node.children.map((c) => text(c)).join('');
+    (node.textContent ?? '') + (node.children ?? []).map((c) => text(c)).join('');
   const all = (node: StubNode): StubNode[] =>
-    [node, ...node.children.flatMap((c) => all(c))];
+    [node, ...(node.children ?? []).flatMap((c) => all(c))];
   const byClass = (node: StubNode, cls: string): StubNode[] =>
-    all(node).filter((n) => n.classList.contains(cls));
+    all(node).filter((n) => n.classList && n.classList.contains(cls));
 
   return {
     obs,
@@ -285,6 +294,7 @@ function setup(): Harness {
     text,
     all,
     byClass,
+    byIdNode: (id: string): StubNode | undefined => byId.get(id),
   };
 }
 
@@ -302,6 +312,67 @@ test('页面脚本在 DOM 桩中完整求值：render 函数成为可调用全�
   assert.equal(typeof h.obs.renderActionCenter, 'function');
   assert.equal(typeof h.obs.renderMaintenancePanel, 'function');
   assert.equal(h.innerHTMLWrites.length, 0, '求值阶段不得写 innerHTML');
+});
+
+test('两级路由：旧 hash 别名规范化为 视图/子模块，未知视图回落总览', () => {
+  const h = setup();
+  const resolve = h.obs.resolveViewRequest as (r: string) => Record<string, string>;
+  assert.equal(typeof resolve, 'function', '应能取到 resolveViewRequest');
+  const canon = (r: string) => JSON.stringify(resolve(r));
+  assert.equal(canon('model-pool'), JSON.stringify({ name: 'platform', child: 'model-pool', source: 'platform/model-pool' }));
+  assert.equal(canon('settings/probing'), JSON.stringify({ name: 'platform', child: 'probing', source: 'platform/probing' }));
+  assert.equal(canon('platform'), JSON.stringify({ name: 'platform', child: 'general', source: 'platform/general' }));
+  assert.equal(canon('alerts'), JSON.stringify({ name: 'alerts', child: 'rules', source: 'alerts/rules' }));
+  assert.equal(canon('alerts/channels'), JSON.stringify({ name: 'alerts', child: 'channels', source: 'alerts/channels' }));
+  assert.equal(canon('agent-traces'), JSON.stringify({ name: 'traces', child: 'agent', source: 'traces/agent' }));
+  assert.equal(canon('session-traces'), JSON.stringify({ name: 'traces', child: 'session', source: 'traces/session' }));
+  assert.equal(canon('signals'), JSON.stringify({ name: 'signals', child: 'metrics', source: 'signals/metrics' }));
+  const setView = h.obs.setView as (r: string, u?: boolean) => unknown;
+  setView('bogus/whatever', false);
+  assert.equal((h.obs.getObsState as () => Record<string, unknown>)().view, 'overview', '未知视图回落总览');
+});
+
+test('系统设置子模块：setView 记录子模块，renderSettings 分发四张配置卡', () => {
+  const h = setup();
+  const state = h.obs.getObsState as () => Record<string, unknown>;
+  (h.obs.setView as (r: string, u?: boolean) => unknown)('platform/heal', false);
+  assert.equal(state().view, 'platform');
+  assert.equal(state().viewChild, 'heal');
+  assert.equal(state().viewSource, 'platform/heal');
+  (h.obs.setObsState as (p: Record<string, unknown>) => unknown)({
+    config: {
+      global: { enabled: true, environmentLabel: 'production / test', autoRemediation: false, remediationCooldownMinutes: 10 },
+      synthetic: { intervalMinutes: 15, username: 'canary', passwordConfigured: true },
+      logSignatures: { application: ['SyntaxError'], postgres: ['FATAL:'] },
+      unmanagedRuleKeys: [],
+      defaultOnlyRuleKeys: [],
+      configFilePresent: true,
+    },
+  });
+  (h.obs.renderSettings as () => void)();
+  for (const id of ['settingsContentGeneral', 'settingsContentProbing', 'settingsContentLogs', 'settingsContentHeal']) {
+    const node = h.byIdNode(id);
+    assert.ok(node, `容器 ${id} 应存在`);
+    assert.ok(
+      h.byClass(node as StubNode, 'settings-card').length === 1,
+      `容器 ${id} 应恰好渲染一张配置卡`,
+    );
+  }
+  const paneInputs: Record<string, string> = {
+    settingsContentGeneral: 'globalEnabled',
+    settingsContentProbing: 'syntheticUser',
+    settingsContentLogs: 'appSignatures',
+    settingsContentHeal: 'autoRemediation',
+  };
+  for (const [paneId, inputId] of Object.entries(paneInputs)) {
+    const pane = h.byIdNode(paneId);
+    assert.ok(pane, `容器 ${paneId} 应存在`);
+    const found = h
+      .all(pane as StubNode)
+      .find((n) => (n as unknown as { id?: string }).id === inputId || n.attrs?.id === inputId);
+    assert.ok(found, `配置控件 ${inputId} 应渲染在 ${paneId} 子树内`);
+  }
+  assert.equal(h.innerHTMLWrites.length, 0);
 });
 
 test('行动中心：critical 事故 + 影子模式渲染两条待办与 CTA', () => {
