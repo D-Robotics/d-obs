@@ -25,6 +25,7 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 | GET | `/api/ops/observability/learning?days=30` | Skill 数据闭环投影 |
 | GET | `/api/ops/observability/model-pool` | 模型池状态（目标健康 + 路由映射） |
 | POST | `/api/ops/observability/model-pool/probe` | 单目标真实探测 |
+| POST | `/api/ops/observability/model-pool/cleanup` | 清理没有路由引用的模型目标（需 confirm:CLEANUP；Agent 主路由与仍在用目标受保护） |
 | PUT | `/api/ops/observability/model-pool/routing` | 调整 fallback 顺序 / 权重 |
 | PUT | `/api/ops/observability/model-pool/replace` | 替换上游目标（需 confirm:REPLACE；先预探测新目标，失败不写入，旧目标存快照） |
 | POST | `/api/ops/observability/model-pool/rollback` | 回滚到最近一次替换前的目标（需 confirm:ROLLBACK + 重新提供旧 Key；Key 不落盘） |
@@ -110,6 +111,7 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 - **看**：目标列表 = label / model / baseUrl / Key 指纹（脱敏）/ 状态
   （healthy/half_open/cooldown/degraded）/ 成功率 / P95 / 并发 / 角色。
 - **探测**：对单目标发一次真实调用，成功会刷状态与延迟统计。
+- **清理**：列表会标出没有任何 frontend 路由引用的目标，可逐个或批量清理；服务端会再次读取健康状态校验目标仍存在且未被使用，再调用网关的 `/admin/model/remove`。仍在路由中的目标必须先调整路由，Agent 主路由始终受保护。
 - **调路由**：选一个 frontend 映射，填 fallback 顺序（逗号分隔、不可重复）和权重。
   **Agent 主路由受保护**，界面上不可选，避免预算保护被覆盖。
 - **替换目标**：完整 HTTPS baseUrl + 上游模型名 + 新 Key（仅本次提交，不落盘明文），

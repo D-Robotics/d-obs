@@ -10,6 +10,7 @@ import {
 import {
   getGatewayConfigSummary,
   getGatewayProviderHealth,
+  removeGatewayModel,
   preflightGatewayTarget,
   probeGatewayProvider,
   replaceGatewayModel,
@@ -65,6 +66,73 @@ export function registerModelPoolRoutes(router: Router): void {
         res
           .status(502)
           .json({ ok: false, error: clientErrorCode(error, 'model_probe_failed') });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/model-pool/cleanup',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const frontendModel = String(req.body?.frontendModel ?? '').trim();
+      const rawTarget = req.body?.target;
+      const baseUrl = String(rawTarget?.baseUrl ?? '').trim();
+      const model = String(rawTarget?.model ?? '').trim();
+      const protectedRoute = frontendModel ? isProtectedAgentFrontendModel(frontendModel) : false;
+      if (protectedRoute || req.body?.confirm !== 'CLEANUP') {
+        res.status(400).json({
+          ok: false,
+          error: protectedRoute ? 'agent_route_locked' : 'cleanup_confirmation_required',
+        });
+        return;
+      }
+      if (!baseUrl || baseUrl.length > 512 || !model || model.length > 160) {
+        res.status(400).json({ ok: false, error: 'invalid_cleanup_target' });
+        return;
+      }
+      let normalizedBaseUrl = '';
+      try {
+        const parsed = new URL(baseUrl);
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('protocol');
+        normalizedBaseUrl = parsed.toString().replace(/\/$/, '');
+      } catch {
+        res.status(400).json({ ok: false, error: 'invalid_cleanup_target' });
+        return;
+      }
+      try {
+        // Only orphaned targets can be cleaned from this quick action. A target
+        // still referenced by a route must be changed through routing first.
+        const health = await getGatewayProviderHealth();
+        const current = (health.targets ?? []).find(
+          (target) =>
+            target.baseUrl.replace(/\/$/, '') === normalizedBaseUrl && target.model === model,
+        );
+        if (!current) {
+          res.status(404).json({ ok: false, error: 'model_target_not_found' });
+          return;
+        }
+        if (current && ((current.roles ?? []).includes('primary') || (current.frontendModels ?? []).length)) {
+          res.status(409).json({ ok: false, error: 'model_target_in_use' });
+          return;
+        }
+        const result = await removeGatewayModel({
+          ...(frontendModel ? { frontendModel } : {}),
+          baseUrl: normalizedBaseUrl,
+          model,
+        });
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'cleanup_model_pool_target',
+          summary: `清理无路由引用的模型目标：${model}@${new URL(normalizedBaseUrl).hostname}`,
+          details: { frontendModel: frontendModel || null, target: { baseUrl: normalizedBaseUrl, model } },
+        }).catch(() => undefined);
+        res.json({ ok: true, result });
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          error: clientErrorCode(error, 'model_cleanup_failed'),
+        });
       }
     },
   );

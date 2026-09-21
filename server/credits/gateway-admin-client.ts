@@ -354,6 +354,28 @@ export async function replaceGatewayModel(
   });
 }
 
+/**
+ * Remove an unused model target from the gateway model pool.
+ *
+ * The gateway deliberately owns the provider credential and runtime state, so
+ * d-obs only sends the non-secret target identity (and, when available, the
+ * frontend alias). The gateway implementation is responsible for removing the
+ * target from its mapping and health registry atomically.
+ */
+export async function removeGatewayModel(input: {
+  frontendModel?: string;
+  baseUrl: string;
+  model: string;
+}): Promise<unknown> {
+  return adminFetch('/admin/model/remove', {
+    method: 'POST',
+    body: {
+      ...(input.frontendModel ? { frontendModel: input.frontendModel } : {}),
+      target: { baseUrl: input.baseUrl, model: input.model },
+    },
+  });
+}
+
 export interface GatewayTargetPreflightResult {
   ok: boolean;
   status: number | null;
