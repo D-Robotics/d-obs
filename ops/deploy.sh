@@ -190,10 +190,23 @@ if [ "$healthy" != "1" ]; then
 fi
 
 rm -f "$REMOTE_TGZ" "$REMOTE_TGZ.sha256"
+
+# 告警 worker 与 Web 同库同版：worker 单元（rdk-observability-worker.service，
+# timer 每分钟 oneshot）的 current 软链指向本 release。它曾独立部署在
+# /opt/rdk-observability/releases，与 Web 漂移 10 天导致新告警信号不上线；
+# 单元 ExecStart 的 server/（无 dist 前缀）布局由 drop-in override.conf 对齐。
+# 回滚时两处软链要一起切。
+WORKER_LINK=/opt/rdk-observability/current
+if [ -d /opt/rdk-observability ] && [ "$(readlink -f "$WORKER_LINK" 2>/dev/null || true)" != "$REL_DIR" ]; then
+  PREV_WORKER="$(readlink -f "$WORKER_LINK" 2>/dev/null || true)"
+  ln -sfn "$REL_DIR" "$WORKER_LINK"
+  say "worker 同步：$WORKER_LINK -> $REL_DIR（上一版 $PREV_WORKER）"
+fi
+
 say "发布成功"
 echo "current  -> $(readlink -f "$CUR_LINK")"
 echo "上一版   -> $PREV"
-echo "回滚命令 -> ln -sfn $PREV $CUR_LINK && systemctl restart d-obs"
+echo "回滚命令 -> ln -sfn $PREV $CUR_LINK && systemctl restart d-obs && ln -sfn $PREV /opt/rdk-observability/current"
 echo "release 数：$(ls -1 /opt/d-obs/releases | wc -l)，占用 $(du -sh /opt/d-obs/releases | cut -f1)"
 REMOTE
 then
