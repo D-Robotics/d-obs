@@ -28,8 +28,8 @@ function metadataValue(metadata: Metadata, key: string): string | Buffer | undef
   return undefined;
 }
 
-function identityForCall(call: ServerUnaryCall<unknown, unknown>) {
-  return principalFromGrpcMetadata(
+async function identityForCall(call: ServerUnaryCall<unknown, unknown>) {
+  return await principalFromGrpcMetadata(
     metadataValue(call.metadata, 'authorization'),
     metadataValue(call.metadata, 'x-api-key')
       ?? metadataValue(call.metadata, 'api-key')
@@ -54,7 +54,7 @@ async function exportTrace(
   call: ServerUnaryCall<JsonObject, OtlpResponse>,
   callback: sendUnaryData<OtlpResponse>,
 ): Promise<void> {
-  const identity = identityForCall(call);
+  const identity = await identityForCall(call);
   if (!identity) {
     callback(grpcError(status.UNAUTHENTICATED, 'invalid_observability_token'));
     return;
@@ -75,7 +75,7 @@ async function exportMetrics(
   call: ServerUnaryCall<JsonObject, OtlpResponse>,
   callback: sendUnaryData<OtlpResponse>,
 ): Promise<void> {
-  const identity = identityForCall(call);
+  const identity = await identityForCall(call);
   if (!identity) {
     callback(grpcError(status.UNAUTHENTICATED, 'invalid_observability_token'));
     return;
@@ -101,7 +101,7 @@ async function exportLogs(
   call: ServerUnaryCall<JsonObject, OtlpResponse>,
   callback: sendUnaryData<OtlpResponse>,
 ): Promise<void> {
-  const identity = identityForCall(call);
+  const identity = await identityForCall(call);
   if (!identity) {
     callback(grpcError(status.UNAUTHENTICATED, 'invalid_observability_token'));
     return;

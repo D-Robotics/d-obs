@@ -164,7 +164,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     </section>
     <section id="view-signals" class="view hidden" aria-labelledby="signalsHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 观测查询</div><h2 id="signalsHeading">指标、日志与自定义面板</h2><p>查询 OTLP 落库的指标与日志，把常用查询保存为面板；深度历史仍可到 Prometheus 查询。</p></div><div class="right">OTLP 落库 · 管理员只读</div></div>
-      <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义面板<small>常用查询一屏总览</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button></div>
+      <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义面板<small>常用查询一屏总览</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/tokens" aria-selected="false">接入凭据<small>按人/服务/租户签发上报凭据</small></button></div>
       <div class="view-module is-active" data-view-module="signals/metrics" role="tabpanel" aria-label="指标查询">
         <div class="signals-toolbar">
           <label>指标名<input id="signalMetricInput" list="signalMetricList" type="text" autocomplete="off" spellcheck="false" placeholder="如 rdk_ai_otlp_spans_received_total" /><datalist id="signalMetricList"></datalist></label>
@@ -189,6 +189,16 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div class="view-module" data-view-module="signals/quality" role="tabpanel" aria-label="质量与反馈" hidden>
         <div id="signalsQualityContent" aria-live="polite"><div class="signals-empty">正在读取质量趋势…</div></div>
       </div>
+      <div class="view-module" data-view-module="signals/tokens" role="tabpanel" aria-label="接入凭据" hidden><details id="signals-tokens" class="detail-sections" open><summary class="detail-summary"><strong>生态接入凭据</strong><span>身份只在凭据层：遥测数据按 owner 归账、零 PII，注册表负责 owner → 对象映射</span></summary>
+        <div class="signals-toolbar">
+          <label>对象类型<select id="ingestTokenSubjectType"><option value="user">用户（sso_user_id）</option><option value="service">服务</option><option value="tenant">租户</option></select></label>
+          <label>对象 ID<input id="ingestTokenSubjectId" type="text" autocomplete="off" spellcheck="false" placeholder="如 u-20260901-abcd / checkout-api / tenant-alpha" /></label>
+          <label>显示名<input id="ingestTokenDisplayName" type="text" autocomplete="off" spellcheck="false" placeholder="可留空" /></label>
+          <button id="ingestTokenIssueBtn" class="btn primary" type="button">签发</button>
+        </div>
+        <div id="ingestTokenSecretHint" class="domain-note hidden" aria-live="polite"></div>
+        <div id="ingestTokensContent" aria-live="polite"><div class="signals-empty">正在读取凭据清单…</div></div>
+      </details></div>
     </section>
     <section id="view-devices" class="view hidden" aria-labelledby="devicesHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 边缘设备</div><h2 id="devicesHeading">边缘设备与心跳</h2><p>注册 RDK 板级设备、查看心跳与在线状态，下钻板级指标（CPU / 内存 / 温度 / BPU）。</p></div><div class="right">设备 token 只显示一次</div></div>

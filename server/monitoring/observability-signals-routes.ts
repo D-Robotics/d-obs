@@ -20,6 +20,7 @@ import {
   setDeviceStatus,
   DEVICE_ID_PATTERN,
 } from './device-registry.js';
+import { issueIngestToken, invalidateIngestTokenCache, listIngestTokens, revokeIngestToken, rotateIngestToken } from '../observability/ingest-token-store.js';
 import { createPanel, deletePanel, listPanels, normalizePanelSpec } from './dashboard-panels-store.js';
 import { analyzeIncidentEvidence, copilotModelEnabled } from '../observability/copilot-model.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
@@ -205,6 +206,98 @@ export function registerSignalsRoutes(router: Router): void {
           return;
         }
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'device_store_unavailable') });
+      }
+    },
+  );
+
+  router.get('/api/ops/observability/ingest-tokens', requireObservabilityAccess, async (_req, res) => {
+    try {
+      const tokens = await listIngestTokens();
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ ok: true, tokens });
+    } catch (error) {
+      res.status(503).json({ ok: false, error: clientErrorCode(error, 'ingest_token_store_unavailable') });
+    }
+  });
+
+  router.post(
+    '/api/ops/observability/ingest-tokens',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      try {
+        const { record, token } = await issueIngestToken({
+          subjectType: body.subjectType,
+          subjectId: body.subjectId,
+          displayName: body.displayName,
+          labels: body.labels,
+          createdBy: resolveOpsActor(req),
+        });
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'ingest_token_issue',
+          summary: `签发生态接入凭据 ${record.tokenId}（${record.subjectType}:${record.subjectId}）`,
+        });
+        invalidateIngestTokenCache();
+        res.status(201).json({ ok: true, record, token, tokenHeader: 'authorization' });
+      } catch (error) {
+        const message = String((error as Error)?.message ?? '');
+        if (message === 'invalid_subject_type' || message === 'invalid_subject_id') {
+          res.status(400).json({ ok: false, error: message });
+          return;
+        }
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'ingest_token_store_unavailable') });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/ingest-tokens/:tokenId/rotate',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const { record, token } = await rotateIngestToken(String(req.params.tokenId ?? ''));
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'ingest_token_rotate',
+          summary: `轮换生态接入凭据 ${record.tokenId}（${record.subjectType}:${record.subjectId}）`,
+        });
+        invalidateIngestTokenCache();
+        res.json({ ok: true, record, token, tokenHeader: 'authorization' });
+      } catch (error) {
+        const message = String((error as Error)?.message ?? '');
+        if (message === 'ingest_token_not_found') {
+          res.status(404).json({ ok: false, error: 'ingest_token_not_found' });
+          return;
+        }
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'ingest_token_store_unavailable') });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/ingest-tokens/:tokenId/revoke',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const record = await revokeIngestToken(String(req.params.tokenId ?? ''));
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'ingest_token_revoke',
+          summary: `吊销生态接入凭据 ${record.tokenId}（${record.subjectType}:${record.subjectId}）`,
+        });
+        invalidateIngestTokenCache();
+        res.json({ ok: true, record });
+      } catch (error) {
+        const message = String((error as Error)?.message ?? '');
+        if (message === 'ingest_token_not_found') {
+          res.status(404).json({ ok: false, error: 'ingest_token_not_found' });
+          return;
+        }
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'ingest_token_store_unavailable') });
       }
     },
   );

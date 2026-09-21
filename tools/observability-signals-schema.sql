@@ -140,3 +140,19 @@ create table if not exists public.studio_obs_dashboard_panels (
 
 create index if not exists studio_obs_dashboard_panels_owner_idx
   on public.studio_obs_dashboard_panels (owner, position);
+
+-- ===== 生态接入凭据（人/服务/租户三级签发；身份只在凭据层，遥测零 PII） =====
+create table if not exists public.studio_obs_ingest_tokens (
+  token_id text primary key,
+  token_hash text not null unique,
+  subject_type text not null check (subject_type in ('user', 'service', 'tenant')),
+  subject_id text not null,
+  display_name text not null default '',
+  labels jsonb not null default '{}'::jsonb,
+  owner text not null,
+  status text not null default 'active' check (status in ('active', 'revoked')),
+  created_at timestamptz not null default now(),
+  created_by text not null default '',
+  last_seen_at timestamptz null,
+  revoked_at timestamptz null
+);

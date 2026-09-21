@@ -29,6 +29,7 @@ studio_alert_worker_status
 studio_daily_usage
 studio_device_samples
 studio_devices
+studio_obs_ingest_tokens
 studio_evolution_runs
 studio_evolution_worker_status
 studio_experience_summaries

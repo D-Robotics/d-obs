@@ -21,6 +21,7 @@ import {
 } from './ai-ecosystem-metrics.js';
 import { insertLogRecords, type NormalizedLogRecord } from './ai-ecosystem-logs-store.js';
 import { enqueueMetricPoints, metricQueueDepth, metricQueueDroppedTotal } from './ai-ecosystem-metrics-store.js';
+import { resolveIngestToken } from './ingest-token-store.js';
 import { decodeLogsProtobuf, decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
 import { renderDevicePrometheusMetrics } from '../monitoring/device-prometheus.js';
 
@@ -162,24 +163,34 @@ function sameSecret(actual: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function principalForCredential(credential: { token: string; presented: string } | null): Principal | null {
-  if (!credential) return null;
-  const configured = text(process.env.RDK_PUBLIC_OBSERVABILITY_API_TOKEN, 4_000);
-  if (configured && !sameSecret(credential.token, configured) && !sameSecret(credential.presented, configured)) return null;
-  const digest = createHash('sha256').update(credential.token).digest('hex');
+function publicPrincipalForToken(token: string): Principal {
+  const digest = createHash('sha256').update(token).digest('hex');
   return { owner: `public_${digest}`, keyId: digest.slice(0, 32) };
 }
 
-export function principalFromGrpcMetadata(authorization: unknown, apiKey: unknown): Principal | null {
+async function principalForCredential(credential: { token: string; presented: string } | null): Promise<Principal | null> {
+  if (!credential) return null;
+  const configured = text(process.env.RDK_PUBLIC_OBSERVABILITY_API_TOKEN, 4_000);
+  if (configured && (sameSecret(credential.token, configured) || sameSecret(credential.presented, configured))) {
+    return publicPrincipalForToken(credential.token);
+  }
+  // 注册表凭据（人/服务/租户三级签发）与固定 token 二选一通过；owner 推导
+  // 与匿名凭据一致（sha256(token)），身份映射在注册表，遥测数据零 PII。
+  if (await resolveIngestToken(credential.token)) return publicPrincipalForToken(credential.token);
+  if (configured) return null;
+  return publicPrincipalForToken(credential.token);
+}
+
+export async function principalFromGrpcMetadata(authorization: unknown, apiKey: unknown): Promise<Principal | null> {
   return principalForCredential(credentialFromHeaders(authorization, apiKey));
 }
 
-function principal(req: Request): Principal | null {
+async function principal(req: Request): Promise<Principal | null> {
   return principalForCredential(tokenFromRequest(req));
 }
 
-function requirePrincipal(req: Request, res: Response): Principal | null {
-  const value = principal(req);
+async function requirePrincipal(req: Request, res: Response): Promise<Principal | null> {
+  const value = await principal(req);
   if (!value) {
     res.status(401).json({ ok: false, error: 'invalid_observability_token', code: 'invalid_observability_token' });
     return null;
@@ -358,7 +369,7 @@ function requestBody(req: Request, signal: 'traces' | 'metrics' | 'logs'): JsonO
 }
 
 async function ingestTraces(req: Request, res: Response): Promise<void> {
-  const identity = requirePrincipal(req, res);
+  const identity = await requirePrincipal(req, res);
   if (!identity) return;
   let body: JsonObject;
   const startedAt = Date.now();
@@ -379,7 +390,7 @@ async function ingestTraces(req: Request, res: Response): Promise<void> {
 }
 
 async function ingestLogs(req: Request, res: Response): Promise<void> {
-  const identity = requirePrincipal(req, res);
+  const identity = await requirePrincipal(req, res);
   if (!identity) return;
   let body: JsonObject;
   try {
@@ -558,7 +569,7 @@ export async function ingestLogPayload(body: JsonObject, identity: Principal): P
 }
 
 async function ingestMetrics(req: Request, res: Response): Promise<void> {
-  const identity = requirePrincipal(req, res);
+  const identity = await requirePrincipal(req, res);
   if (!identity) return;
   let body: JsonObject;
   const startedAt = Date.now();

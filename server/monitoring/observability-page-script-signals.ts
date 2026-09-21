@@ -71,11 +71,26 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           const active=(trend.series||[]).filter(p=>p.feedbackCount>0||p.scoreCount>0);if(!active.length){target.appendChild(make('div','signals-empty','近 30 天还没有评分或反馈数据；在链路追踪里对 run 打分/点 👍👎 后这里会出现趋势'));return}
           const table=make('table','signals-log-table');const thead=make('thead');const headRow=make('tr');['日期','反馈','好评率','评分样本','平均评分'].forEach(h=>add(headRow,'th','',h));thead.appendChild(headRow);table.appendChild(thead);const tbody=make('tbody');active.slice(-14).forEach(p=>{const tr=make('tr');add(tr,'td','',p.day);add(tr,'td','',String(p.feedbackCount));add(tr,'td','',p.positiveRate==null?'—':Math.round(p.positiveRate*100)+'%');add(tr,'td','',String(p.scoreCount));add(tr,'td','',p.avgScore==null?'—':String(p.avgScore));tbody.appendChild(tr)});table.appendChild(tbody);target.appendChild(table)}catch{target.replaceChildren();target.appendChild(make('div','signals-empty','质量趋势读取失败，请检查网络'))}}
 
-      function renderSignalsView(){loadSignalMetricNames();loadSignalPanels();runSignalsMetricQuery();runSignalsLogQuery();loadQualitySummary()}
+      // ============ 生态接入凭据（人/服务/租户三级） ============
+      const ingestSubjectNames={user:'用户',service:'服务',tenant:'租户'};
+      function showIngestTokenSecret(token,prefix){const hint=$('ingestTokenSecretHint');if(hint){hint.classList.remove('hidden');hint.textContent=prefix+token+'  |  上报示例：OTEL_EXPORTER_OTLP_HEADERS=\\'Authorization=Bearer '+token.slice(0,8)+'…\\'（完整值见上方，只显示一次）'}}
+      async function loadIngestTokens(){const target=$('ingestTokensContent');if(!target)return;try{const response=await fetch(base+'/api/ops/observability/ingest-tokens',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);target.replaceChildren();if(!response.ok||!data||!data.ok){target.appendChild(make('div','signals-empty','凭据清单读取失败（需要中心库）'));return}
+          const tokens=data.tokens||[];if(!tokens.length){target.appendChild(make('div','signals-empty','还没有签发凭据；上方选择对象类型与 ID 后点「签发」'));return}
+          const table=make('table','signals-log-table');const thead=make('thead');const headRow=make('tr');['对象','类型','显示名','owner 前缀','状态','最近上报','操作'].forEach(h=>add(headRow,'th','',h));thead.appendChild(headRow);table.appendChild(thead);const tbody=make('tbody');
+          tokens.forEach(row=>{const tr=make('tr');add(tr,'td','',row.subjectId||'—');add(tr,'td','',ingestSubjectNames[row.subjectType]||row.subjectType);add(tr,'td','',row.displayName||'—');add(tr,'td','',String(row.owner||'').slice(0,22)+'…');const st=add(tr,'td');add(st,'span','signals-log-sev '+(row.status==='active'?'INFO':'ERROR'),row.status==='active'?'active':'revoked');add(tr,'td','',when(row.lastSeenAt));const op=add(tr,'td');const rotate=add(op,'button','btn','轮换');rotate.type='button';rotate.addEventListener('click',()=>ingestTokenAction(row.tokenId,'rotate'));const revoke=add(op,'button','btn','吊销');revoke.type='button';revoke.addEventListener('click',()=>ingestTokenAction(row.tokenId,'revoke'));tbody.appendChild(tr)});
+          table.appendChild(tbody);target.appendChild(table)}catch{target.replaceChildren();target.appendChild(make('div','signals-empty','凭据清单读取失败，请检查网络'))}}
+      async function ingestTokenAction(tokenId,action){if(action==='rotate'&&!window.confirm('轮换该凭据？旧 token 立即失效。'))return;
+        try{const response=await fetch(base+'/api/ops/observability/ingest-tokens/'+encodeURIComponent(tokenId)+'/'+action,{method:'POST',headers:apiHeaders(true),credentials:'same-origin'});const data=await response.json().catch(()=>null);if(!response.ok||!data||!data.ok){toast(action==='rotate'?'轮换失败':'吊销失败',false);return}
+          if(action==='rotate')showIngestTokenSecret(data.token,'轮换成功，新 token（只显示一次）：');else toast('已吊销');loadIngestTokens()}catch{toast('操作失败，请检查网络',false)}}
+      async function issueIngestTokenFlow(){const subjectType=String(($('ingestTokenSubjectType')||{}).value||'');const subjectId=String(($('ingestTokenSubjectId')||{}).value||'').trim();const displayName=String(($('ingestTokenDisplayName')||{}).value||'').trim();if(!subjectId){toast('请填写对象 ID（如 sso 用户 ID / 服务名 / 租户 ID）',false);return}
+        try{const response=await fetch(base+'/api/ops/observability/ingest-tokens',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({subjectType:subjectType,subjectId:subjectId,displayName:displayName})});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){toast('凭据已签发');showIngestTokenSecret(data.token,'对象 '+data.record.subjectId+' 的 token（只显示一次，立即保存）：');loadIngestTokens()}else toast(data&&data.error==='invalid_subject_id'?'对象 ID 格式不合法（2-128 位字母数字与.@_:-）':'签发失败',false)}catch{toast('签发失败，请检查网络',false)}}
+
+      function renderSignalsView(){loadSignalMetricNames();loadSignalPanels();runSignalsMetricQuery();runSignalsLogQuery();loadQualitySummary();loadIngestTokens()}
       (function bindSignalsControls(){const bind=(id,event,handler)=>{const node=$(id);if(node)node.addEventListener(event,handler)};
         bind('signalQueryBtn','click',runSignalsMetricQuery);
         bind('signalMetricInput','keydown',event=>{if(event.key==='Enter')runSignalsMetricQuery()});
         bind('signalSavePanelBtn','click',saveSignalsPanel);
         bind('signalLogQueryBtn','click',runSignalsLogQuery);
-        bind('registerDeviceBtn','click',registerDeviceFlow)})();
+        bind('registerDeviceBtn','click',registerDeviceFlow);
+        bind('ingestTokenIssueBtn','click',issueIngestTokenFlow)})();
 `

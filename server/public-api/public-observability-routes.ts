@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
+import { resolveIngestToken } from '../observability/ingest-token-store.js';
 import {
   getPublicObservabilityStore,
   PublicObservabilityConflictError,
@@ -79,14 +80,7 @@ function sameSecret(actual: string, expected: string): boolean {
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
-function resolvePrincipal(req: Request): PublicPrincipal | null {
-  const header = text(req.header('authorization'), 4_096);
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  if (!match) return null;
-  const token = text(match[1], 4_000);
-  if (!token) return null;
-  const configured = text(process.env.RDK_PUBLIC_OBSERVABILITY_API_TOKEN, 4_000);
-  if (configured && !sameSecret(token, configured)) return null;
+function digestPrincipal(token: string): PublicPrincipal {
   const digest = createHash('sha256').update(token).digest('hex');
   return {
     // Do not persist or echo the bearer token. The digest is stable for a key
@@ -96,8 +90,22 @@ function resolvePrincipal(req: Request): PublicPrincipal | null {
   };
 }
 
-function principal(req: PublicRequest): PublicPrincipal {
-  const value = req.publicPrincipal ?? resolvePrincipal(req);
+async function resolvePrincipal(req: Request): Promise<PublicPrincipal | null> {
+  const header = text(req.header('authorization'), 4_096);
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  if (!match) return null;
+  const token = text(match[1], 4_000);
+  if (!token) return null;
+  const configured = text(process.env.RDK_PUBLIC_OBSERVABILITY_API_TOKEN, 4_000);
+  if (configured && sameSecret(token, configured)) return digestPrincipal(token);
+  // 注册表凭据（人/服务/租户）与 OTLP 入口同一套 owner 推导，两个入口行为一致。
+  if (await resolveIngestToken(token)) return digestPrincipal(token);
+  if (configured) return null;
+  return digestPrincipal(token);
+}
+
+async function principal(req: PublicRequest): Promise<PublicPrincipal> {
+  const value = req.publicPrincipal ?? await resolvePrincipal(req);
   if (!value) throw new PublicObservabilityHttpError(401, 'invalid_observability_token');
   req.publicPrincipal = value;
   return value;
@@ -189,7 +197,7 @@ function sendError(res: Response, error: unknown): void {
 export function createPublicObservabilityRouter(): Router {
   const router = Router();
 
-  router.use((req: PublicRequest, res, next) => {
+  router.use(async (req: PublicRequest, res, next) => {
     // The standalone app mounts this router at `/` for compatibility with
     // existing public API paths. Do not let its bearer-token gate swallow the
     // observability workbench, status page, or unrelated application routes.
@@ -198,7 +206,7 @@ export function createPublicObservabilityRouter(): Router {
       return;
     }
     try {
-      req.publicPrincipal = resolvePrincipal(req) ?? undefined;
+      req.publicPrincipal = (await resolvePrincipal(req)) ?? undefined;
       if (!req.publicPrincipal) {
         res.status(401).json({ ok: false, error: 'invalid_observability_token', code: 'invalid_observability_token' });
         return;
@@ -211,7 +219,7 @@ export function createPublicObservabilityRouter(): Router {
 
   router.post('/api/v1/observability/runs', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       const input = runInput(bodyObject(req), req.header('idempotency-key') ?? undefined);
       const result = await store.createRun(identity.owner, identity.keyId, input);
       res.setHeader('idempotent-replayed', result.replayed ? 'true' : 'false');
@@ -226,7 +234,7 @@ export function createPublicObservabilityRouter(): Router {
 
   router.post('/api/v1/observability/runs/:runId/spans:batch', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       const body = bodyObject(req);
       if (!Array.isArray(body.spans)) throw new PublicObservabilityHttpError(400, 'spans_required');
       const result = await store.appendSpans({
@@ -248,9 +256,9 @@ export function createPublicObservabilityRouter(): Router {
     }
   });
 
-  router.get('/api/v1/observability/runs', (req: PublicRequest, res) => {
+  router.get('/api/v1/observability/runs', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       const filters = runFilters(req.query);
       const limit = Math.max(1, Math.min(200, filters.limit ?? 50));
       res.json({ ok: true, data: { runs: store.listRuns(identity.owner, { ...filters, limit }).map((run) => publicRun(run as unknown as Record<string, unknown>)), limit } });
@@ -259,18 +267,18 @@ export function createPublicObservabilityRouter(): Router {
     }
   });
 
-  router.get('/api/v1/observability/catalog', (req: PublicRequest, res) => {
+  router.get('/api/v1/observability/catalog', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       res.json({ ok: true, data: store.listCatalog(identity.owner, runFilters(req.query)) });
     } catch (error) {
       sendError(res, error);
     }
   });
 
-  router.get('/api/v1/observability/objects', (req: PublicRequest, res) => {
+  router.get('/api/v1/observability/objects', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       res.json({
         ok: true,
         data: store.listObjects(identity.owner, {
@@ -286,18 +294,18 @@ export function createPublicObservabilityRouter(): Router {
     }
   });
 
-  router.get('/api/v1/observability/summary', (req: PublicRequest, res) => {
+  router.get('/api/v1/observability/summary', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       res.json({ ok: true, data: store.summarize(identity.owner, summaryFilters(req.query)) });
     } catch (error) {
       sendError(res, error);
     }
   });
 
-  router.get('/api/v1/observability/objects/:objectId', (req: PublicRequest, res) => {
+  router.get('/api/v1/observability/objects/:objectId', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       const detail = store.getObject(identity.owner, text(req.params.objectId, 200), summaryFilters(req.query));
       if (!detail) throw new PublicObservabilityHttpError(404, 'observability_object_not_found');
       res.json({ ok: true, data: detail });
@@ -306,9 +314,9 @@ export function createPublicObservabilityRouter(): Router {
     }
   });
 
-  router.patch('/api/v1/observability/objects/:objectId', (req: PublicRequest, res) => {
+  router.patch('/api/v1/observability/objects/:objectId', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       const detail = store.upsertObject(identity.owner, text(req.params.objectId, 200), bodyObject(req) as never);
       res.json({ ok: true, data: detail });
     } catch (error) {
@@ -318,7 +326,7 @@ export function createPublicObservabilityRouter(): Router {
 
   router.get('/api/v1/observability/runs/:runId/trace', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       const limit = Math.max(1, Math.min(256, queryNumber(req.query.limit, 256) ?? 256));
       const trace = await store.getTrace(identity.owner, text(req.params.runId, 200), limit);
       if (!trace) throw new PublicObservabilityHttpError(404, 'observability_run_not_found');
@@ -330,7 +338,7 @@ export function createPublicObservabilityRouter(): Router {
 
   router.get('/api/v1/observability/runs/:runId', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       const run = await store.getRun(identity.owner, text(req.params.runId, 200));
       if (!run) throw new PublicObservabilityHttpError(404, 'observability_run_not_found');
       res.json({ ok: true, data: publicRun(run as unknown as Record<string, unknown>) });
@@ -341,7 +349,7 @@ export function createPublicObservabilityRouter(): Router {
 
   router.post('/api/v1/observability/runs/:runId/scores', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       const runId = text(req.params.runId, 200);
       const run = await store.getRun(identity.owner, runId);
       if (!run) throw new PublicObservabilityHttpError(404, 'observability_run_not_found');
@@ -363,7 +371,7 @@ export function createPublicObservabilityRouter(): Router {
 
   router.post('/api/v1/observability/runs/:runId/feedback', async (req: PublicRequest, res) => {
     try {
-      const identity = principal(req);
+      const identity = await principal(req);
       const runId = text(req.params.runId, 200);
       const run = await store.getRun(identity.owner, runId);
       if (!run) throw new PublicObservabilityHttpError(404, 'observability_run_not_found');
