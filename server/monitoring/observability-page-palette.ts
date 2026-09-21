@@ -378,7 +378,7 @@ export const OPS_OBSERVABILITY_PALETTE_LIGHT = `:root{
     --c370: rgba(212,107,8,.2);
     --c371: #d46b08;
     --c372: #e8ad4f;
-    --c373: #2bd09f;
+    --c373:#00a67e;
     --c374: rgba(2,24,21,.1);
     --c375: #1d2b28;
     --c376: #39443f;
@@ -395,7 +395,7 @@ export const OPS_OBSERVABILITY_PALETTE_LIGHT = `:root{
     --c387: #d34852;
     --c388: #2368b5;
     --c389: #7452a8;
-    --c390: #101918;
+    --c390:#ffffff;--shell-side:#ffffff;--shell-head:#101918;
     --c391: #172421;
     --c392: rgba(16,36,31,.08);
     --c393: rgba(16,36,31,.05);
@@ -425,11 +425,11 @@ export const OPS_OBSERVABILITY_PALETTE_LIGHT = `:root{
     --c417: rgba(229,240,236,.66);
     --c418: rgba(229,240,236,.24);
     --c419: rgba(255,255,255,.055);
-    --c420: rgba(33,190,154,.12);
-    --c421: #8ee4cf;
-    --c422: rgba(33,190,154,.13);
+    --c420:rgba(0,166,126,.10);
+    --c421:#0a7a5f;
+    --c422:rgba(0,166,126,.10);
     --c423: #9ae8d5;
-    --c424: #61d9bc;
+    --c424:#0a8a6e;
     --c425: rgba(196,64,75,.22);
     --c426: #ffb9c0;
     --c427: rgba(255,255,255,.075);
@@ -441,9 +441,9 @@ export const OPS_OBSERVABILITY_PALETTE_LIGHT = `:root{
     --c433: rgba(255,255,255,.11);
     --c434: rgba(229,240,236,.64);
     --c435: rgba(229,240,236,.38);
-    --c436: #a5ead9;
+    --c436:#0a7a5f;
     --c437: rgba(232,243,239,.62);
-    --c438: rgba(43,208,159,.16);
+    --c438:rgba(0,166,126,.16);
     --c439: #7a8984;
     --c440: #53635e;
     --c441: #cfe0da;
@@ -985,7 +985,7 @@ export const OPS_OBSERVABILITY_PALETTE_DARK = `html[data-theme="dark"]{
     --c387: #d75b64;
     --c388: #5495de;
     --c389: #a98fe0;
-    --c390: #0f1114;
+    --c390: #0f1114;--shell-side:#0f1114;--shell-head:#0f1114;
     --c391: #14171b;
     --c392: rgba(0,0,0,0.5);
     --c393: rgba(0,0,0,0.38);
