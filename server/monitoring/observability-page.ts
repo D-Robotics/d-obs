@@ -193,7 +193,9 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     <section id="view-devices" class="view hidden" aria-labelledby="devicesHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 边缘设备</div><h2 id="devicesHeading">边缘设备与心跳</h2><p>注册 RDK 板级设备、查看心跳与在线状态，下钻板级指标（CPU / 内存 / 温度 / BPU）。</p></div><div class="right">设备 token 只显示一次</div></div>
       <div class="domain-note"><strong>端侧数据域</strong>　机器人、RDK 板、固件和 edge-agent 样本；端侧 Prometheus 查询使用 <code>plane="edge"</code>。</div>
-      <details id="devices-register" class="detail-sections" open><summary class="detail-summary"><strong>注册设备</strong><span>签发设备 token 并部署 edge-agent</span></summary>
+      <div class="module-switcher" role="tablist" aria-label="边缘设备子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="devices/list" aria-selected="true">设备清单<small>在线状态与板级指标下钻</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="devices/register" aria-selected="false">注册设备<small>签发 token 与部署 edge-agent</small></button></div>
+      <div class="view-module is-active" data-view-module="devices/list" role="tabpanel" aria-label="设备清单"><details id="devices-list" class="detail-sections" open><summary class="detail-summary"><strong>设备清单</strong><span>在线状态、最近心跳与板级指标下钻</span></summary><div id="devicesContent" aria-live="polite"><div class="signals-empty">正在读取设备清单…</div></div></details></div>
+      <div class="view-module" data-view-module="devices/register" role="tabpanel" aria-label="注册设备" hidden><details id="devices-register" class="detail-sections" open><summary class="detail-summary"><strong>注册设备</strong><span>签发设备 token 并部署 edge-agent</span></summary>
         <div class="signals-toolbar">
           <label>设备 ID<input id="newDeviceId" type="text" autocomplete="off" spellcheck="false" placeholder="如 rdk-x5-01" /></label>
           <label>显示名称<input id="newDeviceName" type="text" autocomplete="off" placeholder="可留空" /></label>
@@ -202,8 +204,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         </div>
         <div id="newDeviceTokenHint" class="token-reveal hidden"></div>
         <div class="hint">板端部署：把 <code>tools/edge-agent.mjs</code> 复制到设备，token 存入文件，配置 <code>RDK_OBS_REPORT_URL</code> 与 <code>RDK_DEVICE_TOKEN_FILE</code> 后运行（或挂载 systemd 单元）；弱网时样本会缓冲在设备本地并自动补传。</div>
-      </details>
-      <details id="devices-list" class="detail-sections" open><summary class="detail-summary"><strong>设备清单</strong><span>在线状态、最近心跳与板级指标下钻</span></summary><div id="devicesContent" aria-live="polite"><div class="signals-empty">正在读取设备清单…</div></div></details>
+      </details></div>
     </section>
     <section id="view-data-health" class="view hidden" aria-labelledby="dataHealthHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 数据健康</div><h2 id="dataHealthHeading">业务数据新鲜度</h2><p>检查关键业务数据是否持续入库，只展示数量、趋势和最近写入时间。</p></div><div class="right">业务入库 · 只读聚合</div></div>
@@ -241,15 +242,16 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     </section>
     <section id="view-tenants" class="view hidden" aria-labelledby="tenantsHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 租户管理</div><h2 id="tenantsHeading">团队接入与探针凭据</h2><p>注册租户、签发与轮换探针 token、停用或启用团队；所有操作均写入审计日志。</p></div><div class="right">探针 token 仅显示一次</div></div>
-      <details class="detail-sections" open><summary class="detail-summary"><strong>创建租户</strong><span>为新团队创建租户并签发探针 token</span></summary>
+      <div class="module-switcher" role="tablist" aria-label="租户管理子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="tenants/list" aria-selected="true">租户列表<small>状态 · 心跳 · 凭据操作</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="tenants/create" aria-selected="false">创建租户<small>新团队接入与 token 签发</small></button></div>
+      <div class="view-module is-active" data-view-module="tenants/list" role="tabpanel" aria-label="租户列表"><details class="detail-sections" open><summary class="detail-summary"><strong>租户列表</strong><span>状态、最近上报时间与凭据操作</span></summary><div id="tenantsContent"></div></details></div>
+      <div class="view-module" data-view-module="tenants/create" role="tabpanel" aria-label="创建租户" hidden><details class="detail-sections" open><summary class="detail-summary"><strong>创建租户</strong><span>为新团队创建租户并签发探针 token</span></summary>
         <div class="tenant-toolbar">
           <label class="field">租户 ID<input id="newTenantId" type="text" autocomplete="off" spellcheck="false" placeholder="如 sim2real、team-a" /></label>
           <label class="field">显示名称<input id="newTenantName" type="text" autocomplete="off" placeholder="团队或项目名，可用中文，可留空" /></label>
           <button id="createTenantBtn" class="btn primary" type="button">创建租户</button>
         </div>
         <div id="newTenantIdHint" class="hint">租户 ID 是标识符不是名字：它会拼进告警键 <code>t.&lt;ID&gt;.&lt;检查项&gt;</code>（点作分隔符），并出现在 URL 与请求头里，因此只能用小写 ASCII 字母/数字/连字符（2–40 字符，需字母开头；<code>platform</code> 等保留字不可用）。中文名请填「显示名称」。</div>
-      </details>
-      <details class="detail-sections" open><summary class="detail-summary"><strong>租户列表</strong><span>状态、最近上报时间与凭据操作</span></summary><div id="tenantsContent"></div></details>
+      </details></div>
     </section>
     <section id="view-platform" class="view hidden" aria-labelledby="platformHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 系统设置</div><h2 id="platformHeading">全局巡检与运行配置</h2><p>低频高级配置；改动会影响全局巡检、模型路由与通知。</p></div><div class="right">敏感配置只保存在服务器</div></div>

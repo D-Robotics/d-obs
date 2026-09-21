@@ -56,9 +56,10 @@ interface StubNode {
 interface Harness {
   obs: Record<string, unknown>;
   innerHTMLWrites: string[];
-  fetchCalls: Array<{ url: string; method: string }>;
+  fetchCalls: Array<{ url: string; method: string; body?: string }>;
   confirmCalls: string[];
   setConfirm(v: boolean): void;
+  setJsonResponse(value: unknown): void;
   asyncErrors: Error[];
   text(node: StubNode): string;
   all(node: StubNode): StubNode[];
@@ -68,10 +69,11 @@ interface Harness {
 
 function setup(): Harness {
   const innerHTMLWrites: string[] = [];
-  const fetchCalls: Array<{ url: string; method: string }> = [];
+  const fetchCalls: Array<{ url: string; method: string; body?: string }> = [];
   const confirmCalls: string[] = [];
   let confirmResult = false;
   const asyncErrors: Error[] = [];
+  let fetchJson: unknown = {};
   const timers: Array<{ id: number; fn: () => void }> = [];
   let timerSeq = 1;
 
@@ -220,12 +222,12 @@ function setup(): Harness {
       setItem: (k: string, v: string) => void storage.set(k, v),
       removeItem: (k: string) => void storage.delete(k),
     },
-    fetch: (url: string, init?: { method?: string }) => {
-      fetchCalls.push({ url: String(url), method: String(init?.method ?? 'GET') });
+    fetch: (url: string, init?: { method?: string; body?: string }) => {
+      fetchCalls.push({ url: String(url), method: String(init?.method ?? 'GET'), body: String(init?.body ?? '') });
       return Promise.resolve({
         ok: true,
         status: 200,
-        json: async () => ({}),
+        json: async () => (fetchJson && typeof fetchJson === 'object' ? fetchJson : {}),
         text: async () => '',
       });
     },
@@ -265,6 +267,7 @@ function setup(): Harness {
       "setView:typeof setView!=='undefined'?setView:null," +
       "resolveViewRequest:typeof resolveViewRequest!=='undefined'?resolveViewRequest:null," +
       "renderSettings:typeof renderSettings!=='undefined'?renderSettings:null," +
+      "renderModelPool:typeof renderModelPool!=='undefined'?renderModelPool:null," +
       "setObsState:(patch)=>Object.assign(state,patch)," +
       "getObsState:()=>state" +
       "};})();";
@@ -290,6 +293,9 @@ function setup(): Harness {
     setConfirm: (v: boolean) => {
       confirmResult = v;
     },
+    setJsonResponse: (value: unknown) => {
+      fetchJson = value;
+    },
     asyncErrors,
     text,
     all,
@@ -305,6 +311,27 @@ const OVERVIEW_FIXTURE = {
   alerting: { shadowMode: true, webhookConfigured: false },
   summary: { disabledChecks: 2 },
   evolution: { lastStatus: 'ok', lastSummary: '' },
+};
+
+const MODEL_POOL_FIXTURE = {
+  ok: true,
+  protectedFrontendModel: 'agent-main',
+  health: {
+    now: '2026-09-21T08:00:00Z',
+    summary: { totalTargets: 3, healthy: 1 },
+    targets: [
+      { baseUrl: 'https://api.example.com/v1', model: 'deepseek-flash', label: 'Example primary', credentialFingerprint: 'abc123f…7890', frontendModels: ['qwen3.6-plus'], roles: ['primary'], state: 'healthy', attempts: 900, successes: 855, failures: 45, successRate: 0.95, latencyP95Ms: 1200, inFlight: 2, maxInFlight: 20 },
+      { baseUrl: 'https://api.minimax.example.com/v1', model: 'MiniMax-M3', label: 'MiniMax backup', frontendModels: ['moss'], roles: ['primary'], state: 'cooldown', attempts: 100, successes: 60, failures: 40, successRate: 0.6, latencyP95Ms: 5900, inFlight: 0, maxInFlight: 10, lastHealthError: 'quota_or_limit' },
+      { baseUrl: 'https://orphan.example.com/v1', model: 'unused-model', state: 'unknown' },
+    ],
+  },
+  config: {
+    modelMapping: {
+      'qwen3.6-plus': { baseUrl: 'https://api.example.com/v1', model: 'deepseek-flash', label: 'Example primary', weight: 100, fallbacks: ['moss'] },
+      moss: { baseUrl: 'https://api.minimax.example.com/v1', model: 'MiniMax-M3', label: 'MiniMax backup', fallbacks: [] },
+      'agent-main': { baseUrl: 'https://api.example.com/v1', model: 'deepseek-flash', weight: 10, fallbacks: ['qwen3.6-plus'] },
+    },
+  },
 };
 
 test('页面脚本在 DOM 桩中完整求值：render 函数成为可调用全局', () => {
@@ -440,10 +467,86 @@ test('维护窗口：渲染字段走 textContent，删除交互经过 confirm �
   assert.equal(h.innerHTMLWrites.length, 0);
 });
 
+test('模型池：拓扑与指标条按真实夹具渲染，保存权重走 PUT 并受校验拦截', async () => {
+  const h = setup();
+  const obs = h.obs;
+  assert.equal(typeof obs.renderModelPool, 'function', '应能取到 renderModelPool');
+  (obs.setObsState as (p: Record<string, unknown>) => unknown)({ modelPool: MODEL_POOL_FIXTURE });
+  (obs.renderModelPool as () => void)();
+  const root = h.byIdNode('modelPoolContent');
+  assert.ok(root, 'modelPoolContent 应已渲染');
+
+  const svg = h.all(root as StubNode).find((n) => String(n.attrs?.['class'] ?? '') === 'mp-topo-svg');
+  assert.ok(svg, '应渲染路由拓扑 SVG');
+  const svgNodes = h.all(svg as StubNode);
+  assert.equal(svgNodes.filter((n) => n.attrs && n.attrs['data-route']).length, 3, '左侧应渲染 3 条业务路由');
+  assert.equal(
+    svgNodes.filter((n) => String(n.attrs?.['class'] ?? '').includes('mp-edge-primary')).length,
+    3,
+    '每条路由应有一条主目标实线',
+  );
+  assert.equal(
+    svgNodes.filter((n) => String(n.attrs?.['class'] ?? '').includes('mp-edge-fallback')).length,
+    2,
+    'qwen→moss 与 agent-main→qwen 应各有一条虚线',
+  );
+  assert.ok(svgNodes.some((n) => n.textContent === '权重 100'), '权重标签应随线宽展示');
+  assert.ok(
+    svgNodes.some((n) => String(n.attrs?.['class'] ?? '').includes('mp-state-cooldown')),
+    '冷却目标应有状态点着色',
+  );
+
+  const rows = h.all(root as StubNode).filter((n) => n.tagName === 'TR');
+  assert.equal(rows.length, 4, '表头 + 3 个目标行');
+  const pageText = h.text(root as StubNode);
+  assert.ok(pageText.includes('900 次'), '调用量渲染');
+  assert.ok(pageText.includes('成功 855 · 失败 45'), '成功失败拆分渲染');
+  assert.ok(pageText.includes('95.0%'), '成功率渲染');
+  assert.ok(pageText.includes('2 / 20'), '并发渲染');
+  const fills = h.byClass(root as StubNode, 'mp-bar-fill');
+  assert.ok(fills.some((n) => n.style.width === '90.0%'), '主力目标流量占比 90%');
+  assert.ok(
+    h.byClass(root as StubNode, 'mp-bar-good').length >= 1 && h.byClass(root as StubNode, 'mp-bar-bad').length >= 1,
+    '成功率条按阈值变色',
+  );
+
+  const editorRows = h.byClass(root as StubNode, 'mp-route-row');
+  assert.equal(editorRows.length, 3, '每条映射一行编辑器');
+  const qwenRow = editorRows.find((r) => r.id === 'mp-route-qwen3_6-plus');
+  assert.ok(qwenRow, '路由行 id 供拓扑点击定位');
+  const lockedRow = editorRows.find((r) => r.classList.contains('locked'));
+  assert.ok(lockedRow, 'agent-main 应渲染为锁定行');
+  assert.ok(h.text(lockedRow as StubNode).includes('受保护'), '锁定行说明文案');
+
+  const weightInput = h.all(qwenRow as StubNode).find((n) => n.tagName === 'INPUT' && n.type === 'number');
+  assert.ok(weightInput, '权重输入框存在');
+  assert.equal(weightInput!.value, '100', '权重预填当前值');
+  const saveBtn = h.all(qwenRow as StubNode).find((n) => n.tagName === 'BUTTON');
+  assert.ok(saveBtn, '保存按钮存在');
+
+  weightInput!.value = '2000';
+  await (saveBtn as StubNode).dispatch('click');
+  assert.equal(h.fetchCalls.filter((c) => c.method === 'PUT').length, 0, '非法权重不得发请求');
+  assert.ok(h.text(qwenRow as StubNode).includes('0-1000'), '校验反馈');
+
+  h.setJsonResponse({ ok: true });
+  weightInput!.value = '80';
+  await (saveBtn as StubNode).dispatch('click');
+  const put = h.fetchCalls.find((c) => c.method === 'PUT' && c.url.includes('/model-pool/routing'));
+  assert.ok(put, '保存应发出 PUT /model-pool/routing');
+  assert.ok(String(put?.body).includes('"frontendModel":"qwen3.6-plus"'), 'PUT body 带路由名');
+  assert.ok(String(put?.body).includes('"weight":80'), 'PUT body 带新权重');
+
+  assert.equal(h.innerHTMLWrites.length, 0, '全程不得写 innerHTML');
+  assert.deepEqual(h.asyncErrors, [], '交互过程不得产生未捕获异常');
+});
+
 test('全局守卫：全部交互完成后 innerHTML 写入数仍为 0', () => {
   const h = setup();
   (h.obs.renderActionCenter as (o: unknown) => StubNode)(OVERVIEW_FIXTURE);
   (h.obs.renderMaintenancePanel as (o: unknown) => StubNode)({ maintenanceWindows: [] });
+  (h.obs.setObsState as (p: Record<string, unknown>) => unknown)({ modelPool: MODEL_POOL_FIXTURE });
+  (h.obs.renderModelPool as () => void)();
   assert.equal(h.innerHTMLWrites.length, 0, `发现 innerHTML 写入：${h.innerHTMLWrites.join(' | ')}`);
   assert.deepEqual(h.asyncErrors, [], '交互过程中不得产生未捕获异常');
 });
