@@ -132,6 +132,14 @@ export const ALERT_RULE_DEFINITIONS = [
     fields: ['threshold', 'criticalThreshold'],
   },
   {
+    key: 'otlp-trace-freshness',
+    category: 'metric',
+    title: 'OTLP 链路断报',
+    description:
+      '中心库 trace span 的最近落库时间；超过阈值说明接入应用停止上报（部署丢配置、上报通道被切换等静默故障）。',
+    fields: ['threshold', 'criticalThreshold'],
+  },
+  {
     key: 'service-crash-signature',
     category: 'log',
     title: '应用崩溃日志',
@@ -477,6 +485,12 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
       threshold: 1,
       criticalThreshold: 2,
       openAfter: 2,
+    }),
+    // 阈值单位为分钟：链路是事件驱动流量，48h 预警 / 6d 严重，避免低峰误报。
+    'otlp-trace-freshness': rule({
+      threshold: 2_880,
+      criticalThreshold: 8_640,
+      openAfter: 1,
     }),
     'service-crash-signature': rule({
       windowMinutes: 2,

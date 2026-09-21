@@ -370,6 +370,7 @@ async function collectDatabaseObservations(
   const processRule = config.rules['process-unhandled-error'];
   const evoRule = config.rules['evolution-worker-health'];
   const budgetRule = config.rules['llm-token-budget'];
+  const traceRule = config.rules['otlp-trace-freshness'];
 
   const [
     runResult,
@@ -379,6 +380,7 @@ async function collectDatabaseObservations(
     clientSampleResult,
     evolutionResult,
     budgetResult,
+    traceFreshnessResult,
   ] = await Promise.all([
     p.query(AI_RUN_OBSERVATION_QUERY, [aiRule.windowMinutes]),
     p.query(
@@ -589,6 +591,17 @@ async function collectDatabaseObservations(
           return { rows: [{} as Record<string, unknown>] };
         throw error;
       }),
+    p
+      .query(
+        `select coalesce(max(end_time_ms), 0)::bigint as latest_ms
+         from public.studio_trace_spans`,
+      )
+      .catch((error) => {
+        // 42P01：studio_trace_spans 表不存在（未接中心库）→ 无观测，跳过该信号。
+        if ((error as { code?: string }).code === '42P01')
+          return { rows: [{} as Record<string, unknown>] };
+        throw error;
+      }),
   ]);
   const run = runResult.rows[0] ?? {};
   const total = number(run.total);
@@ -611,6 +624,22 @@ async function collectDatabaseObservations(
   const authOrQuota = number(authResult.rows[0]?.auth_or_quota);
   const tokenTotal = Number(budgetResult.rows[0]?.token_total ?? 0);
   const budgetRunCount = number(budgetResult.rows[0]?.run_count);
+  // OTLP 链路断报：只对"有过历史数据"的库告警，全新部署（0 条 span）不触发。
+  const traceLatestMs = Number(traceFreshnessResult.rows[0]?.latest_ms ?? 0);
+  const staleMinutes =
+    traceLatestMs > 0 ? Math.max(0, Math.trunc((Date.now() - traceLatestMs) / 60_000)) : 0;
+  const traceEverReceived = traceLatestMs > 0;
+  if (traceEverReceived && traceRule) {
+    observations.push(
+      ruleObservation(config, {
+        key: 'otlp-trace-freshness',
+        title: 'OTLP 链路断报',
+        severity: ruleSeverity(config, 'otlp-trace-freshness', staleMinutes),
+        unhealthy: staleMinutes >= traceRule.threshold,
+        summary: `最近一次 trace span 落库距今 ${staleMinutes.toLocaleString()} 分钟（${new Date(traceLatestMs).toISOString()}）；预警 ≥${traceRule.threshold.toLocaleString()} 分钟，严重 ≥${traceRule.criticalThreshold.toLocaleString()} 分钟`,
+      }),
+    );
+  }
   observations.push(
     ruleObservation(config, {
       key: 'llm-token-budget',
