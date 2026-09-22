@@ -22,7 +22,8 @@ import {
 } from './ai-ecosystem-metrics.js';
 import { shouldKeepTrace, tailSampleConfigFromEnv } from './tail-sampling.js';
 import { insertLogRecords, type NormalizedLogRecord } from './ai-ecosystem-logs-store.js';
-import { enqueueMetricPoints, metricQueueDepth, metricQueueDroppedTotal } from './ai-ecosystem-metrics-store.js';
+import { enqueueMetricPoints, metricQueueDepth, metricQueueDroppedTotal, queryMetricSeries } from './ai-ecosystem-metrics-store.js';
+import { renderBusinessMetricsExposition } from './business-metrics-exposition.js';
 import { resolveIngestToken } from './ingest-token-store.js';
 import { decodeLogsProtobuf, decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
 import { renderDevicePrometheusMetrics } from '../monitoring/device-prometheus.js';
@@ -661,6 +662,20 @@ export function createAiEcosystemRouter(): Router {
       recordOtlpRequestError('logs');
       if (!res.headersSent) res.status(503).json({ ok: false, error: 'otlp_log_ingest_unavailable', code: 'otlp_log_ingest_unavailable', retryable: true });
     });
+  });
+  // 业务指标抓取端点：平台内 OTLP 序列最新值 → Prometheus exposition，
+  // 供 Prometheus 抓取后进 Grafana（业务指标可视化通道）。
+  router.get('/metrics/business', async (req, res) => {
+    if (!metricsTokenMatches(req)) {
+      res.status(401).type('text/plain').send('invalid metrics token\n');
+      return;
+    }
+    try {
+      const series = await queryMetricSeries({ limit: 300 });
+      res.type('text/plain; version=0.0.4').send(renderBusinessMetricsExposition(series));
+    } catch {
+      res.status(503).type('text/plain').send('business metrics unavailable\n');
+    }
   });
   router.get('/metrics', (req, res) => {
     if (!metricsTokenMatches(req)) {
