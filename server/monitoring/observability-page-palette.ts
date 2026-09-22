@@ -24,7 +24,7 @@ export const OPS_OBSERVABILITY_PALETTE_LIGHT = `:root{
     --c16: rgba(20,21,21,.4);
     --c17: #fff0f1;
     --c18: rgba(240,90,26,.18);
-    --c19: #f05a1a;
+    --c19: #00a67e;
     --c20: #d9480f;
     --c21: rgba(2,24,21,.02);
     --c22: rgba(2,24,21,.14);
@@ -32,7 +32,7 @@ export const OPS_OBSERVABILITY_PALETTE_LIGHT = `:root{
     --c24: #fdf6f2;
     --c25: #f6f6f4;
     --c26: #2b2e3b;
-    --c27: #e6531d;
+    --c27: #00875a;
     --c28: #faf9f7;
     --c29: #fdf9f6;
     --c30: #fa8c16;
@@ -45,7 +45,7 @@ export const OPS_OBSERVABILITY_PALETTE_LIGHT = `:root{
     --c37: #1769aa;
     --c38: #f5edff;
     --c39: #722ed1;
-    --c40: #fdeadf;
+    --c40: #e8f7f2;
     --c41: #c9cdcc;
     --c42: #68706f;
     --c43: #fff3e8;

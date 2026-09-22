@@ -8,7 +8,7 @@ export const OPS_OBSERVABILITY_SLO_STYLE = `
     .slo-head h3{margin:0;font-size:14px;font-weight:600}
     .slo-head p{margin:3px 0 0;color:var(--muted);font-size:10px}
     .slo-head .slo-status{margin-left:auto;white-space:nowrap}
-    .slo-status.healthy{background:var(--c40);color:var(--c3)}
+    .slo-status.healthy{background:var(--c40);color:var(--c27)}
     .slo-status.at_risk,.slo-status.no_data{background:var(--c43);color:var(--c81)}
     .slo-status.budget_exhausted,.slo-status.sla_breached{background:var(--c17);color:var(--red)}
     .slo-score{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:17px 0 14px}
