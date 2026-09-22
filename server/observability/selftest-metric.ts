@@ -42,3 +42,34 @@ export function buildSelfTestMetricPayload(nowMs: number): {
     ],
   };
 }
+
+export function buildSelfTestLogPayload(nowMs: number): {
+  resourceLogs: Array<{
+    resource: { attributes: Array<{ key: string; value: { stringValue: string } }> };
+    scopeLogs: Array<{ scope: { name: string }; logRecords: Array<Record<string, unknown>> }>;
+  }>;
+} {
+  return {
+    resourceLogs: [
+      {
+        resource: {
+          attributes: [{ key: 'service.name', value: { stringValue: 'd-obs-selftest' } }],
+        },
+        scopeLogs: [
+          {
+            scope: { name: 'd-obs.selftest' },
+            logRecords: [
+              {
+                timeUnixNano: String(nowMs * 1_000_000),
+                severityNumber: 9,
+                severityText: 'INFO',
+                body: { stringValue: 'd-obs 接入自检测试日志（selftest）' },
+                attributes: [{ key: 'source', value: { stringValue: 'selftest' } }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}

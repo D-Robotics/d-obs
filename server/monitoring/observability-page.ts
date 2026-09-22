@@ -117,6 +117,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <summary class="nav-section-toggle" aria-controls="nav-group-data-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">信号与分析</span></summary>
           <div class="nav-group-items" id="nav-group-data-items">
             <button class="module-tab" data-view="signals" aria-controls="view-signals" title="查询 OTLP 指标与日志，维护自定义面板">观测查询</button>
+            <button class="module-tab" data-view="signals/quality" aria-controls="view-signals" title="run 评分与用户反馈的按天趋势">质量与反馈</button>
             <button class="module-tab" data-view="service-levels" aria-controls="view-service-levels" title="查看用户旅程 SLO、错误预算和风险目标">SLO 与错误预算</button>
             <button class="module-tab" data-view="devices" aria-controls="view-devices" title="查看边缘设备心跳、在线状态与板级指标">边缘设备</button>
             <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据入库健康</button>
@@ -254,6 +255,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <label>显示名<input id="ingestTokenDisplayName" type="text" autocomplete="off" spellcheck="false" placeholder="可留空" /></label>
           <button id="ingestTokenIssueBtn" class="btn primary" type="button">签发</button>
           <button id="selftestMetricBtn" class="btn" type="button">发送测试指标</button>
+          <button id="selftestLogBtn" class="btn" type="button">发送测试日志</button>
         </div>
         <div id="selftestMetricHint" class="domain-note hidden" aria-live="polite"></div>
         <div id="ingestTokenSecretHint" class="domain-note hidden" aria-live="polite"></div>

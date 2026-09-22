@@ -55,6 +55,7 @@ interface StubNode {
 
 interface Harness {
   obs: Record<string, unknown>;
+  body: StubNode;
   innerHTMLWrites: string[];
   fetchCalls: Array<{ url: string; method: string; body?: string }>;
   confirmCalls: string[];
@@ -268,6 +269,7 @@ function setup(): Harness {
       "resolveViewRequest:typeof resolveViewRequest!=='undefined'?resolveViewRequest:null," +
       "renderSettings:typeof renderSettings!=='undefined'?renderSettings:null," +
       "renderModelPool:typeof renderModelPool!=='undefined'?renderModelPool:null," +
+      "renderBoardPanels:typeof renderBoardPanels!=='undefined'?renderBoardPanels:null," +
       "setObsState:(patch)=>Object.assign(state,patch)," +
       "getObsState:()=>state" +
       "};})();";
@@ -287,6 +289,7 @@ function setup(): Harness {
 
   return {
     obs,
+    body: body as unknown as StubNode,
     innerHTMLWrites,
     fetchCalls,
     confirmCalls,
@@ -549,4 +552,58 @@ test('全局守卫：全部交互完成后 innerHTML 写入数仍为 0', () => {
   (h.obs.renderModelPool as () => void)();
   assert.equal(h.innerHTMLWrites.length, 0, `发现 innerHTML 写入：${h.innerHTMLWrites.join(' | ')}`);
   assert.deepEqual(h.asyncErrors, [], '交互过程中不得产生未捕获异常');
+});
+
+test('看板：复合路由、工具条渲染、面板卡片、服务变量与删除面板的 PUT 持久化', async () => {
+  const h = setup();
+  const resolve = h.obs.resolveViewRequest as (r: string) => Record<string, string>;
+  assert.equal(
+    JSON.stringify(resolve('signals/panels')),
+    JSON.stringify({ name: 'signals', child: 'panels', source: 'signals/panels' }),
+    '看板复合路由应直达子页签',
+  );
+
+  const fixture = {
+    id: 'b1',
+    name: '回归看板',
+    position: 0,
+    spec: {
+      windowMinutes: 60,
+      range: null,
+      filters: null,
+      panels: [
+        { title: 'P1', metric: 'm.one', windowMinutes: null, chart: 'line', width: 1, warnValue: null, critValue: null },
+        { title: 'P2', metric: 'm.two', windowMinutes: 60, chart: 'stat', width: 2, warnValue: null, critValue: null },
+      ],
+    },
+  };
+  h.setJsonResponse({ ok: true, boards: [fixture] });
+  (h.obs.setView as (r: string, u?: boolean) => unknown)('signals/panels', false);
+  await new Promise((r) => setTimeout(r, 0));
+  (h.obs.renderBoardPanels as () => void)();
+
+  const grid = h.byIdNode('signalsPanelGrid');
+  assert.ok(grid, '看板网格容器应存在');
+  const cards = h.byClass(grid, 'signals-panel-card');
+  assert.equal(cards.length, 2, '应渲染两张面板卡片');
+  assert.equal(h.byClass(cards[0], 'panel-time-select').length, 1, '面板头部应有时间选择');
+
+  const svc = h.byIdNode('boardServiceFilter');
+  svc!.value = 'svc-a';
+  await svc!.dispatch('change');
+  const putWithFilters = [...h.fetchCalls].reverse().find((c) => c.method === 'PUT' && c.url.includes('/boards/b1'));
+  assert.ok(putWithFilters, '服务变量变更应触发看板 PUT');
+  assert.match(putWithFilters!.body!, /"filters":\{"service":"svc-a"\}/);
+
+  const del = h.byClass(cards[0], 'panel-actions')[0].children.find((c) => c.textContent === '删除');
+  await del!.dispatch('click');
+  const modal = h.byClass(h.body, 'board-modal')[0];
+  assert.ok(modal, '删除应弹出确认弹窗');
+  const modalDel = h.all(modal).find((n) => n.textContent === '删除' && n.tagName === 'BUTTON');
+  assert.ok(modalDel, '确认弹窗应有删除按钮');
+  await modalDel!.dispatch('click');
+  const putAfterDelete = [...h.fetchCalls].reverse().find((c) => c.method === 'PUT' && c.url.includes('/boards/b1'));
+  const body = JSON.parse(putAfterDelete!.body!);
+  assert.equal(body.spec.panels.length, 1, '删除面板后 spec 应只剩一张');
+  assert.equal(body.spec.panels[0].title, 'P2');
 });

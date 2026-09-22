@@ -223,6 +223,13 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           else{if(hint)hint.textContent='自检写入失败：'+(data&&data.error?data.error:'请检查中心库配置');toast('自检写入失败',false)}}
         catch{toast('自检失败，请检查网络',false)}
         if(btn)btn.disabled=false}
+      async function sendSelfTestLog(){const btn=$('selftestLogBtn');if(btn)btn.disabled=true;const hint=$('selftestMetricHint');
+        try{const response=await fetch(base+'/api/ops/observability/selftest/log',{method:'POST',headers:apiHeaders(true),credentials:'same-origin'});const data=await response.json().catch(()=>null);
+          if(hint)hint.classList.remove('hidden');
+          if(response.ok&&data&&data.ok){if(hint)hint.textContent='已写入 '+data.accepted+' 条测试日志（service=d-obs-selftest，INFO）。数据异步落库约需 5 秒，随后到「日志查询」最低级别选 INFO、服务填 d-obs-selftest 即可查看。';toast('测试日志已写入')}
+          else{if(hint)hint.textContent='自检写入失败：'+(data&&data.error?data.error:'请检查中心库配置');toast('自检写入失败',false)}}
+        catch{toast('自检失败，请检查网络',false)}
+        if(btn)btn.disabled=false}
       function aiBoardFlow(){openTextModal('AI 生成看板','用一句中文描述想监控什么（如：结账服务流量与性能总览）','',question=>{
         toast('正在生成看板…');
         fetch(base+'/api/ops/observability/boards/from-nl',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({question:question})}).then(r=>r.json().catch(()=>null)).then(data=>{
@@ -355,5 +362,6 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         bind('nlQueryBtn','click',runNlQuery);
         bind('nlQueryInput','keydown',event=>{if(event.key==='Enter')runNlQuery()});
         bind('ingestTokenIssueBtn','click',issueIngestTokenFlow);
-        bind('selftestMetricBtn','click',sendSelfTestMetric)})();
+        bind('selftestMetricBtn','click',sendSelfTestMetric);
+        bind('selftestLogBtn','click',sendSelfTestLog)})();
 `

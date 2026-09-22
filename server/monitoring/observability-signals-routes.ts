@@ -40,8 +40,8 @@ import {
 } from './dashboard-boards-store.js';
 import { analyzeIncidentEvidence, callGatewayChat, copilotModelEnabled, extractJson, resolveGatewayChatTarget } from '../observability/copilot-model.js';
 import { scanRecentMetricAnomalies } from '../observability/metric-anomalies.js';
-import { buildSelfTestMetricPayload } from '../observability/selftest-metric.js';
-import { ingestMetricPayload } from '../observability/ai-ecosystem-routes.js';
+import { buildSelfTestLogPayload, buildSelfTestMetricPayload } from '../observability/selftest-metric.js';
+import { ingestLogPayload, ingestMetricPayload } from '../observability/ai-ecosystem-routes.js';
 import { parseGrafanaDashboard, toGrafanaDashboard } from './grafana-compat.js';
 import { deleteLibraryPanel, listLibraryPanels, saveLibraryPanel } from './dashboard-library-store.js';
 import { buildObservabilityMcpTools, handleMcpJsonRpc } from '../observability/agent-mcp.js';
@@ -910,6 +910,28 @@ export function registerSignalsRoutes(router: Router): void {
         res.json({ ok: true });
       } catch (error) {
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'library_unavailable') });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/selftest/log',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const result = await ingestLogPayload(buildSelfTestLogPayload(Date.now()), {
+          owner: `selftest:${resolveOpsActor(req)}`.slice(0, 120),
+          keyId: 'selftest',
+        });
+        res.json({
+          ok: result.valid && result.accepted > 0,
+          accepted: result.accepted,
+          rejected: result.rejected,
+          note: '日志异步落库，约 5 秒后可在日志查询中看到（最低级别选 INFO）',
+        });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'logs_query_unavailable') });
       }
     },
   );
