@@ -228,12 +228,15 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         <div id="metricCatalogContent" aria-live="polite"><div class="signals-empty">正在读取指标字典…</div></div>
       </div>
       <div class="view-module" data-view-module="signals/tokens" role="tabpanel" aria-label="接入凭据" hidden><details id="signals-tokens" class="detail-sections" open><summary class="detail-summary"><strong>生态接入凭据</strong><span>身份只在凭据层：遥测数据按 owner 归账、零 PII，注册表负责 owner → 对象映射</span></summary>
+        <p class="domain-note"><strong>五分钟接入</strong>　用户代码用官方 OpenTelemetry SDK（免装任何私有 SDK）：<code>OTEL_EXPORTER_OTLP_ENDPOINT=https://rdkstudio.d-robotics.cc/dobs</code> ＋ <code>OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer 上方签发的凭据'</code>，traces / metrics / logs 三信号 <code>/v1/*</code> 直收（HTTP JSON、HTTP protobuf、gRPC 均可）；Python/Java/Go/Node 等 9 种语言 SDK 直接适用。点下方按钮可 30 秒验证整条链路。</p>
         <div class="signals-toolbar">
           <label>对象类型<select id="ingestTokenSubjectType"><option value="user">用户（sso_user_id）</option><option value="service">服务</option><option value="tenant">租户</option></select></label>
           <label>对象 ID<input id="ingestTokenSubjectId" type="text" autocomplete="off" spellcheck="false" placeholder="如 u-20260901-abcd / checkout-api / tenant-alpha" /></label>
           <label>显示名<input id="ingestTokenDisplayName" type="text" autocomplete="off" spellcheck="false" placeholder="可留空" /></label>
           <button id="ingestTokenIssueBtn" class="btn primary" type="button">签发</button>
+          <button id="selftestMetricBtn" class="btn" type="button">发送测试指标</button>
         </div>
+        <div id="selftestMetricHint" class="domain-note hidden" aria-live="polite"></div>
         <div id="ingestTokenSecretHint" class="domain-note hidden" aria-live="polite"></div>
         <div id="ingestTokensContent" aria-live="polite"><div class="signals-empty">正在读取凭据清单…</div></div>
       </details></div>

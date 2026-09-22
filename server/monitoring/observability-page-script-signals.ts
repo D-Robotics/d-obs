@@ -158,6 +158,13 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
       async function importBoardFile(file){let template;try{template=JSON.parse(await file.text())}catch{toast('模板文件不是合法 JSON',false);return}
         try{const response=await fetch(base+'/api/ops/observability/boards/import',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({template:template})});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){setCurrentBoard(data.board.id);toast('已导入看板「'+data.board.name+'」');loadBoards()}else toast(data&&data.error==='invalid_board_template'?'模板结构不合法（需要 spec.panels）':'导入失败',false)}catch{toast('导入失败，请检查网络',false)}}
       function importBoardFlow(){const input=$('boardImportFile');if(!input)return;input.value='';input.click()}
+      async function sendSelfTestMetric(){const btn=$('selftestMetricBtn');if(btn)btn.disabled=true;const hint=$('selftestMetricHint');
+        try{const response=await fetch(base+'/api/ops/observability/selftest/metric',{method:'POST',headers:apiHeaders(true),credentials:'same-origin'});const data=await response.json().catch(()=>null);
+          if(hint)hint.classList.remove('hidden');
+          if(response.ok&&data&&data.ok){if(hint)hint.textContent='已写入 '+data.accepted+' 个点：指标 rdk.obs.selftest（owner=selftest:你）。约 5 秒后到「指标查询」输入 rdk.obs.selftest 点查询即可看到；多点几次能看到线，AI 生成看板和自然语言查询也会立刻认识它。';toast('测试指标已写入')}
+          else{if(hint)hint.textContent='自检写入失败：'+(data&&data.error?data.error:'请检查中心库配置');toast('自检写入失败',false)}}
+        catch{toast('自检失败，请检查网络',false)}
+        if(btn)btn.disabled=false}
       function aiBoardFlow(){openTextModal('AI 生成看板','用一句中文描述想监控什么（如：结账服务流量与性能总览）','',question=>{
         toast('正在生成看板…');
         fetch(base+'/api/ops/observability/boards/from-nl',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({question:question})}).then(r=>r.json().catch(()=>null)).then(data=>{
@@ -284,5 +291,6 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         bind('registerDeviceBtn','click',registerDeviceFlow);
         bind('nlQueryBtn','click',runNlQuery);
         bind('nlQueryInput','keydown',event=>{if(event.key==='Enter')runNlQuery()});
-        bind('ingestTokenIssueBtn','click',issueIngestTokenFlow)})();
+        bind('ingestTokenIssueBtn','click',issueIngestTokenFlow);
+        bind('selftestMetricBtn','click',sendSelfTestMetric)})();
 `

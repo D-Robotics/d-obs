@@ -40,6 +40,8 @@ import {
 } from './dashboard-boards-store.js';
 import { analyzeIncidentEvidence, callGatewayChat, copilotModelEnabled, extractJson, resolveGatewayChatTarget } from '../observability/copilot-model.js';
 import { scanRecentMetricAnomalies } from '../observability/metric-anomalies.js';
+import { buildSelfTestMetricPayload } from '../observability/selftest-metric.js';
+import { ingestMetricPayload } from '../observability/ai-ecosystem-routes.js';
 import { buildObservabilityMcpTools, handleMcpJsonRpc } from '../observability/agent-mcp.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
 import { loadQualityTrend } from '../public-api/public-observability-quality-trend.js';
@@ -786,6 +788,32 @@ export function registerSignalsRoutes(router: Router): void {
         res.json({ ok: true, commands });
       } catch (error) {
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'device_store_unavailable') });
+      }
+    },
+  );
+
+  // ---- 接入自检：走与真实接入方相同的 OTLP ingest 管线写一个测试点 ----
+
+  router.post(
+    '/api/ops/observability/selftest/metric',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const now = Date.now();
+        const result = await ingestMetricPayload(buildSelfTestMetricPayload(now), {
+          owner: `selftest:${resolveOpsActor(req)}`.slice(0, 120),
+          keyId: 'selftest',
+        });
+        res.json({
+          ok: result.valid && result.accepted > 0,
+          accepted: result.accepted,
+          rejected: result.rejected,
+          metric: 'rdk.obs.selftest',
+          note: '指标异步落库，约 5 秒后可在指标查询里看到',
+        });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'metrics_query_unavailable') });
       }
     },
   );
