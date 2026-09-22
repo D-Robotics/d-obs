@@ -121,6 +121,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
             <button class="module-tab" data-view="devices" aria-controls="view-devices" title="查看边缘设备心跳、在线状态与板级指标">边缘设备</button>
             <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据入库健康</button>
             <button class="module-tab" data-view="database" aria-controls="view-database" title="查看 PostgreSQL 运行状态、关系与数据表">数据库状态</button>
+            <a class="module-tab" href="/dobs/grafana/" target="_blank" rel="noopener noreferrer" title="Grafana 大盘：基础设施指标可视化（d-obs 自监控看板已预配）">Grafana 大盘</a>
           </div>
         </details>
         <details class="nav-group" id="nav-group-learning" data-nav-group="learning">
