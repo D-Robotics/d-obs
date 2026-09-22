@@ -211,6 +211,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <div class="board-toolbar-group">
             <label class="board-compact-label">看板<select id="boardSelect"></select></label>
             <label class="board-compact-label">时间维度<select id="boardWindow"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option><option value="20160">最近 14 天</option><option value="custom" hidden>自定义区间</option></select></label>
+            <label class="board-compact-label hidden" id="boardServiceWrap">服务<select id="boardServiceFilter"></select></label>
             <label class="board-compact-label">自动刷新<select id="boardAutoRefresh"><option value="0" selected>关闭</option><option value="10000">10 秒</option><option value="30000">30 秒</option><option value="60000">1 分钟</option><option value="300000">5 分钟</option></select></label>
             <button id="boardRefreshBtn" class="btn" type="button" title="重新加载当前看板的面板数据">刷新</button>
             <button id="boardKioskBtn" class="btn" type="button" title="全屏展示当前看板，适合监控大屏">大屏</button>

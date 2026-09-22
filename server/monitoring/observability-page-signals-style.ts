@@ -47,6 +47,13 @@ body.obs-kiosk .app-shell{display:block}
 body.obs-kiosk #mainContent{padding:12px}
 .board-modal{position:fixed;inset:0;background:rgba(2,6,23,.62);display:flex;align-items:center;justify-content:center;z-index:90;padding:16px}
 .board-modal-box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;width:100%;max-width:420px;max-height:90vh;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.board-modal-box.panel-editor{max-width:940px}
+.panel-editor-split{display:grid;grid-template-columns:minmax(230px,300px) minmax(0,1fr);gap:14px;align-items:start}
+.panel-editor-form{display:flex;flex-direction:column;gap:10px}
+.panel-editor-preview strong{display:block;font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600}
+.panel-preview{min-height:200px;max-height:380px;overflow:auto;padding:8px}
+@media(max-width:880px){.panel-editor-split{grid-template-columns:1fr}}
+.panel-time-select{height:24px;font-size:10px;max-width:96px;flex:0 0 auto}
 .board-modal-box h3{margin:0;font-size:14px}
 .board-field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
 .board-field input,.board-field select{width:100%}

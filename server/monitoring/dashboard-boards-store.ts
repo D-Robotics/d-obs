@@ -26,6 +26,8 @@ export type BoardSpec = {
   windowMinutes: number;
   /** 绝对时间范围（看板 brush 缩放/自定义区间）；非空时优先于 windowMinutes */
   range: { fromMs: number; toMs: number } | null;
+  /** 看板变量筛选：按 series.labels.service 过滤全部面板（空串 = 全部） */
+  filters: { service: string } | null;
   panels: BoardPanel[];
 };
 
@@ -45,7 +47,7 @@ const BOARDS_PER_OWNER_MAX = 20;
 // OTLP 指标名天生带点号，正则必须放行。
 const METRIC_PATTERN = /^[a-zA-Z_:][a-zA-Z0-9_.:]{0,127}$/;
 
-export const DEFAULT_BOARD_SPEC: BoardSpec = { windowMinutes: 240, range: null, panels: [] };
+export const DEFAULT_BOARD_SPEC: BoardSpec = { windowMinutes: 240, range: null, filters: null, panels: [] };
 
 function clampWindow(value: unknown): number | null {
   const n = Math.trunc(Number(value));
@@ -102,6 +104,15 @@ function parseBoardRange(value: unknown, nowMs: number): { fromMs: number; toMs:
   return { fromMs, toMs };
 }
 
+/** 看板变量：目前仅 service 维度；结构不合法时整体剥离为 null（不因坏 filters 拒绝 spec）。 */
+function parseBoardFilters(value: unknown): { service: string } | null {
+  if (value == null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) return null;
+  const service = String((value as Record<string, unknown>).service ?? '').trim().slice(0, 120);
+  if (!service) return null;
+  return { service };
+}
+
 export function normalizeBoardSpec(value: unknown, nowMs: number = Date.now()): BoardSpec | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
@@ -114,7 +125,7 @@ export function normalizeBoardSpec(value: unknown, nowMs: number = Date.now()): 
     if (!panel) return null;
     panels.push(panel);
   }
-  return { windowMinutes, range: parseBoardRange(input.range, nowMs), panels };
+  return { windowMinutes, range: parseBoardRange(input.range, nowMs), filters: parseBoardFilters(input.filters), panels };
 }
 
 /** 看板名：非空、去 \0、≤120 字符；不合法返回 null。 */

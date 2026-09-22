@@ -65,6 +65,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
       state.boardDragIndex=-1;
       state.boardsLoaded=false;
       state.boardRefreshTimer=null;
+      state.boardServiceOptions=[];
       const BOARD_WINDOW_LABELS={60:'1 小时',240:'4 小时',1440:'24 小时',10080:'7 天',20160:'14 天'};
       function boardWindowLabel(minutes){return BOARD_WINDOW_LABELS[minutes]||(minutes>=1440?(minutes/1440)+'天':minutes+'分钟')}
       function currentBoard(){return state.boards.find(board=>board.id===state.currentBoardId)||state.boards[0]||null}
@@ -85,8 +86,12 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         const meta=make('div','signals-stat-meta');add(meta,'span','',primary.name);meta.appendChild(document.createTextNode(' · 最新 '+when(last.ts)));
         if(warn!=null||crit!=null)meta.appendChild(document.createTextNode(' · 阈值 '+(warn==null?'—':signalsFormatValue(warn))+' / '+(crit==null?'—':signalsFormatValue(crit))));
         usable.slice(1,4).forEach(item=>{const p2=item.points[item.points.length-1];meta.appendChild(document.createTextNode(' · '+item.name.split(' ')[0]+' '+signalsFormatValue(p2.value)))});container.appendChild(meta)}
-      async function loadBoards(){const grid=$('signalsPanelGrid');try{const response=await fetch(base+'/api/ops/observability/boards',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);if(!response.ok||!data||!data.ok){if(grid){grid.replaceChildren();grid.appendChild(make('div','signals-empty','看板读取失败（需要中心库）'))}return}
-          state.boards=data.boards||[];state.boardsLoaded=true;const remembered=String(sessionStorage.getItem('d_obs_board_id')||'');if(remembered&&state.boards.find(board=>board.id===remembered))setCurrentBoard(remembered);else if(!state.boards.find(board=>board.id===state.currentBoardId))setCurrentBoard(state.boards.length?state.boards[0].id:'');renderBoardSelect();renderBoard()}catch{if(grid){grid.replaceChildren();grid.appendChild(make('div','signals-empty','看板读取失败，请检查网络'))}}}
+      async function loadBoards(){const grid=$('signalsPanelGrid');try{const [boardsRes,seriesRes]=await Promise.all([fetch(base+'/api/ops/observability/boards',{headers:apiHeaders(false),credentials:'same-origin'}),fetch(base+'/api/ops/observability/metrics/series?limit=500',{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).catch(()=>null)]);const data=await boardsRes.json().catch(()=>null);if(!boardsRes.ok||!data||!data.ok){if(grid){grid.replaceChildren();grid.appendChild(make('div','signals-empty','看板读取失败（需要中心库）'))}return}
+          const services=new Set();(seriesRes&&seriesRes.ok?seriesRes.series||[]:[]).forEach(item=>{const service=String((item.labels||{}).service||'');if(service)services.add(service)});state.boardServiceOptions=[...services].sort();
+          state.boards=data.boards||[];state.boardsLoaded=true;const remembered=String(sessionStorage.getItem('d_obs_board_id')||'');if(remembered&&state.boards.find(board=>board.id===remembered))setCurrentBoard(remembered);else if(!state.boards.find(board=>board.id===state.currentBoardId))setCurrentBoard(state.boards.length?state.boards[0].id:'');renderBoardSelect();renderBoardToolbarServices();renderBoard()}catch{if(grid){grid.replaceChildren();grid.appendChild(make('div','signals-empty','看板读取失败，请检查网络'))}}}
+      function renderBoardToolbarServices(){const wrap=$('boardServiceWrap');const select=$('boardServiceFilter');if(!wrap||!select)return;const options=state.boardServiceOptions||[];const board=currentBoard();const current=(board&&board.spec.filters&&board.spec.filters.service)||'';
+        if(!options.length){wrap.classList.add('hidden');return}
+        wrap.classList.remove('hidden');select.replaceChildren();[['','全部服务']].concat(options.map(service=>[service,service])).forEach(opt=>{const option=make('option');option.value=opt[0];option.textContent=opt[1];select.appendChild(option)});select.value=current}
       function renderBoardSelect(){const select=$('boardSelect');if(!select)return;select.replaceChildren();if(!state.boards.length){const option=make('option');option.value='';option.textContent='（还没有看板）';select.appendChild(option);return}
         state.boards.forEach(board=>{const option=make('option');option.value=board.id;option.textContent=board.name+'（'+board.spec.panels.length+'）';if(board.id===state.currentBoardId)option.selected=true;select.appendChild(option)})}
       function persistBoardSpec(){const board=currentBoard();if(!board)return;fetch(base+'/api/ops/observability/boards/'+encodeURIComponent(board.id),{method:'PUT',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({spec:board.spec})}).then(response=>response.json().catch(()=>null)).then(data=>{if(!data||!data.ok){toast('看板保存失败',false);loadBoards()}}).catch(()=>{toast('看板保存失败，请检查网络',false)})}
@@ -108,9 +113,15 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         if(!board){target.appendChild(make('div','signals-empty','暂无看板：点击「新建看板」创建，或点击「导入模板」导入'));return}
         if(!board.spec.panels.length){target.appendChild(make('div','signals-empty','看板为空：点击「添加面板」新建，或先在指标查询中执行查询后点「存入看板」'))}
         board.spec.panels.forEach((panel,index)=>{const card=make('div','signals-panel-card'+(panel.width===2?' full':''));card.draggable=true;
-          const head=make('h4');const titleWrap=make('span');add(titleWrap,'strong','',panel.title);add(titleWrap,'div','',panel.metric+' · '+(panel.windowMinutes?'固定 '+boardWindowLabel(panel.windowMinutes):'跟随看板'));head.appendChild(titleWrap);
+          const head=make('h4');const titleWrap=make('span');add(titleWrap,'strong','',panel.title);add(titleWrap,'div','',panel.metric);head.appendChild(titleWrap);
+          const timeSelect=make('select','panel-time-select');[[0,'跟随看板'],[60,'1 小时'],[240,'4 小时'],[1440,'24 小时'],[10080,'7 天'],[20160,'14 天']].forEach(opt=>{const option=make('option');option.value=String(opt[0]);option.textContent=opt[1];timeSelect.appendChild(option)});
+          timeSelect.value=String(panel.windowMinutes||0);
+          if(board.spec.range){timeSelect.disabled=true;timeSelect.title='看板处于自定义区间，面板时间维度暂不生效'}else timeSelect.title='此面板的时间维度';
+          timeSelect.addEventListener('click',event=>event.stopPropagation());
+          timeSelect.addEventListener('change',()=>{panel.windowMinutes=Number(timeSelect.value)>0?Number(timeSelect.value):null;persistBoardSpec();renderBoardPanels()});
+          head.appendChild(timeSelect);
           const actions=make('span','panel-actions');const editBtn=add(actions,'button','btn','编辑');editBtn.type='button';editBtn.addEventListener('click',()=>openPanelModal(panel,index));const delBtn=add(actions,'button','btn','删除');delBtn.type='button';delBtn.addEventListener('click',()=>openConfirmModal('删除面板','从看板移除面板「'+panel.title+'」？',()=>{board.spec.panels.splice(index,1);persistBoardSpec();renderBoardPanels();renderBoardSelect()}));head.appendChild(actions);card.appendChild(head);
-          card.addEventListener('dragstart',event=>{state.boardDragIndex=index;card.classList.add('dragging');if(event.dataTransfer){event.dataTransfer.effectAllowed='move';try{event.dataTransfer.setData('text/plain',String(index))}catch{}}});
+          card.addEventListener('dragstart',event=>{const tag=event.target&&event.target.tagName;if(tag==='SELECT'||tag==='INPUT'||tag==='BUTTON'||tag==='OPTION'){event.preventDefault();return}state.boardDragIndex=index;card.classList.add('dragging');if(event.dataTransfer){event.dataTransfer.effectAllowed='move';try{event.dataTransfer.setData('text/plain',String(index))}catch{}}});
           card.addEventListener('dragend',()=>{card.classList.remove('dragging');state.boardDragIndex=-1});
           card.addEventListener('dragover',event=>{if(state.boardDragIndex<0||state.boardDragIndex===index)return;event.preventDefault();card.classList.add('drop-target')});
           card.addEventListener('dragleave',()=>card.classList.remove('drop-target'));
@@ -120,23 +131,43 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           const minutes=activeRange?Math.max(5,Math.round((activeRange.toMs-activeRange.fromMs)/60_000)):(panel.windowMinutes||board.spec.windowMinutes);
           let queryParams='/api/ops/observability/metrics/query?metric='+encodeURIComponent(panel.metric)+'&points=120&minutes='+encodeURIComponent(String(minutes));
           if(activeRange)queryParams+='&fromMs='+encodeURIComponent(String(activeRange.fromMs))+'&toMs='+encodeURIComponent(String(activeRange.toMs));
-          fetch(base+queryParams,{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data=>{const series=(data&&data.ok?data.series:[]).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));renderBoardChart(chartWrap,series,minutes,panel)}).catch(()=>{chartWrap.replaceChildren();chartWrap.appendChild(make('div','signals-empty','加载失败'))})});
+          const serviceFilter=(board.spec.filters&&board.spec.filters.service)||'';
+          fetch(base+queryParams,{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data=>{const series=(data&&data.ok?data.series:[]).filter(item=>!serviceFilter||String((item.labels||{}).service||'')===serviceFilter).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));renderBoardChart(chartWrap,series,minutes,panel)}).catch(()=>{chartWrap.replaceChildren();chartWrap.appendChild(make('div','signals-empty','加载失败'))})});
         target.ondragover=event=>event.preventDefault();
         target.ondrop=event=>{event.preventDefault();const dropBoard=currentBoard();if(!dropBoard)return;const from=state.boardDragIndex;if(from<0||from>=dropBoard.spec.panels.length-1)return;moveBoardPanel(from,dropBoard.spec.panels.length-1,true)}}
       function openPanelModal(existing,index){const board=currentBoard();if(!board){toast('请先创建看板',false);return}
-        const overlay=make('div','board-modal');const box=make('div','board-modal-box');add(box,'h3','',existing&&index>=0?'编辑面板':'添加面板');
-        const titleLabel=add(box,'label','board-field');add(titleLabel,'span','','面板标题');const titleInput=add(titleLabel,'input');titleInput.type='text';titleInput.value=existing?existing.title:'';
-        const metricLabel=add(box,'label','board-field');add(metricLabel,'span','','指标名');const metricInput=add(metricLabel,'input');metricInput.type='text';metricInput.setAttribute('list','signalMetricList');metricInput.value=existing?existing.metric:'';
-        const windowLabel=add(box,'label','board-field');add(windowLabel,'span','','时间窗口');const windowSelect=add(windowLabel,'select');[[0,'跟随看板（'+boardWindowLabel(board.spec.windowMinutes)+'）'],[60,'最近 1 小时'],[240,'最近 4 小时'],[1440,'最近 24 小时'],[10080,'最近 7 天'],[20160,'最近 14 天']].forEach(opt=>{const option=make('option');option.value=String(opt[0]);option.textContent=opt[1];windowSelect.appendChild(option)});windowSelect.value=String(existing&&existing.windowMinutes?existing.windowMinutes:0);
-        const chartLabel=add(box,'label','board-field');add(chartLabel,'span','','图表类型');const chartSelect=add(chartLabel,'select');[['line','折线图'],['bar','柱状图'],['stat','大数字']].forEach(opt=>{const option=make('option');option.value=opt[0];option.textContent=opt[1];chartSelect.appendChild(option)});chartSelect.value=existing?existing.chart:'line';
-        const warnLabel=add(box,'label','board-field');add(warnLabel,'span','','告警阈值（stat 大数字着色，可留空）');const warnInput=add(warnLabel,'input');warnInput.type='number';warnInput.step='any';if(existing&&existing.warnValue!=null)warnInput.value=String(existing.warnValue);
-        const critLabel=add(box,'label','board-field');add(critLabel,'span','','严重阈值（stat 大数字着色，可留空）');const critInput=add(critLabel,'input');critInput.type='number';critInput.step='any';if(existing&&existing.critValue!=null)critInput.value=String(existing.critValue);
-        const widthLabel=add(box,'label','board-field');add(widthLabel,'span','','宽度');const widthSelect=add(widthLabel,'select');[[1,'半宽'],[2,'整行']].forEach(opt=>{const option=make('option');option.value=String(opt[0]);option.textContent=opt[1];widthSelect.appendChild(option)});widthSelect.value=String(existing?existing.width:1);
-        const row=make('div','board-modal-actions');const cancelBtn=add(row,'button','btn','取消');cancelBtn.type='button';const saveBtn=add(row,'button','btn primary','保存');saveBtn.type='button';box.appendChild(row);
+        const overlay=make('div','board-modal');const box=make('div','board-modal-box panel-editor');add(box,'h3','',existing&&index>=0?'编辑面板 · 实时预览':'添加面板 · 实时预览');
+        const split=make('div','panel-editor-split');const formCol=make('div','panel-editor-form');const previewCol=make('div','panel-editor-preview');
+        const titleLabel=add(formCol,'label','board-field');add(titleLabel,'span','','面板标题');const titleInput=add(titleLabel,'input');titleInput.type='text';titleInput.value=existing?existing.title:'';
+        const metricLabel=add(formCol,'label','board-field');add(metricLabel,'span','','指标名');const metricInput=add(metricLabel,'input');metricInput.type='text';metricInput.setAttribute('list','signalMetricList');metricInput.value=existing?existing.metric:'';
+        const windowLabel=add(formCol,'label','board-field');add(windowLabel,'span','','时间窗口');const windowSelect=add(windowLabel,'select');[[0,'跟随看板（'+boardWindowLabel(board.spec.windowMinutes)+'）'],[60,'最近 1 小时'],[240,'最近 4 小时'],[1440,'最近 24 小时'],[10080,'最近 7 天'],[20160,'最近 14 天']].forEach(opt=>{const option=make('option');option.value=String(opt[0]);option.textContent=opt[1];windowSelect.appendChild(option)});windowSelect.value=String(existing&&existing.windowMinutes?existing.windowMinutes:0);
+        const chartLabel=add(formCol,'label','board-field');add(chartLabel,'span','','图表类型');const chartSelect=add(chartLabel,'select');[['line','折线图'],['bar','柱状图'],['stat','大数字']].forEach(opt=>{const option=make('option');option.value=opt[0];option.textContent=opt[1];chartSelect.appendChild(option)});chartSelect.value=existing?existing.chart:'line';
+        const warnLabel=add(formCol,'label','board-field');add(warnLabel,'span','','告警阈值（stat 大数字着色，可留空）');const warnInput=add(warnLabel,'input');warnInput.type='number';warnInput.step='any';if(existing&&existing.warnValue!=null)warnInput.value=String(existing.warnValue);
+        const critLabel=add(formCol,'label','board-field');add(critLabel,'span','','严重阈值（stat 大数字着色，可留空）');const critInput=add(critLabel,'input');critInput.type='number';critInput.step='any';if(existing&&existing.critValue!=null)critInput.value=String(existing.critValue);
+        const widthLabel=add(formCol,'label','board-field');add(widthLabel,'span','','宽度');const widthSelect=add(widthLabel,'select');[[1,'半宽'],[2,'整行']].forEach(opt=>{const option=make('option');option.value=String(opt[0]);option.textContent=opt[1];widthSelect.appendChild(option)});widthSelect.value=String(existing?existing.width:1);
+        const row=make('div','board-modal-actions');const cancelBtn=add(row,'button','btn','取消');cancelBtn.type='button';const saveBtn=add(row,'button','btn primary','保存');saveBtn.type='button';formCol.appendChild(row);
+        add(previewCol,'strong','','预览随左侧表单实时更新');const previewWrap=make('div','signals-chart-wrap panel-preview');previewCol.appendChild(previewWrap);
+        split.appendChild(formCol);split.appendChild(previewCol);box.appendChild(split);
         overlay.appendChild(box);document.body.appendChild(overlay);
         const close=()=>overlay.remove();overlay.addEventListener('click',event=>{if(event.target===overlay)close()});cancelBtn.addEventListener('click',close);
+        const numOrNull=v=>{const text=String(v).trim();if(text==='')return null;const n=Number(text);return Number.isFinite(n)?n:null};
+        const draftPanel=()=>({title:String(titleInput.value||'').trim(),metric:String(metricInput.value||'').trim(),windowMinutes:Number(windowSelect.value)>0?Number(windowSelect.value):null,chart:chartSelect.value,width:Number(widthSelect.value)===2?2:1,warnValue:numOrNull(warnInput.value),critValue:numOrNull(critInput.value)});
+        let previewTimer=null;let previewSeq=0;
+        function renderPreview(){previewTimer=null;const draft=draftPanel();previewSeq+=1;const seq=previewSeq;previewWrap.replaceChildren();
+          if(!draft.metric){previewWrap.appendChild(make('div','signals-empty','填写指标名后此处实时预览'));return}
+          const activeRange=board.spec.range;const minutes=draft.windowMinutes||board.spec.windowMinutes;
+          let url='/api/ops/observability/metrics/query?metric='+encodeURIComponent(draft.metric)+'&points=60&minutes='+encodeURIComponent(String(minutes));
+          if(activeRange)url+='&fromMs='+encodeURIComponent(String(activeRange.fromMs))+'&toMs='+encodeURIComponent(String(activeRange.toMs));
+          const serviceFilter=(board.spec.filters&&board.spec.filters.service)||'';
+          fetch(base+url,{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data=>{if(seq!==previewSeq)return;previewWrap.replaceChildren();
+            const series=(data&&data.ok?data.series:[]).filter(item=>!serviceFilter||String((item.labels||{}).service||'')===serviceFilter).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));
+            if(!series.length){previewWrap.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}
+            renderBoardChart(previewWrap,series,minutes,draft)}).catch(()=>{if(seq===previewSeq){previewWrap.replaceChildren();previewWrap.appendChild(make('div','signals-empty','预览加载失败'))}})}
+        function schedulePreview(){if(previewTimer)clearTimeout(previewTimer);previewTimer=setTimeout(renderPreview,400)}
+        [titleInput,metricInput,warnInput,critInput].forEach(el=>el.addEventListener('input',schedulePreview));
+        [windowSelect,chartSelect,widthSelect].forEach(el=>el.addEventListener('change',schedulePreview));
+        if(existing&&existing.metric)renderPreview();else previewWrap.appendChild(make('div','signals-empty','填写指标名后此处实时预览'));
         saveBtn.addEventListener('click',()=>{const title=String(titleInput.value||'').trim().slice(0,120);const metric=String(metricInput.value||'').trim();if(!title||!metric){toast('请填写标题与指标名',false);return}
-          const numOrNull=v=>{const text=String(v).trim();if(text==='')return null;const n=Number(text);return Number.isFinite(n)?n:null};
           const panel={title:title,metric:metric,windowMinutes:Number(windowSelect.value)>0?Number(windowSelect.value):null,chart:chartSelect.value,width:Number(widthSelect.value)===2?2:1,warnValue:numOrNull(warnInput.value),critValue:numOrNull(critInput.value)};
           if(index>=0)board.spec.panels[index]=panel;else board.spec.panels.push(panel);
           close();persistBoardSpec();renderBoardPanels();renderBoardSelect()})}
@@ -286,6 +317,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         bind('anomalyDetectBtn','click',loadMetricAnomalies);
         bind('boardSelect','change',event=>{setCurrentBoard(String(event.target.value||''));renderBoard()});
         bind('boardWindow','change',event=>{const board=currentBoard();if(!board)return;if(event.target.value==='custom'){renderBoard();return}board.spec.range=null;board.spec.windowMinutes=Number(event.target.value)||240;persistBoardSpec();renderBoard()});
+        bind('boardServiceFilter','change',event=>{const board=currentBoard();if(!board)return;const service=String(event.target.value||'');board.spec.filters=service?{service:service}:null;persistBoardSpec();renderBoardPanels()});
         bind('boardRangeApplyBtn','click',applyBoardRange);
         bind('boardRangeClearBtn','click',clearBoardRange);
         bind('boardRangeToggleBtn','click',toggleBoardRangeBar);
