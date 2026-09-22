@@ -36,6 +36,7 @@ studio_experience_summaries
 studio_external_probe_status
 studio_north_star_snapshots
 studio_obs_dashboard_panels
+studio_obs_dashboards
 studio_obs_tenant_members
 studio_obs_tenants
 studio_observability_actions

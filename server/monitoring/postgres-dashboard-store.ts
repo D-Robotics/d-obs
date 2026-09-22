@@ -477,6 +477,7 @@ export const DEFAULT_POSTGRES_DASHBOARD_TABLES: readonly string[] = [
   'studio_external_probe_status',
   'studio_north_star_snapshots',
   'studio_obs_dashboard_panels',
+  'studio_obs_dashboards',
   'studio_obs_ingest_tokens',
   'studio_obs_tenant_members',
   'studio_obs_tenants',

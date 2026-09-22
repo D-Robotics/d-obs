@@ -3,7 +3,7 @@
 --   2) studio_observability_metric_*        OTLP metrics 持久化（series + 样本）
 --   3) studio_devices / studio_device_samples 边缘设备注册与心跳样本
 --   4) studio_model_prices                  token 成本归因单价表
---   5) studio_obs_dashboard_panels          自定义面板（保存的指标查询）
+--   5) studio_obs_dashboards                自定义看板（面板编组 + 模板导入导出）
 -- 由 tools/init-schema.sql 通过 \ir 引入；各 store 首次写入时也会执行相同
 -- 的幂等 DDL，两侧保持同源，修改须双向同步。
 -- 保留策略：logs / metric samples / device samples 由运行时按
@@ -127,19 +127,21 @@ create table if not exists public.studio_public_observability_feedback (
 create index if not exists studio_public_observability_feedback_run_idx
   on public.studio_public_observability_feedback (account_scope_id, environment, run_id, created_at desc);
 
--- ===== 自定义面板 =====
-create table if not exists public.studio_obs_dashboard_panels (
+-- ===== 自定义看板（面板编组 + 时间维度 + 模板导入导出） =====
+-- 取代旧 studio_obs_dashboard_panels 扁平面板表（该表不在本文件中建了）；
+-- 旧部署的历史面板由 dashboard-boards-store 在首次建表时迁入每人一个「默认看板」。
+create table if not exists public.studio_obs_dashboards (
   id uuid primary key default gen_random_uuid(),
-  title text not null,
   owner text not null,
+  name text not null,
   spec jsonb not null,
   position int not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
-create index if not exists studio_obs_dashboard_panels_owner_idx
-  on public.studio_obs_dashboard_panels (owner, position);
+create index if not exists studio_obs_dashboards_owner_idx
+  on public.studio_obs_dashboards (owner, position);
 
 -- ===== 生态接入凭据（人/服务/租户三级签发；身份只在凭据层，遥测零 PII） =====
 create table if not exists public.studio_obs_ingest_tokens (

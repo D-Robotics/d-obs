@@ -23,11 +23,48 @@ import {
 import { issueIngestToken, invalidateIngestTokenCache, listIngestTokens, revokeIngestToken, rotateIngestToken } from '../observability/ingest-token-store.js';
 import { METRIC_CATALOG } from '../observability/metric-dictionary.js';
 import { nlQuery } from '../observability/nl-query-service.js';
-import { createPanel, deletePanel, listPanels, normalizePanelSpec } from './dashboard-panels-store.js';
-import { analyzeIncidentEvidence, copilotModelEnabled } from '../observability/copilot-model.js';
+import {
+  createBoard,
+  deleteBoard,
+  listBoards,
+  normalizeBoardName,
+  normalizeBoardPanel,
+  normalizeBoardSpec,
+  parseBoardTemplate,
+  updateBoard,
+  type BoardPanel,
+  type BoardSpec,
+} from './dashboard-boards-store.js';
+import { analyzeIncidentEvidence, callGatewayChat, copilotModelEnabled, extractJson, resolveGatewayChatTarget } from '../observability/copilot-model.js';
+import { buildObservabilityMcpTools, handleMcpJsonRpc } from '../observability/agent-mcp.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
 import { loadQualityTrend } from '../public-api/public-observability-quality-trend.js';
 export function registerSignalsRoutes(router: Router): void {
+  // 平台内落库序列索引（metric + service），NL 查询与 MCP 工具共用。
+  function buildSeriesIndex(series: Array<{ metric: string; labels: unknown }>): Array<{ metric: string; service: string }> {
+    const indexMap = new Map<string, string>();
+    for (const row of series) {
+      const service = String((row.labels as Record<string, unknown> | null)?.service ?? '');
+      const key = `${row.metric}\u0000${service}`;
+      if (!indexMap.has(key)) indexMap.set(key, service);
+    }
+    return [...indexMap.entries()].map(([key, service]) => ({ metric: key.split('\u0000')[0], service }));
+  }
+
+  // AI agent MCP 工具面（只读查询，工具集构建一次）。
+  const mcpTools = buildObservabilityMcpTools({
+    listSeries: async ({ limit }) => await queryMetricSeries({ limit }),
+    queryRanges: async ({ metric, fromMs, toMs, windowMinutes, maxPoints }) => {
+      const to = toMs ?? Date.now();
+      const from = fromMs ?? to - (windowMinutes ?? 240) * 60_000;
+      return queryMetricRanges({ metric, fromMs: from, toMs: to, maxPoints });
+    },
+    queryLogs: (input) => queryLogs(input),
+    metricCatalog: () => METRIC_CATALOG,
+    listDevices: () => listDevices(),
+    nlQuery: async (question) => nlQuery(question, buildSeriesIndex(await queryMetricSeries({ limit: 300 }))),
+  });
+
   // ---- 平台内指标查询（OTLP metrics 落库后的一等查询面，管理员只读） ----
 
   router.get(
@@ -54,8 +91,14 @@ export function registerSignalsRoutes(router: Router): void {
       try {
         const query = req.query as Record<string, unknown>;
         const windowMinutes = queryInteger(query, 'minutes', 240, 5, 60 * 24 * 14);
-        const to = Date.now();
-        const from = to - windowMinutes * 60_000;
+        // 绝对时间范围优先（看板自定义区间 / MCP 工具）；缺省回退"最近 N 分钟"。
+        const to = queryInteger(query, 'toMs', Date.now(), 0, 8_640_000_000_000_000);
+        const from = queryInteger(query, 'fromMs', to - windowMinutes * 60_000, 0, to);
+        const spanMinutes = Math.round((to - from) / 60_000);
+        if (spanMinutes < 5 || spanMinutes > 60 * 24 * 14) {
+          res.status(400).json({ ok: false, error: 'invalid_time_range' });
+          return;
+        }
         const ranges = await queryMetricRanges({
           metric: queryText(query, 'metric', 96),
           fromMs: from,
@@ -64,7 +107,7 @@ export function registerSignalsRoutes(router: Router): void {
         });
         res.json({
           ok: true,
-          window: { fromMs: from, toMs: to, minutes: windowMinutes },
+          window: { fromMs: from, toMs: to, minutes: spanMinutes },
           series: ranges,
         });
       } catch (error) {
@@ -241,17 +284,7 @@ export function registerSignalsRoutes(router: Router): void {
       }
       try {
         // 平台内落库序列索引（metric + service），让规则层与模型都能选到用户应用指标。
-        const series = await queryMetricSeries({ limit: 300 });
-        const indexMap = new Map<string, string>();
-        for (const row of series) {
-          const service = String((row.labels as Record<string, unknown> | null)?.service ?? '');
-          const key = `${row.metric}\u0000${service}`;
-          if (!indexMap.has(key)) indexMap.set(key, service);
-        }
-        const seriesIndex = [...indexMap.entries()].map(([key, service]) => ({
-          metric: key.split('\u0000')[0],
-          service,
-        }));
+        const seriesIndex = buildSeriesIndex(await queryMetricSeries({ limit: 300 }));
         const result = await nlQuery(question, seriesIndex);
         res.json({ ok: true, ...result });
       } catch (error) {
@@ -416,56 +449,228 @@ export function registerSignalsRoutes(router: Router): void {
     },
   );
 
-  // ---- 自定义面板（保存的指标查询；按运营身份隔离） ----
+  // ---- 自定义看板（面板编组 + 时间维度 + 模板导入导出；按运营身份隔离） ----
 
-  router.get('/api/ops/observability/panels', requireObservabilityAccess, async (req: Request, res: Response) => {
+  router.get('/api/ops/observability/boards', requireObservabilityAccess, async (req: Request, res: Response) => {
     try {
-      const panels = await listPanels(resolveOpsActor(req));
+      const boards = await listBoards(resolveOpsActor(req));
       res.setHeader('Cache-Control', 'no-store');
-      res.json({ ok: true, panels });
+      res.json({ ok: true, boards });
     } catch (error) {
-      res.status(503).json({ ok: false, error: clientErrorCode(error, 'panels_unavailable') });
+      res.status(503).json({ ok: false, error: clientErrorCode(error, 'boards_unavailable') });
     }
   });
 
   router.post(
-    '/api/ops/observability/panels',
+    '/api/ops/observability/boards',
     requireObservabilityAccess,
     requireOpsMutationGuard,
     async (req: Request, res: Response) => {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const spec = normalizePanelSpec(body.spec);
-      const title = String(body.title ?? '').replace(/\0/g, '').trim().slice(0, 120);
-      if (!spec || !title) {
-        res.status(400).json({ ok: false, error: 'invalid_panel_spec' });
+      const name = normalizeBoardName(body.name);
+      let spec: BoardSpec | undefined;
+      if (body.spec != null) {
+        const parsed = normalizeBoardSpec(body.spec);
+        if (!parsed) {
+          res.status(400).json({ ok: false, error: 'invalid_board_spec' });
+          return;
+        }
+        spec = parsed;
+      }
+      if (body.name != null && !name) {
+        res.status(400).json({ ok: false, error: 'invalid_board_name' });
         return;
       }
       try {
-        const panel = await createPanel({ owner: resolveOpsActor(req), title, spec });
-        res.status(201).json({ ok: true, panel });
+        const board = await createBoard({
+          owner: resolveOpsActor(req),
+          name: name ?? '未命名看板',
+          spec,
+        });
+        res.status(201).json({ ok: true, board });
       } catch (error) {
-        res.status(503).json({ ok: false, error: clientErrorCode(error, 'panels_unavailable') });
+        if (String((error as Error)?.message ?? '') === 'too_many_boards') {
+          res.status(400).json({ ok: false, error: 'too_many_boards' });
+          return;
+        }
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'boards_unavailable') });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/boards/import',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const template = (req.body as Record<string, unknown> | undefined)?.template;
+      const parsed = parseBoardTemplate(template);
+      if (!parsed) {
+        res.status(400).json({ ok: false, error: 'invalid_board_template' });
+        return;
+      }
+      try {
+        const board = await createBoard({
+          owner: resolveOpsActor(req),
+          name: parsed.name ?? '导入看板',
+          spec: parsed.spec,
+        });
+        res.status(201).json({ ok: true, board });
+      } catch (error) {
+        if (String((error as Error)?.message ?? '') === 'too_many_boards') {
+          res.status(400).json({ ok: false, error: 'too_many_boards' });
+          return;
+        }
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'boards_unavailable') });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/boards/from-nl',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const question = String(body.question ?? '').trim().slice(0, 500);
+      if (!question) {
+        res.status(400).json({ ok: false, error: 'question_required' });
+        return;
+      }
+      try {
+        const seriesIndex = buildSeriesIndex(await queryMetricSeries({ limit: 300 }));
+        // 模型层优先：组织多指标看板；逐面板校验且必须命中落库序列，坏面板丢弃。
+        let specJson: Record<string, unknown> | null = null;
+        if (copilotModelEnabled()) {
+          try {
+            const target = await resolveGatewayChatTarget();
+            if (target) {
+              const listing = seriesIndex.map((entry) => `${entry.metric}（service=${entry.service || '—'}）`).join('\n');
+              const content = await callGatewayChat(
+                target,
+                [
+                  { role: 'system', content: '你是可观测平台的看板助手。根据中文描述把相关指标组织成一个看板，只能使用给定指标清单里的指标。只输出 JSON。' },
+                  { role: 'user', content: `指标清单（每行：指标名（service=…））：\n${listing}\n\n需求：${question}\n\n输出 JSON：{"name":"看板名(≤20字)","panels":[{"title":"面板标题(≤20字)","metric":"清单中的指标名","chart":"line|bar|stat","windowMinutes":240}]}。面板 2~8 个；累计量用 line，当前水位/利用率用 stat，取值范围可见时也可用 bar。` },
+                ],
+                20_000,
+              );
+              specJson = extractJson(content);
+            }
+          } catch {
+            specJson = null;
+          }
+        }
+        let panels: BoardPanel[] = [];
+        if (specJson && Array.isArray(specJson.panels)) {
+          for (const raw of specJson.panels as unknown[]) {
+            const panel = normalizeBoardPanel(raw);
+            if (panel && seriesIndex.some((entry) => entry.metric === panel.metric)) panels.push(panel);
+          }
+        }
+        // 规则层兜底：模型层没产出时，nlQuery 单指标也能成板。
+        if (!panels.length) {
+          const result = await nlQuery(question, seriesIndex) as { spec?: { metric?: string; windowMinutes?: number } };
+          if (result.spec?.metric) {
+            const panel = normalizeBoardPanel({
+              title: question.slice(0, 40) || result.spec.metric,
+              metric: result.spec.metric,
+              windowMinutes: result.spec.windowMinutes ?? 240,
+              chart: 'line',
+              width: 2,
+            });
+            if (panel) panels = [panel];
+          }
+        }
+        const spec = normalizeBoardSpec({ windowMinutes: 240, panels: panels.slice(0, 8) });
+        if (!spec || !spec.panels.length) {
+          res.status(400).json({ ok: false, error: 'nl_board_no_match' });
+          return;
+        }
+        const board = await createBoard({
+          owner: resolveOpsActor(req),
+          name: normalizeBoardName(specJson?.name) ?? question.slice(0, 20) ?? 'AI 看板',
+          spec,
+        });
+        res.status(201).json({ ok: true, board, source: specJson ? 'model' : 'rules' });
+      } catch (error) {
+        const message = String((error as Error)?.message ?? '');
+        if (message === 'nl_query_no_match' || message === 'nl_query_empty') {
+          res.status(400).json({ ok: false, error: 'nl_board_no_match' });
+          return;
+        }
+        if (message === 'too_many_boards') {
+          res.status(400).json({ ok: false, error: 'too_many_boards' });
+          return;
+        }
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'boards_unavailable') });
+      }
+    },
+  );
+
+  router.put(
+    '/api/ops/observability/boards/:boardId',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const patch: { name?: string; spec?: BoardSpec } = {};
+      if (body.name != null) {
+        const name = normalizeBoardName(body.name);
+        if (!name) {
+          res.status(400).json({ ok: false, error: 'invalid_board_name' });
+          return;
+        }
+        patch.name = name;
+      }
+      if (body.spec != null) {
+        const spec = normalizeBoardSpec(body.spec);
+        if (!spec) {
+          res.status(400).json({ ok: false, error: 'invalid_board_spec' });
+          return;
+        }
+        patch.spec = spec;
+      }
+      try {
+        const board = await updateBoard(resolveOpsActor(req), String(req.params.boardId ?? ''), patch);
+        if (!board) {
+          res.status(404).json({ ok: false, error: 'board_not_found' });
+          return;
+        }
+        res.json({ ok: true, board });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'boards_unavailable') });
       }
     },
   );
 
   router.delete(
-    '/api/ops/observability/panels/:panelId',
+    '/api/ops/observability/boards/:boardId',
     requireObservabilityAccess,
     requireOpsMutationGuard,
     async (req: Request, res: Response) => {
       try {
-        const removed = await deletePanel(resolveOpsActor(req), String(req.params.panelId ?? ''));
+        const removed = await deleteBoard(resolveOpsActor(req), String(req.params.boardId ?? ''));
         if (!removed) {
-          res.status(404).json({ ok: false, error: 'panel_not_found' });
+          res.status(404).json({ ok: false, error: 'board_not_found' });
           return;
         }
         res.json({ ok: true });
       } catch (error) {
-        res.status(503).json({ ok: false, error: clientErrorCode(error, 'panels_unavailable') });
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'boards_unavailable') });
       }
     },
   );
+
+  // ---- AI agent MCP 工具面（只读查询；Streamable HTTP / JSON-RPC 2.0，通知回 202） ----
+
+  router.post('/api/ops/mcp', requireObservabilityAccess, async (req: Request, res: Response) => {
+    const response = await handleMcpJsonRpc(req.body, mcpTools, { name: 'd-obs', version: '1.0.0' });
+    if (!response) {
+      res.status(202).end();
+      return;
+    }
+    res.json(response);
+  });
 
   // ---- 事故副驾模型研判（可选；未启用时客户端回落确定性证据引擎） ----
 

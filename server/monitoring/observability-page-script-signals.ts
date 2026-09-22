@@ -10,7 +10,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
       function signalsFormatValue(value){const n=Number(value)||0;const abs=Math.abs(n);if(abs>=1e9)return (n/1e9).toFixed(1)+'G';if(abs>=1e6)return (n/1e6).toFixed(1)+'M';if(abs>=1e3)return (n/1e3).toFixed(1)+'k';if(abs>=10)return n.toFixed(0);if(abs>=1)return n.toFixed(2);if(abs===0)return '0';return n.toFixed(3)}
       function signalsFormatTs(ts,windowMinutes){const date=new Date(Number(ts));if(!Number.isFinite(date.getTime()))return '';const pad=v=>String(v).padStart(2,'0');if(windowMinutes<=1440)return pad(date.getHours())+':'+pad(date.getMinutes());return (date.getMonth()+1)+'/'+date.getDate()+' '+pad(date.getHours())+':00'}
       // series: [{name, points:[{ts,value}]}]; 渲染 SVG 折线 + 网格 + 图例。
-      function renderSignalsChart(container,series,windowMinutes){container.replaceChildren();const usable=series.filter(item=>item.points&&item.points.length);if(!usable.length){container.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}
+      function renderSignalsChart(container,series,windowMinutes,mode,onZoom){container.replaceChildren();const usable=series.filter(item=>item.points&&item.points.length);if(!usable.length){container.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}
         const width=Math.max(320,container.clientWidth||640);const height=200;const padL=52;const padR=12;const padT=10;const padB=24;
         let minV=Infinity,maxV=-Infinity,minT=Infinity,maxT=-Infinity;usable.forEach(item=>item.points.forEach(p=>{minV=Math.min(minV,p.value);maxV=Math.max(maxV,p.value);minT=Math.min(minT,p.ts);maxT=Math.max(maxT,p.ts)}));
         if(minT===maxT){maxT=minT+60000}if(minV===maxV){maxV=minV+1}const padV=(maxV-minV)*0.08;minV-=padV;maxV+=padV;
@@ -19,8 +19,25 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         for(let i=0;i<=3;i++){const value=minV+(maxV-minV)*(i/3);const gy=y(value);const line=document.createElementNS('http://www.w3.org/2000/svg','line');line.setAttribute('x1',padL);line.setAttribute('x2',width-padR);line.setAttribute('y1',gy);line.setAttribute('y2',gy);line.setAttribute('stroke','rgba(148,163,184,.18)');line.setAttribute('stroke-width','1');svg.appendChild(line);
           const label=document.createElementNS('http://www.w3.org/2000/svg','text');label.setAttribute('x',padL-6);label.setAttribute('y',gy+4);label.setAttribute('text-anchor','end');label.setAttribute('font-size','10');label.setAttribute('fill','var(--muted)');label.textContent=signalsFormatValue(value);svg.appendChild(label)}
         const tickCount=Math.min(5,usable[0].points.length);for(let i=0;i<tickCount;i++){const ts=minT+(maxT-minT)*(tickCount===1?0:i/(tickCount-1));const tx=x(ts);const tlabel=document.createElementNS('http://www.w3.org/2000/svg','text');tlabel.setAttribute('x',Math.min(Math.max(tx,padL),width-padR));tlabel.setAttribute('y',height-6);tlabel.setAttribute('text-anchor','middle');tlabel.setAttribute('font-size','10');tlabel.setAttribute('fill','var(--muted)');tlabel.textContent=signalsFormatTs(ts,windowMinutes||240);svg.appendChild(tlabel)}
-        usable.forEach((item,index)=>{const color=SIGNALS_CHART_COLORS[index%SIGNALS_CHART_COLORS.length];const d=item.points.map((p,i2)=>(i2?'L':'M')+x(p.ts).toFixed(1)+' '+y(p.value).toFixed(1)).join(' ');const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);path.setAttribute('fill','none');path.setAttribute('stroke',color);path.setAttribute('stroke-width','1.6');path.setAttribute('stroke-linejoin','round');svg.appendChild(path)});
+        if(mode==='bar'){const slot=(width-padL-padR)/Math.max(1,usable[0].points.length);const barW=Math.max(1.5,slot/usable.length*0.72);usable.forEach((item,index)=>{const color=SIGNALS_CHART_COLORS[index%SIGNALS_CHART_COLORS.length];item.points.forEach(p=>{const top=y(p.value);const bottom=height-padB;const rect=document.createElementNS('http://www.w3.org/2000/svg','rect');rect.setAttribute('x',(x(p.ts)-slot/2+index*(slot/usable.length)).toFixed(1));rect.setAttribute('y',top.toFixed(1));rect.setAttribute('width',barW.toFixed(1));rect.setAttribute('height',Math.max(0.5,bottom-top).toFixed(1));rect.setAttribute('fill',color);rect.setAttribute('opacity','0.85');const tip=document.createElementNS('http://www.w3.org/2000/svg','title');tip.textContent=item.name+' '+signalsFormatValue(p.value);rect.appendChild(tip);svg.appendChild(rect)})})}
+        else{usable.forEach((item,index)=>{const color=SIGNALS_CHART_COLORS[index%SIGNALS_CHART_COLORS.length];const d=item.points.map((p,i2)=>(i2?'L':'M')+x(p.ts).toFixed(1)+' '+y(p.value).toFixed(1)).join(' ');const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);path.setAttribute('fill','none');path.setAttribute('stroke',color);path.setAttribute('stroke-width','1.6');path.setAttribute('stroke-linejoin','round');svg.appendChild(path)})}
+        const crosshair=document.createElementNS('http://www.w3.org/2000/svg','line');crosshair.setAttribute('y1',padT);crosshair.setAttribute('y2',height-padB);crosshair.setAttribute('stroke','rgba(148,163,184,.5)');crosshair.setAttribute('stroke-width','1');crosshair.setAttribute('visibility','hidden');svg.appendChild(crosshair);
         container.appendChild(svg);
+        const tip=make('div','signals-chart-tip');tip.style.display='none';container.appendChild(tip);
+        svg.addEventListener('mousemove',event=>{const bounds=svg.getBoundingClientRect();const mx=event.clientX-bounds.left;if(mx<padL||mx>width-padR){tip.style.display='none';crosshair.setAttribute('visibility','hidden');return}
+          const hoverTs=minT+(mx-padL)/(width-padL-padR)*(maxT-minT);let nearest=usable[0].points[0].ts;usable.forEach(item=>item.points.forEach(p=>{if(Math.abs(p.ts-hoverTs)<Math.abs(nearest-hoverTs))nearest=p.ts}));
+          crosshair.setAttribute('x1',x(nearest).toFixed(1));crosshair.setAttribute('x2',x(nearest).toFixed(1));crosshair.setAttribute('visibility','visible');
+          tip.replaceChildren();add(tip,'strong','',signalsFormatTs(nearest,windowMinutes||240));usable.forEach((item,index)=>{let bp=item.points[0];item.points.forEach(p=>{if(Math.abs(p.ts-nearest)<Math.abs(bp.ts-nearest))bp=p});const row=make('span');const swatch=make('span','swatch');swatch.style.background=SIGNALS_CHART_COLORS[index%SIGNALS_CHART_COLORS.length];row.appendChild(swatch);row.appendChild(document.createTextNode(signalsFormatValue(bp.value)));tip.appendChild(row)});
+          tip.style.display='flex';const tw=tip.offsetWidth||120;tip.style.left=Math.min(Math.max(x(nearest)-tw/2,0),(container.clientWidth||320)-tw)+'px';tip.style.top='4px'});
+        svg.addEventListener('mouseleave',()=>{tip.style.display='none';crosshair.setAttribute('visibility','hidden')});
+        if(onZoom){svg.style.cursor='crosshair';let brushStartX=null;const brushRect=make('div','signals-chart-brush');brushRect.style.display='none';container.appendChild(brushRect);
+          svg.addEventListener('pointerdown',event=>{if(event.button!==0)return;brushStartX=event.clientX;brushRect.style.display='none';tip.style.display='none';try{svg.setPointerCapture(event.pointerId)}catch{}});
+          svg.addEventListener('pointermove',event=>{if(brushStartX==null)return;const offset=event.clientX-brushStartX;if(Math.abs(offset)<4){brushRect.style.display='none';return}
+            const bounds=container.getBoundingClientRect();brushRect.style.display='block';brushRect.style.left=Math.min(brushStartX,event.clientX)-bounds.left+'px';brushRect.style.width=Math.abs(offset)+'px';brushRect.style.top='0px';brushRect.style.height='100%'});
+          svg.addEventListener('pointerup',event=>{if(brushStartX==null)return;const offset=event.clientX-brushStartX;const startX=brushStartX;brushStartX=null;brushRect.style.display='none';if(Math.abs(offset)<8)return;
+            const bounds=svg.getBoundingClientRect();const scale=width/(bounds.width||width);const toTs=clientX=>((clientX-bounds.left)*scale-padL)/(width-padL-padR)*(maxT-minT)+minT;
+            const a=Math.max(minT,toTs(Math.min(startX,event.clientX)));const b=Math.min(maxT,toTs(Math.max(startX,event.clientX)));
+            if(b-a>60_000)onZoom(a,b)});}
         const legend=make('div','signals-legend');usable.forEach((item,index)=>{const entry=make('span');const swatch=make('span','swatch');swatch.style.background=SIGNALS_CHART_COLORS[index%SIGNALS_CHART_COLORS.length];entry.appendChild(swatch);entry.appendChild(document.createTextNode(item.name+(item.points.length?(' ('+item.points.length+')'):'')));legend.appendChild(entry)});container.appendChild(legend)}
 
       // ============ 指标查询 ============
@@ -34,14 +51,120 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           const logs=data.logs||[];if(!logs.length){target.appendChild(make('div','signals-empty','所选范围内没有日志记录'));return}
           const table=make('table','signals-log-table');const thead=make('thead');const headRow=make('tr');['时间','服务','级别','内容'].forEach(h=>add(headRow,'th','',h));thead.appendChild(headRow);table.appendChild(thead);const tbody=make('tbody');logs.forEach(row=>{const tr=make('tr');add(tr,'td','',when(row.timestampMs));add(tr,'td','',row.service||'—');const sev=add(tr,'td');add(sev,'span','signals-log-sev '+String(row.severityText||'INFO'),String(row.severityText||'INFO'));add(tr,'td','',row.body||'');tbody.appendChild(tr)});table.appendChild(tbody);target.appendChild(table)}catch{target.replaceChildren();target.appendChild(make('div','signals-empty','日志查询失败，请检查网络'))}}
 
-      // ============ 自定义面板 ============
-      state.signalPanels=state.signalPanels||null;
-      async function loadSignalPanels(){const target=$('signalsPanelGrid');if(!target)return;try{const response=await fetch(base+'/api/ops/observability/panels',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);target.replaceChildren();if(!response.ok||!data||!data.ok){target.appendChild(make('div','signals-empty','面板读取失败'));return}
-          const panels=data.panels||[];if(!panels.length){target.appendChild(make('div','signals-empty','还没有保存的面板；在上方查询指标后点「保存为面板」'));return}
-          panels.forEach(panel=>{const card=make('div','signals-panel-card');const head=make('h4');add(head,'span','',panel.title+' · '+panel.spec.metric+' · '+(panel.spec.windowMinutes>=1440?(panel.spec.windowMinutes/1440)+'天':panel.spec.windowMinutes+'分钟'));const del=add(head,'button','btn','删除');del.type='button';del.addEventListener('click',async()=>{try{await fetch(base+'/api/ops/observability/panels/'+encodeURIComponent(panel.id),{method:'DELETE',headers:apiHeaders(true),credentials:'same-origin'});toast('面板已删除');loadSignalPanels()}catch{toast('删除失败',false)}});card.appendChild(head);const chartWrap=make('div','signals-chart-wrap');card.appendChild(chartWrap);target.appendChild(card);
-            fetch(base+'/api/ops/observability/metrics/query?metric='+encodeURIComponent(panel.spec.metric)+'&minutes='+encodeURIComponent(String(panel.spec.windowMinutes))+'&points=120',{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data2=>{const series=(data2&&data2.ok?data2.series:[]).map(item=>({name:item.metric,points:item.points||[]}));renderSignalsChart(chartWrap,series,panel.spec.windowMinutes)}).catch(()=>{chartWrap.appendChild(make('div','signals-empty','加载失败'))})})}catch{target.replaceChildren();target.appendChild(make('div','signals-empty','面板读取失败'))}}
-      async function saveSignalsPanel(){const metric=String(($('signalMetricInput')||{}).value||'').trim();const minutes=Number(($('signalMinutes')||{}).value||240);if(!metric){toast('先查询一个指标再保存',false);return}const title=window.prompt('面板标题',metric);if(!title)return;
-        try{const response=await fetch(base+'/api/ops/observability/panels',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({title:title.slice(0,120),spec:{metric:metric,windowMinutes:minutes}})});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){toast('面板已保存');loadSignalPanels()}else toast(data&&data.error==='invalid_panel_spec'?'指标名不合法':'保存失败',false)}catch{toast('保存失败',false)}}
+      // ============ 自定义看板（多看板 / 拖拽排序 / 模板导入导出） ============
+      state.boards=state.boards||[];
+      state.currentBoardId=state.currentBoardId||'';
+      state.boardDragIndex=-1;
+      state.boardsLoaded=false;
+      state.boardRefreshTimer=null;
+      const BOARD_WINDOW_LABELS={60:'1 小时',240:'4 小时',1440:'24 小时',10080:'7 天',20160:'14 天'};
+      function boardWindowLabel(minutes){return BOARD_WINDOW_LABELS[minutes]||(minutes>=1440?(minutes/1440)+'天':minutes+'分钟')}
+      function currentBoard(){return state.boards.find(board=>board.id===state.currentBoardId)||state.boards[0]||null}
+      function setCurrentBoard(id){state.currentBoardId=id;sessionStorage.setItem('d_obs_board_id',String(id))}
+      function setBoardAutoRefresh(ms){if(state.boardRefreshTimer){clearInterval(state.boardRefreshTimer);state.boardRefreshTimer=null}if(ms>0)state.boardRefreshTimer=setInterval(()=>{if(document.hidden)return;renderBoardPanels()},ms)}
+      function toggleBoardKiosk(){const active=document.body.classList.toggle('obs-kiosk');const btn=$('boardKioskBtn');if(btn)btn.textContent=active?'退出大屏':'大屏';
+        if(active){try{const request=document.documentElement.requestFullscreen();if(request&&request.catch)request.catch(()=>{})}catch{}}
+        else if(document.fullscreenElement){try{document.exitFullscreen()}catch{}}}
+      function renderBoardChart(container,series,minutes,panel){if(panel.chart==='stat'){renderSignalsStat(container,series,panel);return}renderSignalsChart(container,series,minutes,panel.chart,(fromMs,toMs)=>setBoardRange(Math.round(fromMs),Math.round(toMs)))}
+      function tsToInputValue(ms){const date=new Date(Number(ms));const pad=v=>String(v).padStart(2,'0');return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate())+'T'+pad(date.getHours())+':'+pad(date.getMinutes())}
+      function inputValueToTs(value){const ms=new Date(String(value||'')).getTime();return Number.isFinite(ms)?ms:null}
+      function setBoardRange(fromMs,toMs){const board=currentBoard();if(!board)return;if(!(toMs>fromMs))return;board.spec.range={fromMs:fromMs,toMs:toMs};persistBoardSpec();renderBoard()}
+      function renderSignalsStat(container,series,panel){container.replaceChildren();const usable=series.filter(item=>item.points&&item.points.length);if(!usable.length){container.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}
+        const primary=usable[0];const last=primary.points[primary.points.length-1];
+        const warn=panel&&panel.warnValue!=null?Number(panel.warnValue):null;const crit=panel&&panel.critValue!=null?Number(panel.critValue):null;
+        let valueClass='signals-stat-value';if(crit!=null&&Number(last.value)>=crit)valueClass+=' crit';else if(warn!=null&&Number(last.value)>=warn)valueClass+=' warn';
+        container.appendChild(make('div',valueClass,signalsFormatValue(last.value)));
+        const meta=make('div','signals-stat-meta');add(meta,'span','',primary.name);meta.appendChild(document.createTextNode(' · 最新 '+when(last.ts)));
+        if(warn!=null||crit!=null)meta.appendChild(document.createTextNode(' · 阈值 '+(warn==null?'—':signalsFormatValue(warn))+' / '+(crit==null?'—':signalsFormatValue(crit))));
+        usable.slice(1,4).forEach(item=>{const p2=item.points[item.points.length-1];meta.appendChild(document.createTextNode(' · '+item.name.split(' ')[0]+' '+signalsFormatValue(p2.value)))});container.appendChild(meta)}
+      async function loadBoards(){const grid=$('signalsPanelGrid');try{const response=await fetch(base+'/api/ops/observability/boards',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);if(!response.ok||!data||!data.ok){if(grid){grid.replaceChildren();grid.appendChild(make('div','signals-empty','看板读取失败（需要中心库）'))}return}
+          state.boards=data.boards||[];state.boardsLoaded=true;const remembered=String(sessionStorage.getItem('d_obs_board_id')||'');if(remembered&&state.boards.find(board=>board.id===remembered))setCurrentBoard(remembered);else if(!state.boards.find(board=>board.id===state.currentBoardId))setCurrentBoard(state.boards.length?state.boards[0].id:'');renderBoardSelect();renderBoard()}catch{if(grid){grid.replaceChildren();grid.appendChild(make('div','signals-empty','看板读取失败，请检查网络'))}}}
+      function renderBoardSelect(){const select=$('boardSelect');if(!select)return;select.replaceChildren();if(!state.boards.length){const option=make('option');option.value='';option.textContent='（还没有看板）';select.appendChild(option);return}
+        state.boards.forEach(board=>{const option=make('option');option.value=board.id;option.textContent=board.name+'（'+board.spec.panels.length+'）';if(board.id===state.currentBoardId)option.selected=true;select.appendChild(option)})}
+      function persistBoardSpec(){const board=currentBoard();if(!board)return;fetch(base+'/api/ops/observability/boards/'+encodeURIComponent(board.id),{method:'PUT',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({spec:board.spec})}).then(response=>response.json().catch(()=>null)).then(data=>{if(!data||!data.ok){toast('看板保存失败',false);loadBoards()}}).catch(()=>{toast('看板保存失败，请检查网络',false)})}
+      function renderBoard(){const board=currentBoard();const windowSelect=$('boardWindow');const fromInput=$('boardRangeFrom');const toInput=$('boardRangeTo');
+        if(windowSelect&&board)windowSelect.value=board.spec.range?'custom':String(board.spec.windowMinutes);
+        if(fromInput)fromInput.value=board&&board.spec.range?tsToInputValue(board.spec.range.fromMs):'';
+        if(toInput)toInput.value=board&&board.spec.range?tsToInputValue(board.spec.range.toMs):'';
+        renderBoardPanels()}
+      function applyBoardRange(){const board=currentBoard();if(!board)return;const from=inputValueToTs(($('boardRangeFrom')||{}).value);const to=inputValueToTs(($('boardRangeTo')||{}).value);
+        if(from==null||to==null){toast('请先选择起止时间',false);return}
+        if(to<=from){toast('结束时间要晚于起始时间',false);return}
+        if(to-from<5*60_000){toast('区间至少 5 分钟',false);return}
+        if(to-from>14*24*3_600_000){toast('区间最多 14 天',false);return}
+        board.spec.range={fromMs:from,toMs:to};persistBoardSpec();renderBoard()}
+      function clearBoardRange(){const board=currentBoard();if(!board||!board.spec.range)return;board.spec.range=null;persistBoardSpec();renderBoard()}
+      function moveBoardPanel(from,to,after){const board=currentBoard();if(!board)return;const panels=board.spec.panels;const moved=panels.splice(from,1)[0];let target=to;if(from<to)target=to-1;if(after)target+=1;panels.splice(Math.max(0,Math.min(panels.length,target)),0,moved);persistBoardSpec();renderBoardPanels();renderBoardSelect()}
+      function renderBoardPanels(){const target=$('signalsPanelGrid');if(!target)return;const board=currentBoard();target.replaceChildren();
+        if(!board){target.appendChild(make('div','signals-empty','还没有看板：点「新建看板」创建，或「导入模板」生成'));return}
+        if(!board.spec.panels.length){target.appendChild(make('div','signals-empty','看板是空的：点「添加面板」，或在指标查询里查好指标后点「存入看板」'))}
+        board.spec.panels.forEach((panel,index)=>{const card=make('div','signals-panel-card'+(panel.width===2?' full':''));card.draggable=true;
+          const head=make('h4');const titleWrap=make('span');add(titleWrap,'strong','',panel.title);add(titleWrap,'div','',panel.metric+' · '+(panel.windowMinutes?'固定 '+boardWindowLabel(panel.windowMinutes):'跟随看板'));head.appendChild(titleWrap);
+          const actions=make('span','panel-actions');const editBtn=add(actions,'button','btn','编辑');editBtn.type='button';editBtn.addEventListener('click',()=>openPanelModal(panel,index));const delBtn=add(actions,'button','btn','删除');delBtn.type='button';delBtn.addEventListener('click',()=>openConfirmModal('删除面板','从看板移除面板「'+panel.title+'」？',()=>{board.spec.panels.splice(index,1);persistBoardSpec();renderBoardPanels();renderBoardSelect()}));head.appendChild(actions);card.appendChild(head);
+          card.addEventListener('dragstart',event=>{state.boardDragIndex=index;card.classList.add('dragging');if(event.dataTransfer){event.dataTransfer.effectAllowed='move';try{event.dataTransfer.setData('text/plain',String(index))}catch{}}});
+          card.addEventListener('dragend',()=>{card.classList.remove('dragging');state.boardDragIndex=-1});
+          card.addEventListener('dragover',event=>{if(state.boardDragIndex<0||state.boardDragIndex===index)return;event.preventDefault();card.classList.add('drop-target')});
+          card.addEventListener('dragleave',()=>card.classList.remove('drop-target'));
+          card.addEventListener('drop',event=>{event.preventDefault();event.stopPropagation();card.classList.remove('drop-target');const from=state.boardDragIndex;if(from<0||from===index)return;const rect=card.getBoundingClientRect();const after=(event.clientX-rect.left)>rect.width/2;moveBoardPanel(from,index,after)});
+          const chartWrap=make('div','signals-chart-wrap');card.appendChild(chartWrap);target.appendChild(card);
+          const activeRange=board.spec.range;
+          const minutes=activeRange?Math.max(5,Math.round((activeRange.toMs-activeRange.fromMs)/60_000)):(panel.windowMinutes||board.spec.windowMinutes);
+          let queryParams='/api/ops/observability/metrics/query?metric='+encodeURIComponent(panel.metric)+'&points=120&minutes='+encodeURIComponent(String(minutes));
+          if(activeRange)queryParams+='&fromMs='+encodeURIComponent(String(activeRange.fromMs))+'&toMs='+encodeURIComponent(String(activeRange.toMs));
+          fetch(base+queryParams,{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data=>{const series=(data&&data.ok?data.series:[]).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));renderBoardChart(chartWrap,series,minutes,panel)}).catch(()=>{chartWrap.replaceChildren();chartWrap.appendChild(make('div','signals-empty','加载失败'))})});
+        target.ondragover=event=>event.preventDefault();
+        target.ondrop=event=>{event.preventDefault();const dropBoard=currentBoard();if(!dropBoard)return;const from=state.boardDragIndex;if(from<0||from>=dropBoard.spec.panels.length-1)return;moveBoardPanel(from,dropBoard.spec.panels.length-1,true)}}
+      function openPanelModal(existing,index){const board=currentBoard();if(!board){toast('先创建一个看板',false);return}
+        const overlay=make('div','board-modal');const box=make('div','board-modal-box');add(box,'h3','',existing&&index>=0?'编辑面板':'添加面板');
+        const titleLabel=add(box,'label','board-field');add(titleLabel,'span','','面板标题');const titleInput=add(titleLabel,'input');titleInput.type='text';titleInput.value=existing?existing.title:'';
+        const metricLabel=add(box,'label','board-field');add(metricLabel,'span','','指标名');const metricInput=add(metricLabel,'input');metricInput.type='text';metricInput.setAttribute('list','signalMetricList');metricInput.value=existing?existing.metric:'';
+        const windowLabel=add(box,'label','board-field');add(windowLabel,'span','','时间窗口');const windowSelect=add(windowLabel,'select');[[0,'跟随看板（'+boardWindowLabel(board.spec.windowMinutes)+'）'],[60,'最近 1 小时'],[240,'最近 4 小时'],[1440,'最近 24 小时'],[10080,'最近 7 天'],[20160,'最近 14 天']].forEach(opt=>{const option=make('option');option.value=String(opt[0]);option.textContent=opt[1];windowSelect.appendChild(option)});windowSelect.value=String(existing&&existing.windowMinutes?existing.windowMinutes:0);
+        const chartLabel=add(box,'label','board-field');add(chartLabel,'span','','图表类型');const chartSelect=add(chartLabel,'select');[['line','折线图'],['bar','柱状图'],['stat','大数字']].forEach(opt=>{const option=make('option');option.value=opt[0];option.textContent=opt[1];chartSelect.appendChild(option)});chartSelect.value=existing?existing.chart:'line';
+        const warnLabel=add(box,'label','board-field');add(warnLabel,'span','','告警阈值（stat 大数字着色，可留空）');const warnInput=add(warnLabel,'input');warnInput.type='number';warnInput.step='any';if(existing&&existing.warnValue!=null)warnInput.value=String(existing.warnValue);
+        const critLabel=add(box,'label','board-field');add(critLabel,'span','','严重阈值（stat 大数字着色，可留空）');const critInput=add(critLabel,'input');critInput.type='number';critInput.step='any';if(existing&&existing.critValue!=null)critInput.value=String(existing.critValue);
+        const widthLabel=add(box,'label','board-field');add(widthLabel,'span','','宽度');const widthSelect=add(widthLabel,'select');[[1,'半宽'],[2,'整行']].forEach(opt=>{const option=make('option');option.value=String(opt[0]);option.textContent=opt[1];widthSelect.appendChild(option)});widthSelect.value=String(existing?existing.width:1);
+        const row=make('div','board-modal-actions');const cancelBtn=add(row,'button','btn','取消');cancelBtn.type='button';const saveBtn=add(row,'button','btn primary','保存');saveBtn.type='button';box.appendChild(row);
+        overlay.appendChild(box);document.body.appendChild(overlay);
+        const close=()=>overlay.remove();overlay.addEventListener('click',event=>{if(event.target===overlay)close()});cancelBtn.addEventListener('click',close);
+        saveBtn.addEventListener('click',()=>{const title=String(titleInput.value||'').trim().slice(0,120);const metric=String(metricInput.value||'').trim();if(!title||!metric){toast('标题和指标名都要填',false);return}
+          const numOrNull=v=>{const text=String(v).trim();if(text==='')return null;const n=Number(text);return Number.isFinite(n)?n:null};
+          const panel={title:title,metric:metric,windowMinutes:Number(windowSelect.value)>0?Number(windowSelect.value):null,chart:chartSelect.value,width:Number(widthSelect.value)===2?2:1,warnValue:numOrNull(warnInput.value),critValue:numOrNull(critInput.value)};
+          if(index>=0)board.spec.panels[index]=panel;else board.spec.panels.push(panel);
+          close();persistBoardSpec();renderBoardPanels();renderBoardSelect()})}
+      async function saveSignalsPanel(){const metric=String(($('signalMetricInput')||{}).value||'').trim();const minutes=Number(($('signalMinutes')||{}).value||240);if(!metric){toast('先查询一个指标再存入看板',false);return}
+        if(!state.boardsLoaded)await loadBoards();
+        let board=currentBoard();
+        if(!board){try{const response=await fetch(base+'/api/ops/observability/boards',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({name:'默认看板'})});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){state.boards.push(data.board);setCurrentBoard(data.board.id);board=data.board;renderBoardSelect()}else{toast(data&&data.error==='too_many_boards'?'看板数量已达上限':'创建默认看板失败',false);return}}catch{toast('创建默认看板失败，请检查网络',false);return}}
+        openPanelModal({title:metric,metric:metric,windowMinutes:minutes,chart:'line',width:1},-1)}
+      function openTextModal(title,label,initial,onSave){const overlay=make('div','board-modal');const box=make('div','board-modal-box');add(box,'h3','',title);
+        const field=add(box,'label','board-field');add(field,'span','',label);const input=add(field,'input');input.type='text';input.value=initial||'';
+        const row=make('div','board-modal-actions');const cancelBtn=add(row,'button','btn','取消');cancelBtn.type='button';const okBtn=add(row,'button','btn primary','确定');okBtn.type='button';box.appendChild(row);
+        overlay.appendChild(box);document.body.appendChild(overlay);
+        const close=()=>overlay.remove();overlay.addEventListener('click',event=>{if(event.target===overlay)close()});cancelBtn.addEventListener('click',close);
+        const submit=()=>{const value=String(input.value||'').trim();if(!value){toast('内容不能为空',false);return}close();onSave(value)};okBtn.addEventListener('click',submit);input.addEventListener('keydown',event=>{if(event.key==='Enter')submit()});input.focus()}
+      function openConfirmModal(title,message,onOk){const overlay=make('div','board-modal');const box=make('div','board-modal-box');add(box,'h3','',title);add(box,'p','board-confirm-text',message);
+        const row=make('div','board-modal-actions');const cancelBtn=add(row,'button','btn','取消');cancelBtn.type='button';const okBtn=add(row,'button','btn danger','删除');okBtn.type='button';box.appendChild(row);
+        overlay.appendChild(box);document.body.appendChild(overlay);
+        const close=()=>overlay.remove();overlay.addEventListener('click',event=>{if(event.target===overlay)close()});cancelBtn.addEventListener('click',close);okBtn.addEventListener('click',()=>{close();onOk()})}
+      function createBoardFlow(){openTextModal('新建看板','看板名称','',name=>{
+        fetch(base+'/api/ops/observability/boards',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({name:name.slice(0,120)})}).then(r=>r.json().catch(()=>null)).then(data=>{if(data&&data.ok){setCurrentBoard(data.board.id);toast('看板已创建');loadBoards()}else toast(data&&data.error==='too_many_boards'?'看板数量已达上限（20）':'创建失败',false)}).catch(()=>toast('创建失败，请检查网络',false))})}
+      function renameBoardFlow(){const board=currentBoard();if(!board)return;openTextModal('重命名看板','看板名称',board.name,name=>{
+        fetch(base+'/api/ops/observability/boards/'+encodeURIComponent(board.id),{method:'PUT',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({name:name.slice(0,120)})}).then(r=>r.json().catch(()=>null)).then(data=>{if(data&&data.ok){toast('已重命名');loadBoards()}else toast('重命名失败',false)}).catch(()=>toast('重命名失败，请检查网络',false))})}
+      function deleteBoardFlow(){const board=currentBoard();if(!board)return;openConfirmModal('删除看板','删除看板「'+board.name+'」及其 '+board.spec.panels.length+' 个面板配置？查询历史不受影响。',()=>{
+        fetch(base+'/api/ops/observability/boards/'+encodeURIComponent(board.id),{method:'DELETE',headers:apiHeaders(true),credentials:'same-origin'}).then(response=>{if(response.ok){toast('看板已删除');setCurrentBoard('');loadBoards()}else toast('删除失败',false)}).catch(()=>toast('删除失败，请检查网络',false))})}
+      function exportBoardFlow(){const board=currentBoard();if(!board){toast('没有可导出的看板',false);return}
+        const template={kind:'d-obs-board',version:1,name:board.name,spec:board.spec,exportedAt:new Date().toISOString()};
+        const blob=new Blob([JSON.stringify(template,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=board.name+'.board.json';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('已导出看板模板')}
+      async function importBoardFile(file){let template;try{template=JSON.parse(await file.text())}catch{toast('模板文件不是合法 JSON',false);return}
+        try{const response=await fetch(base+'/api/ops/observability/boards/import',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({template:template})});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){setCurrentBoard(data.board.id);toast('已导入看板「'+data.board.name+'」');loadBoards()}else toast(data&&data.error==='invalid_board_template'?'模板结构不合法（需要 spec.panels）':'导入失败',false)}catch{toast('导入失败，请检查网络',false)}}
+      function importBoardFlow(){const input=$('boardImportFile');if(!input)return;input.value='';input.click()}
+      function aiBoardFlow(){openTextModal('AI 生成看板','用一句中文描述想监控什么（如：结账服务流量与性能总览）','',question=>{
+        toast('正在生成看板…');
+        fetch(base+'/api/ops/observability/boards/from-nl',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({question:question})}).then(r=>r.json().catch(()=>null)).then(data=>{
+          if(data&&data.ok){setCurrentBoard(data.board.id);toast(data.source==='model'?'AI 看板已生成（'+data.board.spec.panels.length+' 个面板）':'已按规则生成单面板看板');loadBoards();return}
+          if(data&&data.error==='nl_board_no_match'){toast('没匹配到落库指标：换个说法，或先在指标查询页确认指标有数据',false);return}
+          if(data&&data.error==='too_many_boards'){toast('看板数量已达上限（20）',false);return}
+          toast('生成失败，请稍后重试',false)}).catch(()=>toast('生成失败，请检查网络',false))})}
 
       // ============ 边缘设备 ============
       state.deviceRevealToken=state.deviceRevealToken||'';
@@ -109,12 +232,27 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
             entries.forEach(entry=>{const tr=make('tr');const nameTd=add(tr,'td');if(entry.metric.startsWith('otlp://')){add(nameTd,'em','',entry.zhName)}else{const btn=add(nameTd,'button','btn','');btn.type='button';btn.textContent=entry.zhName+' · '+entry.metric;btn.addEventListener('click',()=>{const input=$('signalMetricInput');if(input&&entry.metric&&!entry.metric.includes('*')){input.value=entry.metric;toast('已填入指标查询');}})}add(tr,'td','',entry.description);add(tr,'td','',entry.labels.join(', ')||'—');tbody.appendChild(tr)});
             table.appendChild(tbody);details.appendChild(table);target.appendChild(details)}}catch{target.replaceChildren();target.appendChild(make('div','signals-empty','指标字典读取失败，请检查网络'))}}
 
-      function renderSignalsView(){loadSignalMetricNames();loadSignalPanels();runSignalsMetricQuery();runSignalsLogQuery();loadQualitySummary();loadIngestTokens();loadMetricCatalog()}
+      function renderSignalsView(){loadSignalMetricNames();loadBoards();runSignalsMetricQuery();runSignalsLogQuery();loadQualitySummary();loadIngestTokens();loadMetricCatalog()}
       (function bindSignalsControls(){const bind=(id,event,handler)=>{const node=$(id);if(node)node.addEventListener(event,handler)};
         bind('signalQueryBtn','click',runSignalsMetricQuery);
         bind('signalMetricInput','keydown',event=>{if(event.key==='Enter')runSignalsMetricQuery()});
         bind('signalSavePanelBtn','click',saveSignalsPanel);
         bind('signalLogQueryBtn','click',runSignalsLogQuery);
+        bind('boardSelect','change',event=>{setCurrentBoard(String(event.target.value||''));renderBoard()});
+        bind('boardWindow','change',event=>{const board=currentBoard();if(!board)return;if(event.target.value==='custom'){renderBoard();return}board.spec.range=null;board.spec.windowMinutes=Number(event.target.value)||240;persistBoardSpec();renderBoard()});
+        bind('boardRangeApplyBtn','click',applyBoardRange);
+        bind('boardRangeClearBtn','click',clearBoardRange);
+        bind('boardAutoRefresh','change',event=>setBoardAutoRefresh(Number(event.target.value)||0));
+        bind('boardKioskBtn','click',toggleBoardKiosk);
+        bind('boardAiBtn','click',aiBoardFlow);
+        bind('boardAddPanelBtn','click',()=>openPanelModal(null,-1));
+        bind('boardRefreshBtn','click',renderBoardPanels);
+        bind('boardNewBtn','click',createBoardFlow);
+        bind('boardRenameBtn','click',renameBoardFlow);
+        bind('boardImportBtn','click',importBoardFlow);
+        bind('boardExportBtn','click',exportBoardFlow);
+        bind('boardDeleteBtn','click',deleteBoardFlow);
+        bind('boardImportFile','change',event=>{const file=event.target.files&&event.target.files[0];if(file)importBoardFile(file)});
         bind('registerDeviceBtn','click',registerDeviceFlow);
         bind('nlQueryBtn','click',runNlQuery);
         bind('nlQueryInput','keydown',event=>{if(event.key==='Enter')runNlQuery()});

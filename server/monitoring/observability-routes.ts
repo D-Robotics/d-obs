@@ -50,7 +50,6 @@ import {
   setDeviceStatus,
   DEVICE_ID_PATTERN,
 } from './device-registry.js';
-import { createPanel, deletePanel, listPanels, normalizePanelSpec } from './dashboard-panels-store.js';
 import {
   getRunObservability,
   RunObservabilityStoreUnavailableError,

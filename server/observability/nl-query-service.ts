@@ -43,12 +43,17 @@ function cleanText(value: unknown, max: number): string {
 
 // ===== PromQL 生成 =====
 
+// Prometheus 计数器以 _total 结尾；OTLP 指标天生带点号（checkout.requests.total）。
+function isCounterMetric(metric: string): boolean {
+  return /(^|[._])total$/.test(metric);
+}
+
 export function promqlForSpec(spec: NlQuerySpec): string {
   const selector = Object.keys(spec.labels).length
     ? `{${Object.entries(spec.labels).map(([k, v]) => `${k}="${v.replace(/"/g, '')}"`).join(',')}}`
     : '';
   const rateWindow = `${Math.max(5, Math.min(60, spec.windowMinutes))}m`;
-  if (spec.metric.endsWith('_total')) return `sum(increase(${spec.metric}${selector}[${rateWindow}]))`;
+  if (isCounterMetric(spec.metric)) return `sum(increase(${spec.metric}${selector}[${rateWindow}]))`;
   if (spec.agg === 'p95' || /(_ms|duration)$/.test(spec.metric)) {
     return `histogram_quantile(0.95, sum by (le) (rate(${spec.metric}_bucket${selector}[${rateWindow}])))`;
   }
@@ -71,7 +76,7 @@ function aggFromQuestion(question: string, entry: MetricCatalogEntry): NlQueryAg
   for (const hint of AGG_HINTS) {
     if (hint.words.some((word) => q.includes(word))) return hint.agg;
   }
-  if (entry.metric.endsWith('_total')) return 'rate';
+  if (isCounterMetric(entry.metric)) return 'rate';
   if (/(_ms|duration)$/.test(entry.metric)) return 'p95';
   return 'latest';
 }
@@ -89,8 +94,24 @@ function specFromRules(
   seriesIndex: OtlpSeriesIndexEntry[],
 ): { spec: NlQuerySpec; alternatives: Array<{ metric: string; zhName: string }> } | null {
   const { minutes } = parseWindowMinutes(question);
-  // 用户应用指标：问题里提到某个已知 service 名 → otlp 平台内查询。
   const lower = question.toLowerCase();
+  // 用户应用指标：问题里直接出现落库指标名（OTLP 指标带点号）→ 精确命中，最强信号。
+  const metricHit = seriesIndex.find((row) => row.metric && lower.includes(row.metric.toLowerCase()));
+  if (metricHit) {
+    const serviceHit = seriesIndex.find((row) => row.service && lower.includes(row.service.toLowerCase()));
+    return {
+      spec: {
+        metric: metricHit.metric,
+        plane: 'otlp',
+        agg: isCounterMetric(metricHit.metric) ? 'rate' : 'avg',
+        windowMinutes: minutes,
+        labels: serviceHit ? { service: serviceHit.service } : {},
+        explanation: `问题中出现了落库指标 ${metricHit.metric}，直接查询平台内序列。`,
+      },
+      alternatives: [],
+    };
+  }
+  // 问题里提到某个已知 service 名 → otlp 平台内查询。
   const service = seriesIndex.find((row) => row.service && lower.includes(row.service.toLowerCase()));
   if (service) {
     const candidates = seriesIndex.filter((row) => row.service === service.service);
@@ -159,7 +180,7 @@ function validateModelSpec(raw: unknown, seriesIndex: OtlpSeriesIndexEntry[]): N
     : (inSeries ? 'otlp' : 'prometheus');
   if (!known && !inSeries) return null;
   if (known && known.plane === 'otlp' && row.plane === 'prometheus') return null;
-  const agg = AGGS.has(row.agg as NlQueryAgg) ? row.agg as NlQueryAgg : (metric.endsWith('_total') ? 'rate' : 'avg');
+  const agg = AGGS.has(row.agg as NlQueryAgg) ? row.agg as NlQueryAgg : (isCounterMetric(metric) ? 'rate' : 'avg');
   const windowRaw = Number(row.windowMinutes);
   const windowMinutes = Number.isFinite(windowRaw) ? Math.max(5, Math.min(20_160, Math.trunc(windowRaw))) : 240;
   const labels: Record<string, string> = {};
