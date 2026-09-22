@@ -96,8 +96,8 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
       function clearBoardRange(){const board=currentBoard();if(!board||!board.spec.range)return;board.spec.range=null;persistBoardSpec();renderBoard()}
       function moveBoardPanel(from,to,after){const board=currentBoard();if(!board)return;const panels=board.spec.panels;const moved=panels.splice(from,1)[0];let target=to;if(from<to)target=to-1;if(after)target+=1;panels.splice(Math.max(0,Math.min(panels.length,target)),0,moved);persistBoardSpec();renderBoardPanels();renderBoardSelect()}
       function renderBoardPanels(){const target=$('signalsPanelGrid');if(!target)return;const board=currentBoard();target.replaceChildren();
-        if(!board){target.appendChild(make('div','signals-empty','还没有看板：点「新建看板」创建，或「导入模板」生成'));return}
-        if(!board.spec.panels.length){target.appendChild(make('div','signals-empty','看板是空的：点「添加面板」，或在指标查询里查好指标后点「存入看板」'))}
+        if(!board){target.appendChild(make('div','signals-empty','暂无看板：点击「新建看板」创建，或点击「导入模板」导入'));return}
+        if(!board.spec.panels.length){target.appendChild(make('div','signals-empty','看板为空：点击「添加面板」新建，或先在指标查询中执行查询后点「存入看板」'))}
         board.spec.panels.forEach((panel,index)=>{const card=make('div','signals-panel-card'+(panel.width===2?' full':''));card.draggable=true;
           const head=make('h4');const titleWrap=make('span');add(titleWrap,'strong','',panel.title);add(titleWrap,'div','',panel.metric+' · '+(panel.windowMinutes?'固定 '+boardWindowLabel(panel.windowMinutes):'跟随看板'));head.appendChild(titleWrap);
           const actions=make('span','panel-actions');const editBtn=add(actions,'button','btn','编辑');editBtn.type='button';editBtn.addEventListener('click',()=>openPanelModal(panel,index));const delBtn=add(actions,'button','btn','删除');delBtn.type='button';delBtn.addEventListener('click',()=>openConfirmModal('删除面板','从看板移除面板「'+panel.title+'」？',()=>{board.spec.panels.splice(index,1);persistBoardSpec();renderBoardPanels();renderBoardSelect()}));head.appendChild(actions);card.appendChild(head);
@@ -114,7 +114,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           fetch(base+queryParams,{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data=>{const series=(data&&data.ok?data.series:[]).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));renderBoardChart(chartWrap,series,minutes,panel)}).catch(()=>{chartWrap.replaceChildren();chartWrap.appendChild(make('div','signals-empty','加载失败'))})});
         target.ondragover=event=>event.preventDefault();
         target.ondrop=event=>{event.preventDefault();const dropBoard=currentBoard();if(!dropBoard)return;const from=state.boardDragIndex;if(from<0||from>=dropBoard.spec.panels.length-1)return;moveBoardPanel(from,dropBoard.spec.panels.length-1,true)}}
-      function openPanelModal(existing,index){const board=currentBoard();if(!board){toast('先创建一个看板',false);return}
+      function openPanelModal(existing,index){const board=currentBoard();if(!board){toast('请先创建看板',false);return}
         const overlay=make('div','board-modal');const box=make('div','board-modal-box');add(box,'h3','',existing&&index>=0?'编辑面板':'添加面板');
         const titleLabel=add(box,'label','board-field');add(titleLabel,'span','','面板标题');const titleInput=add(titleLabel,'input');titleInput.type='text';titleInput.value=existing?existing.title:'';
         const metricLabel=add(box,'label','board-field');add(metricLabel,'span','','指标名');const metricInput=add(metricLabel,'input');metricInput.type='text';metricInput.setAttribute('list','signalMetricList');metricInput.value=existing?existing.metric:'';
@@ -126,12 +126,12 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         const row=make('div','board-modal-actions');const cancelBtn=add(row,'button','btn','取消');cancelBtn.type='button';const saveBtn=add(row,'button','btn primary','保存');saveBtn.type='button';box.appendChild(row);
         overlay.appendChild(box);document.body.appendChild(overlay);
         const close=()=>overlay.remove();overlay.addEventListener('click',event=>{if(event.target===overlay)close()});cancelBtn.addEventListener('click',close);
-        saveBtn.addEventListener('click',()=>{const title=String(titleInput.value||'').trim().slice(0,120);const metric=String(metricInput.value||'').trim();if(!title||!metric){toast('标题和指标名都要填',false);return}
+        saveBtn.addEventListener('click',()=>{const title=String(titleInput.value||'').trim().slice(0,120);const metric=String(metricInput.value||'').trim();if(!title||!metric){toast('请填写标题与指标名',false);return}
           const numOrNull=v=>{const text=String(v).trim();if(text==='')return null;const n=Number(text);return Number.isFinite(n)?n:null};
           const panel={title:title,metric:metric,windowMinutes:Number(windowSelect.value)>0?Number(windowSelect.value):null,chart:chartSelect.value,width:Number(widthSelect.value)===2?2:1,warnValue:numOrNull(warnInput.value),critValue:numOrNull(critInput.value)};
           if(index>=0)board.spec.panels[index]=panel;else board.spec.panels.push(panel);
           close();persistBoardSpec();renderBoardPanels();renderBoardSelect()})}
-      async function saveSignalsPanel(){const metric=String(($('signalMetricInput')||{}).value||'').trim();const minutes=Number(($('signalMinutes')||{}).value||240);if(!metric){toast('先查询一个指标再存入看板',false);return}
+      async function saveSignalsPanel(){const metric=String(($('signalMetricInput')||{}).value||'').trim();const minutes=Number(($('signalMinutes')||{}).value||240);if(!metric){toast('请先在指标查询中执行查询，再存入看板',false);return}
         if(!state.boardsLoaded)await loadBoards();
         let board=currentBoard();
         if(!board){try{const response=await fetch(base+'/api/ops/observability/boards',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({name:'默认看板'})});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){state.boards.push(data.board);setCurrentBoard(data.board.id);board=data.board;renderBoardSelect()}else{toast(data&&data.error==='too_many_boards'?'看板数量已达上限':'创建默认看板失败',false);return}}catch{toast('创建默认看板失败，请检查网络',false);return}}
@@ -161,7 +161,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
       async function sendSelfTestMetric(){const btn=$('selftestMetricBtn');if(btn)btn.disabled=true;const hint=$('selftestMetricHint');
         try{const response=await fetch(base+'/api/ops/observability/selftest/metric',{method:'POST',headers:apiHeaders(true),credentials:'same-origin'});const data=await response.json().catch(()=>null);
           if(hint)hint.classList.remove('hidden');
-          if(response.ok&&data&&data.ok){if(hint)hint.textContent='已写入 '+data.accepted+' 个点：指标 rdk.obs.selftest（owner=selftest:你）。约 5 秒后到「指标查询」输入 rdk.obs.selftest 点查询即可看到；多点几次能看到线，AI 生成看板和自然语言查询也会立刻认识它。';toast('测试指标已写入')}
+          if(response.ok&&data&&data.ok){if(hint)hint.textContent='已写入 '+data.accepted+' 个数据点（指标 rdk.obs.selftest）。数据异步落库约需 5 秒，随后在「指标查询」中查询 rdk.obs.selftest 即可查看；连续发送多个数据点将呈现为曲线，AI 生成看板与自然语言查询亦可识别该指标。';toast('测试指标已写入')}
           else{if(hint)hint.textContent='自检写入失败：'+(data&&data.error?data.error:'请检查中心库配置');toast('自检写入失败',false)}}
         catch{toast('自检失败，请检查网络',false)}
         if(btn)btn.disabled=false}
@@ -169,7 +169,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         toast('正在生成看板…');
         fetch(base+'/api/ops/observability/boards/from-nl',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({question:question})}).then(r=>r.json().catch(()=>null)).then(data=>{
           if(data&&data.ok){setCurrentBoard(data.board.id);toast(data.source==='model'?'AI 看板已生成（'+data.board.spec.panels.length+' 个面板）':'已按规则生成单面板看板');loadBoards();return}
-          if(data&&data.error==='nl_board_no_match'){toast('没匹配到落库指标：换个说法，或先在指标查询页确认指标有数据',false);return}
+          if(data&&data.error==='nl_board_no_match'){toast('未匹配到落库指标：请调整表述，或先在指标查询中确认该指标存在数据',false);return}
           if(data&&data.error==='too_many_boards'){toast('看板数量已达上限（20）',false);return}
           toast('生成失败，请稍后重试',false)}).catch(()=>toast('生成失败，请检查网络',false))})}
 
@@ -202,7 +202,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           commands.forEach(cmd=>{const tr=make('tr');add(tr,'td','',when(cmd.createdAt));add(tr,'td','',cmd.type);const st=add(tr,'td');add(st,'span','signals-log-sev '+(cmd.status==='ok'?'INFO':cmd.status==='failed'?'ERROR':'WARN'),cmd.status);add(tr,'td','',cmd.result||'—');tbody.appendChild(tr)});
           table.appendChild(tbody);listWrap.appendChild(table)}catch{listWrap.replaceChildren();add(listWrap,'div','signals-empty','命令清单读取失败')}}
         issueBtn.addEventListener('click',async()=>{const payload=typeSelect.value==='set-interval'?{intervalSeconds:Number(secondsInput.value)||60}:{};issueBtn.disabled=true;
-          try{const response=await fetch(base+'/api/ops/observability/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({type:typeSelect.value,payload:payload})});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){toast('命令已下发，等设备下一轮心跳认领');await reload()}else toast(data&&data.error==='invalid_command_payload'?'参数不合法':'下发失败',false)}catch{toast('下发失败，请检查网络',false)}
+          try{const response=await fetch(base+'/api/ops/observability/devices/'+encodeURIComponent(deviceId)+'/commands',{method:'POST',headers:apiHeaders(true),credentials:'same-origin',body:JSON.stringify({type:typeSelect.value,payload:payload})});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){toast('命令已下发，设备将在下一轮心跳时领取执行');await reload()}else toast(data&&data.error==='invalid_command_payload'?'参数不合法':'下发失败',false)}catch{toast('下发失败，请检查网络',false)}
           issueBtn.disabled=false});
         reload()}
       function toggleDeviceDetail(deviceId,button){const existing=$('device-detail-'+deviceId);if(existing){existing.remove();button.textContent='指标';return}button.textContent='收起';const table=button.closest('table');if(!table)return;const row=button.closest('tr');const holder=make('tr');const cell=add(holder,'td');cell.colSpan=6;const detail=make('div','device-detail');detail.id='device-detail-'+deviceId;add(detail,'strong','','设备指标（最近 24 小时）');const chartWrap=make('div','signals-chart-wrap');detail.appendChild(chartWrap);cell.appendChild(detail);if(row&&row.parentNode)row.parentNode.insertBefore(holder,row.nextSibling);

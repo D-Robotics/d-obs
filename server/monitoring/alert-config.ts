@@ -144,7 +144,7 @@ export const ALERT_RULE_DEFINITIONS = [
     category: 'metric',
     title: '指标统计异常',
     description:
-      '落库指标窗口内最新值偏离基线超过 z-score 阈值（统计粗筛，宁缺勿滥：预警 z≥6、严重 z≥10；命中后请到观测查询下钻确认）。',
+      '落库指标在窗口内的最新值偏离基线超过 z-score 阈值时告警（阈值高于观测查询页的 3.5 粗筛：预警 z≥6、严重 z≥10，以降低误报；触发后请至观测查询下钻确认）。',
     fields: ['threshold', 'criticalThreshold'],
   },
   {

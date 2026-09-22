@@ -165,8 +165,8 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div id="serviceLevelContent" class="overview-stack" aria-live="polite"></div>
     </section>
     <section id="view-signals" class="view hidden" aria-labelledby="signalsHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 观测查询</div><h2 id="signalsHeading">指标、日志与自定义看板</h2><p>查询 OTLP 落库的指标与日志，把常用查询编组为可拖拽的看板，支持模板导入导出；深度历史仍可到 Prometheus 查询。</p></div><div class="right">OTLP 落库 · 管理员只读</div></div>
-      <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义看板<small>编组 · 拖拽 · 模板导入导出</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/catalog" aria-selected="false">指标字典<small>有哪些指标、都是啥意思</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/tokens" aria-selected="false">接入凭据<small>按人/服务/租户签发上报凭据</small></button></div>
+      <div class="view-head"><div><div class="eyebrow">可观测中心 / 观测查询</div><h2 id="signalsHeading">指标、日志与自定义看板</h2><p>查询 OTLP 落库的指标与日志；常用查询可组织为可拖拽排序的看板，并以模板导入导出。深度历史仍可前往 Prometheus 查询。</p></div><div class="right">OTLP 落库 · 管理员只读</div></div>
+      <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义看板<small>多看板 · 拖拽排序 · 模板导入导出</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/catalog" aria-selected="false">指标字典<small>有哪些指标、都是啥意思</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/tokens" aria-selected="false">接入凭据<small>按人/服务/租户签发上报凭据</small></button></div>
       <div class="view-module is-active" data-view-module="signals/metrics" role="tabpanel" aria-label="指标查询">
         <div class="signals-toolbar">
           <label>自然语言查询<input id="nlQueryInput" type="text" autocomplete="off" spellcheck="false" placeholder="例如：最近1小时有多少 span 被拒绝 / checkout-api 最近的请求量" /></label>
@@ -185,7 +185,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
             <label>时间窗口<select id="anomalyMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option></select></label>
             <button id="anomalyDetectBtn" class="btn" type="button">检测</button>
           </div>
-          <div id="metricAnomaliesContent" aria-live="polite"><div class="signals-empty">点「检测」扫描窗口内的统计异常</div></div>
+          <div id="metricAnomaliesContent" aria-live="polite"><div class="signals-empty">点击「检测」扫描所选窗口内的统计异常</div></div>
         </details>
       </div>
       <div class="view-module" data-view-module="signals/logs" role="tabpanel" aria-label="日志查询" hidden>
@@ -217,7 +217,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <button id="boardDeleteBtn" class="btn" type="button">删除看板</button>
         </div>
         <input id="boardImportFile" type="file" accept=".json,application/json" class="hidden" />
-        <p class="domain-note">拖拽面板卡片可排序；全局时间维度即时生效，单个面板可在编辑里覆盖。导出的 JSON 即模板，导入会生成新看板。</p>
+        <p class="domain-note">拖拽面板卡片可调整排序；全局时间维度即时生效，单个面板可在编辑中单独设定。导出的 JSON 即看板模板，导入后将创建新看板。</p>
         <div id="signalsPanelGrid" class="signals-panel-grid" aria-live="polite"><div class="signals-empty">正在读取看板…</div></div>
       </div>
       <div class="view-module" data-view-module="signals/quality" role="tabpanel" aria-label="质量与反馈" hidden>
@@ -228,7 +228,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         <div id="metricCatalogContent" aria-live="polite"><div class="signals-empty">正在读取指标字典…</div></div>
       </div>
       <div class="view-module" data-view-module="signals/tokens" role="tabpanel" aria-label="接入凭据" hidden><details id="signals-tokens" class="detail-sections" open><summary class="detail-summary"><strong>生态接入凭据</strong><span>身份只在凭据层：遥测数据按 owner 归账、零 PII，注册表负责 owner → 对象映射</span></summary>
-        <p class="domain-note"><strong>五分钟接入</strong>　用户代码用官方 OpenTelemetry SDK（免装任何私有 SDK）：<code>OTEL_EXPORTER_OTLP_ENDPOINT=https://rdkstudio.d-robotics.cc/dobs</code> ＋ <code>OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer 上方签发的凭据'</code>，traces / metrics / logs 三信号 <code>/v1/*</code> 直收（HTTP JSON、HTTP protobuf、gRPC 均可）；Python/Java/Go/Node 等 9 种语言 SDK 直接适用。点下方按钮可 30 秒验证整条链路。</p>
+        <p class="domain-note"><strong>快速接入</strong>　应用侧使用官方 OpenTelemetry SDK，无需安装任何私有 SDK：<code>OTEL_EXPORTER_OTLP_ENDPOINT=https://rdkstudio.d-robotics.cc/dobs</code> ＋ <code>OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer 上方签发的凭据'</code>。traces / metrics / logs 三信号 <code>/v1/*</code> 均可直接接收（HTTP JSON、HTTP protobuf、gRPC），Python、Java、Go、Node.js 等官方 SDK 均适用。点「发送测试指标」可立即验证采集链路。</p>
         <div class="signals-toolbar">
           <label>对象类型<select id="ingestTokenSubjectType"><option value="user">用户（sso_user_id）</option><option value="service">服务</option><option value="tenant">租户</option></select></label>
           <label>对象 ID<input id="ingestTokenSubjectId" type="text" autocomplete="off" spellcheck="false" placeholder="如 u-20260901-abcd / checkout-api / tenant-alpha" /></label>
