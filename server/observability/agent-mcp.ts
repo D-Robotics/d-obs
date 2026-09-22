@@ -137,6 +137,8 @@ type MetricsQueryDeps = {
   metricCatalog: () => unknown;
   listDevices: () => Promise<Array<Record<string, unknown>>>;
   nlQuery: (question: string) => Promise<unknown>;
+  /** 可选：跨信号事故关联（给定时注册 correlate_incident 工具） */
+  incidentCorrelate?: (alertKey: string) => Promise<unknown>;
 };
 
 /** 组装只读工具集；io 依赖由路由层注入。 */
@@ -234,5 +236,26 @@ export function buildObservabilityMcpTools(io: MetricsQueryDeps, now: () => numb
         return io.nlQuery(question);
       },
     },
+    ...(io.incidentCorrelate
+      ? [
+          {
+            name: 'correlate_incident',
+            description: '跨信号事故关联：按告警 key 汇聚事故窗口内的异常指标、错误日志与离线设备证据（ref/kind/label 与事故副驾同构）。',
+            inputSchema: {
+              type: 'object',
+              properties: { alertKey: { type: 'string', description: '告警事故 key（alert_key）' } },
+              required: ['alertKey'],
+              additionalProperties: false,
+            },
+            handler: async (args: Record<string, unknown>) => {
+              const alertKey = textArg(args, 'alertKey', 160);
+              if (!alertKey) throw new Error('alertKey is required');
+              const result = await io.incidentCorrelate!(alertKey);
+              if (!result) throw new Error('incident_not_found');
+              return result;
+            },
+          } satisfies McpTool,
+        ]
+      : []),
   ];
 }

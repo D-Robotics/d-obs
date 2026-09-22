@@ -25,6 +25,7 @@ import {
   type SyntheticProbeResult,
 } from './synthetic-probes.js';
 import { collectServiceLevelBurnObservation } from './studio-alert-slo.js';
+import { scanRecentMetricAnomalies } from '../observability/metric-anomalies.js';
 import {
   ensureServiceLevelSchema,
   recordServiceLevelSamples,
@@ -639,6 +640,30 @@ async function collectDatabaseObservations(
         summary: `最近一次 trace span 落库距今 ${staleMinutes.toLocaleString()} 分钟（${new Date(traceLatestMs).toISOString()}）；预警 ≥${traceRule.threshold.toLocaleString()} 分钟，严重 ≥${traceRule.criticalThreshold.toLocaleString()} 分钟`,
       }),
     );
+  }
+  // 指标统计异常：z-score 粗筛升级为主动告警信号；指标库不可用时不阻断其它评估。
+  const anomalyRule = config.rules['metric-anomaly'];
+  if (anomalyRule) {
+    try {
+      const anomalies = await scanRecentMetricAnomalies({
+        windowMinutes: anomalyRule.windowMinutes ?? 240,
+        threshold: 3.5,
+      });
+      const top = anomalies[0];
+      if (top && top.score >= anomalyRule.threshold) {
+        observations.push(
+          ruleObservation(config, {
+            key: 'metric-anomaly',
+            title: '指标统计异常',
+            severity: ruleSeverity(config, 'metric-anomaly', top.score),
+            unhealthy: top.score >= anomalyRule.threshold,
+            summary: `窗口内 ${anomalies.length} 条序列偏离基线，最高 z=${top.score}：${top.metric} 最新 ${top.value} vs 基线 ${top.baseline}±${top.deviation}（预警 z≥${anomalyRule.threshold}，严重 z≥${anomalyRule.criticalThreshold}）`,
+          }),
+        );
+      }
+    } catch {
+      // 指标存储不可用：跳过本信号，其它告警照常评估
+    }
   }
   observations.push(
     ruleObservation(config, {

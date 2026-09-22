@@ -1392,3 +1392,36 @@ export async function recordOpsNotificationTest(input: {
     ],
   );
 }
+
+/** 事故关联：按 alert_key 取单条告警事故（不存在返回 null）。 */
+export async function getOpsIncident(alertKey: string): Promise<{
+  alertKey: string;
+  title: string;
+  severity: string;
+  status: string;
+  summary: string;
+  firstSeenAt: string;
+  lastSeenAt: string | null;
+  resolvedAt: string | null;
+} | null> {
+  const p = await pool();
+  await ensureIncidentOperationsSchema(p);
+  const result = await p.query(
+    `select alert_key, title, severity, status, coalesce(summary, '') summary,
+            first_seen_at, last_seen_at, resolved_at
+     from public.studio_alert_incidents where alert_key = $1`,
+    [text(alertKey, 160)],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    alertKey: String(row.alert_key ?? ''),
+    title: String(row.title ?? ''),
+    severity: String(row.severity ?? ''),
+    status: String(row.status ?? ''),
+    summary: String(row.summary ?? ''),
+    firstSeenAt: row.first_seen_at instanceof Date ? row.first_seen_at.toISOString() : String(row.first_seen_at ?? ''),
+    lastSeenAt: row.last_seen_at instanceof Date ? row.last_seen_at.toISOString() : null,
+    resolvedAt: row.resolved_at instanceof Date ? row.resolved_at.toISOString() : null,
+  };
+}

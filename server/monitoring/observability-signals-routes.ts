@@ -8,7 +8,8 @@ import {
   requireOpsMutationGuard,
   resolveOpsActor,
 } from './observability-route-kit.js';
-import { recordOpsConfigurationAudit } from './observability-store.js';
+import { recordOpsConfigurationAudit, getOpsIncident } from './observability-store.js';
+import { buildIncidentCorrelation } from './incident-correlate.js';
 import { queryLogs } from '../observability/ai-ecosystem-logs-store.js';
 import { queryMetricRanges, queryMetricSeries } from '../observability/ai-ecosystem-metrics-store.js';
 import {
@@ -38,7 +39,7 @@ import {
   type BoardSpec,
 } from './dashboard-boards-store.js';
 import { analyzeIncidentEvidence, callGatewayChat, copilotModelEnabled, extractJson, resolveGatewayChatTarget } from '../observability/copilot-model.js';
-import { detectSeriesAnomalies } from '../observability/metric-anomalies.js';
+import { scanRecentMetricAnomalies } from '../observability/metric-anomalies.js';
 import { buildObservabilityMcpTools, handleMcpJsonRpc } from '../observability/agent-mcp.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
 import { loadQualityTrend } from '../public-api/public-observability-quality-trend.js';
@@ -54,6 +55,30 @@ export function registerSignalsRoutes(router: Router): void {
     return [...indexMap.entries()].map(([key, service]) => ({ metric: key.split('\u0000')[0], service }));
   }
 
+  // 跨信号根因关联 v1：事故窗口内汇聚异常指标/错误日志/离线设备（REST 与 MCP 共用）。
+  async function correlateIncidentByKey(alertKey: string) {
+    const incident = await getOpsIncident(alertKey);
+    if (!incident) return null;
+    const firstSeenMs = Date.parse(incident.firstSeenAt);
+    const fromMs = Number.isFinite(firstSeenMs) ? firstSeenMs : Date.now() - 3_600_000;
+    const windowMinutes = Math.max(30, Math.min(60 * 24 * 14, Math.ceil((Date.now() - fromMs) / 60_000)));
+    const [anomalies, logs, devices] = await Promise.all([
+      scanRecentMetricAnomalies({ windowMinutes, threshold: 3.5 }).catch(() => []),
+      queryLogs({ severityMin: 17, fromMs, toMs: Date.now(), limit: 20 }).catch(() => []),
+      listDevices()
+        .then((rows) => rows.filter((device) => device.status !== 'disabled' && !device.online))
+        .catch(() => []),
+    ]);
+    const correlation = buildIncidentCorrelation({
+      incident,
+      anomalies,
+      errorLogs: logs as Array<{ service?: string; severityText?: string; body?: string; timestampMs?: number }>,
+      offlineDevices: devices.map((device) => ({ deviceId: device.deviceId, online: device.online, lastSeenAt: device.lastSeenAt })),
+      nowMs: Date.now(),
+    });
+    return { incident, correlation };
+  }
+
   // AI agent MCP 工具面（只读查询，工具集构建一次）。
   const mcpTools = buildObservabilityMcpTools({
     listSeries: async ({ limit }) => await queryMetricSeries({ limit }),
@@ -66,6 +91,7 @@ export function registerSignalsRoutes(router: Router): void {
     metricCatalog: () => METRIC_CATALOG,
     listDevices: () => listDevices(),
     nlQuery: async (question) => nlQuery(question, buildSeriesIndex(await queryMetricSeries({ limit: 300 }))),
+    incidentCorrelate: (alertKey) => correlateIncidentByKey(alertKey),
   });
 
   // ---- 平台内指标查询（OTLP metrics 落库后的一等查询面，管理员只读） ----
@@ -127,32 +153,32 @@ export function registerSignalsRoutes(router: Router): void {
         const query = req.query as Record<string, unknown>;
         const windowMinutes = queryInteger(query, 'minutes', 240, 30, 60 * 24 * 14);
         const threshold = Number(query.threshold);
-        // 扫描面控制：样本数最多的前 20 个指标，每条最多 120 点。
-        const seriesList = await queryMetricSeries({ limit: 500 });
-        const byMetric = new Map<string, number>();
-        for (const row of seriesList) byMetric.set(row.metric, (byMetric.get(row.metric) ?? 0) + 1);
-        const metrics = [...byMetric.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([metric]) => metric);
-        const to = Date.now();
-        const from = to - windowMinutes * 60_000;
-        const perMetric = await Promise.all(
-          metrics.map((metric) =>
-            queryMetricRanges({ metric, fromMs: from, toMs: to, maxPoints: 120 }).catch(() => []),
-          ),
-        );
-        const anomalies = detectSeriesAnomalies(
-          perMetric.flatMap((ranges, index) =>
-            (ranges as Array<{ labels?: unknown; points?: Array<{ ts: number; value: number }> }>).map((item) => ({
-              metric: metrics[index],
-              labels: (item.labels ?? {}) as Record<string, string>,
-              points: item.points ?? [],
-            })),
-          ),
-          { threshold: Number.isFinite(threshold) ? threshold : undefined },
-        );
+        const anomalies = await scanRecentMetricAnomalies({
+          windowMinutes,
+          threshold: Number.isFinite(threshold) ? threshold : undefined,
+        });
         res.setHeader('Cache-Control', 'no-store');
-        res.json({ ok: true, anomalies: anomalies.slice(0, 50), scanned: { metrics: metrics.length, windowMinutes } });
+        res.json({ ok: true, anomalies: anomalies.slice(0, 50), scanned: { windowMinutes } });
       } catch (error) {
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'metrics_query_unavailable') });
+      }
+    },
+  );
+
+  router.get(
+    '/api/ops/observability/incidents/:alertKey/correlate',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const result = await correlateIncidentByKey(String(req.params.alertKey ?? ''));
+        if (!result) {
+          res.status(404).json({ ok: false, error: 'incident_not_found' });
+          return;
+        }
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ ok: true, ...result });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'incident_correlate_unavailable') });
       }
     },
   );

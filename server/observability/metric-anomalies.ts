@@ -64,3 +64,44 @@ export function detectSeriesAnomalies(series: SeriesPoints[], options: AnomalyDe
   }
   return anomalies.sort((a, b) => b.score - a.score);
 }
+
+// ===== 带存储的扫描（供告警 worker / anomalies 路由 / 事故关联共用） =====
+
+import { queryMetricRanges, queryMetricSeries } from './ai-ecosystem-metrics-store.js';
+
+export type ScanMetricAnomaliesOptions = {
+  windowMinutes: number;
+  /** z 阈值；缺省 3.5 */
+  threshold?: number;
+  /** 扫描样本数最多的前 N 个指标，默认 20 */
+  metricsLimit?: number;
+  maxPoints?: number;
+};
+
+/** 扫描落库指标窗口内异常，按 z 分数降序。存储不可用时抛错由调用方决定降级。 */
+export async function scanRecentMetricAnomalies(options: ScanMetricAnomaliesOptions): Promise<SeriesAnomaly[]> {
+  const metricsLimit = options.metricsLimit ?? 20;
+  const maxPoints = options.maxPoints ?? 120;
+  const seriesList = await queryMetricSeries({ limit: 500 });
+  const byMetric = new Map<string, number>();
+  for (const row of seriesList) byMetric.set(row.metric, (byMetric.get(row.metric) ?? 0) + 1);
+  const metrics = [...byMetric.entries()].sort((a, b) => b[1] - a[1]).slice(0, metricsLimit).map(([metric]) => metric);
+  if (!metrics.length) return [];
+  const to = Date.now();
+  const from = to - options.windowMinutes * 60_000;
+  const perMetric = await Promise.all(
+    metrics.map((metric) =>
+      queryMetricRanges({ metric, fromMs: from, toMs: to, maxPoints }).catch(() => []),
+    ),
+  );
+  return detectSeriesAnomalies(
+    perMetric.flatMap((ranges, index) =>
+      (ranges as Array<{ labels?: unknown; points?: Array<{ ts: number; value: number }> }>).map((item) => ({
+        metric: metrics[index],
+        labels: (item.labels ?? {}) as Record<string, string>,
+        points: item.points ?? [],
+      })),
+    ),
+    { threshold: options.threshold },
+  );
+}

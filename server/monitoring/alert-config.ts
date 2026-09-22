@@ -140,6 +140,14 @@ export const ALERT_RULE_DEFINITIONS = [
     fields: ['threshold', 'criticalThreshold'],
   },
   {
+    key: 'metric-anomaly',
+    category: 'metric',
+    title: '指标统计异常',
+    description:
+      '落库指标窗口内最新值偏离基线超过 z-score 阈值（统计粗筛，宁缺勿滥：预警 z≥6、严重 z≥10；命中后请到观测查询下钻确认）。',
+    fields: ['threshold', 'criticalThreshold'],
+  },
+  {
     key: 'service-crash-signature',
     category: 'log',
     title: '应用崩溃日志',
@@ -491,6 +499,13 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
       threshold: 2_880,
       criticalThreshold: 8_640,
       openAfter: 1,
+    }),
+    // 阈值单位为 z 分数：比观测查询页的 3.5 粗筛更保守，避免每次波动都告警。
+    'metric-anomaly': rule({
+      threshold: 6,
+      criticalThreshold: 10,
+      windowMinutes: 240,
+      openAfter: 2,
     }),
     'service-crash-signature': rule({
       windowMinutes: 2,
