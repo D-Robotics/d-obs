@@ -46,6 +46,14 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
       async function runSignalsMetricQuery(){const metric=String(($('signalMetricInput')||{}).value||'').trim();const minutes=Number(($('signalMinutes')||{}).value||240);const target=$('signalsMetricChart');if(!target)return;if(!metric){toast('请先输入指标名',false);return}target.replaceChildren();const loading=make('div','signals-empty','正在查询 '+metric+' …');target.appendChild(loading);
         try{const response=await fetch(base+'/api/ops/observability/metrics/query?metric='+encodeURIComponent(metric)+'&minutes='+encodeURIComponent(String(minutes))+'&points=240',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);if(!response.ok||!data||!data.ok){loading.textContent=data&&data.error==='central_store_disabled'?'指标存储未启用（未配置中心库）':'查询失败，请稍后重试';return}
           const series=(data.series||[]).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));renderSignalsChart(target,series,minutes)}catch{loading.textContent='查询失败，请检查网络后重试'}}
+      async function runPromqlQuery(){const query=String(($('promqlInput')||{}).value||'').trim();const minutes=Number(($('promqlMinutes')||{}).value||240);const target=$('promqlResult');if(!target)return;if(!query){toast('请输入 PromQL 表达式',false);return}
+        target.replaceChildren();const loading=make('div','signals-empty','正在执行 PromQL…');target.appendChild(loading);
+        try{const response=await fetch(base+'/api/ops/observability/prom/query?query='+encodeURIComponent(query)+'&minutes='+encodeURIComponent(String(minutes)),{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);target.replaceChildren();
+          if(!response.ok||!data||!data.ok){const reason=data&&data.error==='prometheus_not_configured'?'服务端未配置 RDK_PROMETHEUS_QUERY_URL，无法代理查询':data&&data.error==='invalid_promql'?'PromQL 表达式未通过服务端校验':'Prometheus 查询失败';target.appendChild(make('div','signals-empty',reason));return}
+          const series=(data.series||[]).map(item=>({name:item.name,points:item.points||[]}));
+          if(!series.length){target.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}
+          renderSignalsChart(target,series,minutes)}
+        catch{target.replaceChildren();target.appendChild(make('div','signals-empty','Prometheus 查询失败，请检查网络'))}}
       async function runSignalsLogQuery(){const service=String(($('signalLogService')||{}).value||'').trim();const severityMin=Number(($('signalLogSeverity')||{}).value||9);const minutes=Number(($('signalLogMinutes')||{}).value||240);const target=$('signalsLogTable');if(!target)return;target.replaceChildren();target.appendChild(make('div','signals-empty','正在查询日志…'));
         try{const params='/api/ops/observability/logs?minutes='+encodeURIComponent(String(minutes))+'&severityMin='+encodeURIComponent(String(severityMin))+(service?'&service='+encodeURIComponent(service):'')+'&limit=200';const response=await fetch(base+params,{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);target.replaceChildren();if(!response.ok||!data||!data.ok){target.appendChild(make('div','signals-empty','日志查询失败'));return}
           const logs=data.logs||[];if(!logs.length){target.appendChild(make('div','signals-empty','所选范围内没有日志记录'));return}
@@ -272,6 +280,8 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         bind('signalMetricInput','keydown',event=>{if(event.key==='Enter')runSignalsMetricQuery()});
         bind('signalSavePanelBtn','click',saveSignalsPanel);
         bind('signalLogQueryBtn','click',runSignalsLogQuery);
+        bind('promqlRunBtn','click',runPromqlQuery);
+        bind('promqlInput','keydown',event=>{if(event.key==='Enter')runPromqlQuery()});
         bind('anomalyDetectBtn','click',loadMetricAnomalies);
         bind('boardSelect','change',event=>{setCurrentBoard(String(event.target.value||''));renderBoard()});
         bind('boardWindow','change',event=>{const board=currentBoard();if(!board)return;if(event.target.value==='custom'){renderBoard();return}board.spec.range=null;board.spec.windowMinutes=Number(event.target.value)||240;persistBoardSpec();renderBoard()});

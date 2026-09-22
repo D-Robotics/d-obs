@@ -121,7 +121,6 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
             <button class="module-tab" data-view="devices" aria-controls="view-devices" title="查看边缘设备心跳、在线状态与板级指标">边缘设备</button>
             <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据入库健康</button>
             <button class="module-tab" data-view="database" aria-controls="view-database" title="查看 PostgreSQL 运行状态、关系与数据表">数据库状态</button>
-            <a class="module-tab" href="/dobs/prometheus/graph" target="_blank" rel="noopener noreferrer" title="在 Prometheus 中使用 PromQL 查询时序指标">Prometheus 查询</a>
           </div>
         </details>
         <details class="nav-group" id="nav-group-learning" data-nav-group="learning">
@@ -134,9 +133,8 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         <details class="nav-group" id="nav-group-advanced" data-nav-group="advanced">
           <summary class="nav-section-toggle" aria-controls="nav-group-advanced-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">系统配置</span></summary>
           <div class="nav-group-items" id="nav-group-advanced-items">
-            <button class="module-tab" data-view="model-pool" aria-controls="view-platform" title="查看模型池目标健康、路由优先级与网关容量">模型池</button>
+            <button class="module-tab" data-view="platform" aria-controls="view-platform" title="模型池路由、真实业务拨测、日志签名、自愈策略与全局设置">平台配置</button>
             <button class="module-tab" data-view="tenants" aria-controls="view-tenants" title="注册接入团队、轮换探针 token、停用或启用租户">租户管理</button>
-            <button class="module-tab" data-view="platform" aria-controls="view-platform" title="低频全局配置，改动会影响巡检">系统设置</button>
           </div>
         </details>
       </nav>
@@ -167,7 +165,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     </section>
     <section id="view-signals" class="view hidden" aria-labelledby="signalsHeading">
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 观测查询</div><h2 id="signalsHeading">指标、日志与自定义看板</h2><p>查询 OTLP 落库的指标与日志；常用查询可组织为可拖拽排序的看板，并以模板导入导出。深度历史仍可前往 Prometheus 查询。</p></div><div class="right">OTLP 落库 · 管理员只读</div></div>
-      <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义看板<small>多看板 · 拖拽排序 · 模板导入导出</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/catalog" aria-selected="false">指标字典<small>有哪些指标、都是啥意思</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/tokens" aria-selected="false">接入凭据<small>按人/服务/租户签发上报凭据</small></button></div>
+      <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/promql" aria-selected="false">PromQL 查询<small>深度历史 · 直查 Prometheus</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义看板<small>多看板 · 拖拽排序 · 模板导入导出</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/catalog" aria-selected="false">指标字典<small>有哪些指标、都是啥意思</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/tokens" aria-selected="false">接入凭据<small>按人/服务/租户签发上报凭据</small></button></div>
       <div class="view-module is-active" data-view-module="signals/metrics" role="tabpanel" aria-label="指标查询">
         <div class="signals-toolbar">
           <label>自然语言查询<input id="nlQueryInput" type="text" autocomplete="off" spellcheck="false" placeholder="例如：最近1小时有多少 span 被拒绝 / checkout-api 最近的请求量" /></label>
@@ -197,6 +195,16 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <button id="signalLogQueryBtn" class="btn primary" type="button">查询</button>
         </div>
         <div id="signalsLogTable" aria-live="polite"><div class="signals-empty">设置条件并点击查询</div></div>
+      </div>
+      <div class="view-module" data-view-module="signals/promql" role="tabpanel" aria-label="PromQL 查询" hidden>
+        <p class="domain-note">PromQL 直查 Prometheus 深度历史（服务端代理、表达式经校验）；平台内 OTLP 落库序列请用「指标查询」。</p>
+        <div class="signals-toolbar">
+          <label>PromQL<input id="promqlInput" type="text" autocomplete="off" spellcheck="false" placeholder="如 sum(rate(http_requests_total[5m])) by (service)" /></label>
+          <label>时间窗口<select id="promqlMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option></select></label>
+          <button id="promqlRunBtn" class="btn primary" type="button">执行查询</button>
+          <a class="btn" href="/dobs/prometheus/graph" target="_blank" rel="noopener noreferrer">原生界面打开</a>
+        </div>
+        <div id="promqlResult" class="signals-chart-wrap" aria-live="polite"><div class="signals-empty">输入 PromQL 并点击「执行查询」；超过 14 天的深度历史请到原生界面</div></div>
       </div>
       <div class="view-module" data-view-module="signals/panels" role="tabpanel" aria-label="自定义看板" hidden>
         <div class="signals-toolbar">
