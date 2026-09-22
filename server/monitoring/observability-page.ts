@@ -103,23 +103,24 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         <div class="nav-primary">
           <button class="module-tab" data-view="overview" aria-controls="view-overview" title="判断生产是否影响用户，并查看当前待办">运营总览<span id="overviewCount" class="tab-count" title="进行中事故数" hidden>—</span></button>
           <button class="module-tab" data-view="operator-metrics" aria-controls="view-operator-metrics" title="查看新增用户、DAU、对话次数和 Agent Run 趋势">用户增长</button>
+          <button class="module-tab" data-view="signals/panels" aria-controls="view-signals" title="搭建与查看自定义看板：多看板、拖拽排序、模板导入导出、大屏模式">看板</button>
         </div>
         <details class="nav-group" id="nav-group-core" data-nav-group="core">
-          <summary class="nav-section-toggle" aria-controls="nav-group-core-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">处置与证据</span><span class="nav-group-alert" id="navCoreAlert" hidden></span></summary>
+          <summary class="nav-section-toggle" aria-controls="nav-group-core-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">告警与事故</span><span class="nav-group-alert" id="navCoreAlert" hidden></span></summary>
           <div class="nav-group-items" id="nav-group-core-items">
             <button class="module-tab" data-view="investigate" aria-controls="view-investigate" title="从异常、证据和影响范围定位事故">事故调查<span id="incidentCount" class="tab-count" title="进行中事故数">—</span></button>
             <button class="module-tab" data-view="alerts" aria-controls="view-alerts" title="维护告警规则、阈值和通知路由">告警策略<span id="ruleCount" class="tab-count">—</span></button>
             <button class="module-tab" data-view="traces" aria-controls="view-traces" title="从事故证据下钻单次 Agent 与会话运行">链路追踪</button>
-            <button class="module-tab" data-view="service-levels" aria-controls="view-service-levels" title="查看用户旅程 SLO、错误预算和风险目标">SLO 与错误预算</button>
           </div>
         </details>
         <details class="nav-group" id="nav-group-data" data-nav-group="data">
-          <summary class="nav-section-toggle" aria-controls="nav-group-data-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">数据与资产</span></summary>
+          <summary class="nav-section-toggle" aria-controls="nav-group-data-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">信号与分析</span></summary>
           <div class="nav-group-items" id="nav-group-data-items">
             <button class="module-tab" data-view="signals" aria-controls="view-signals" title="查询 OTLP 指标与日志，维护自定义面板">观测查询</button>
+            <button class="module-tab" data-view="service-levels" aria-controls="view-service-levels" title="查看用户旅程 SLO、错误预算和风险目标">SLO 与错误预算</button>
             <button class="module-tab" data-view="devices" aria-controls="view-devices" title="查看边缘设备心跳、在线状态与板级指标">边缘设备</button>
-            <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据健康</button>
-            <button class="module-tab" data-view="database" aria-controls="view-database" title="查看 PostgreSQL 运行状态、关系与数据表">数据库</button>
+            <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据入库健康</button>
+            <button class="module-tab" data-view="database" aria-controls="view-database" title="查看 PostgreSQL 运行状态、关系与数据表">数据库状态</button>
             <a class="module-tab" href="/dobs/prometheus/graph" target="_blank" rel="noopener noreferrer" title="在 Prometheus 中使用 PromQL 查询时序指标">Prometheus 查询</a>
           </div>
         </details>
