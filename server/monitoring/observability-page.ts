@@ -223,6 +223,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
             <button id="boardRangeToggleBtn" class="btn" type="button" title="设定起止时间区间，替代相对时间维度">自定义区间</button>
             <button id="boardImportBtn" class="btn" type="button" title="导入看板模板 JSON，生成新看板">导入</button>
             <button id="boardExportBtn" class="btn" type="button" title="导出当前看板为模板 JSON">导出</button>
+            <button id="boardGrafanaExportBtn" class="btn" type="button" title="导出为 Grafana 可直接导入的 dashboard JSON">Grafana 格式</button>
             <button id="boardRenameBtn" class="btn" type="button" title="重命名当前看板">重命名</button>
             <button id="boardDeleteBtn" class="btn" type="button" title="删除当前看板">删除</button>
           </div>

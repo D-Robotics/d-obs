@@ -41,6 +41,7 @@ studio_obs_dashboards
 studio_obs_tenant_members
 studio_obs_tenants
 studio_observability_actions
+studio_obs_library_panels
 studio_observability_logs
 studio_observability_metric_samples
 studio_observability_metric_series

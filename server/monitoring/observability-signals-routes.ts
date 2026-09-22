@@ -42,6 +42,8 @@ import { analyzeIncidentEvidence, callGatewayChat, copilotModelEnabled, extractJ
 import { scanRecentMetricAnomalies } from '../observability/metric-anomalies.js';
 import { buildSelfTestMetricPayload } from '../observability/selftest-metric.js';
 import { ingestMetricPayload } from '../observability/ai-ecosystem-routes.js';
+import { parseGrafanaDashboard, toGrafanaDashboard } from './grafana-compat.js';
+import { deleteLibraryPanel, listLibraryPanels, saveLibraryPanel } from './dashboard-library-store.js';
 import { buildObservabilityMcpTools, handleMcpJsonRpc } from '../observability/agent-mcp.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
 import { loadQualityTrend } from '../public-api/public-observability-quality-trend.js';
@@ -575,7 +577,22 @@ export function registerSignalsRoutes(router: Router): void {
       const template = (req.body as Record<string, unknown> | undefined)?.template;
       const parsed = parseBoardTemplate(template);
       if (!parsed) {
-        res.status(400).json({ ok: false, error: 'invalid_board_template' });
+        // Grafana dashboard JSON 自动识别：panels[].type/targets 映射为 d-obs 面板。
+        const grafana = parseGrafanaDashboard(template);
+        if (!grafana) {
+          res.status(400).json({ ok: false, error: 'invalid_board_template' });
+          return;
+        }
+        try {
+          const board = await createBoard({ owner: resolveOpsActor(req), name: grafana.name, spec: grafana.spec });
+          res.status(201).json({ ok: true, board, source: 'grafana', mapped: grafana.mapped, skipped: grafana.skipped });
+        } catch (error) {
+          if (String((error as Error)?.message ?? '') === 'too_many_boards') {
+            res.status(400).json({ ok: false, error: 'too_many_boards' });
+            return;
+          }
+          res.status(503).json({ ok: false, error: clientErrorCode(error, 'boards_unavailable') });
+        }
         return;
       }
       try {
@@ -814,6 +831,85 @@ export function registerSignalsRoutes(router: Router): void {
         });
       } catch (error) {
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'metrics_query_unavailable') });
+      }
+    },
+  );
+
+  // Grafana 格式导出：以 Grafana 可直接导入的 dashboard JSON 返回当前看板。
+  router.get(
+    '/api/ops/observability/boards/:boardId/export/grafana',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const owner = resolveOpsActor(req);
+        const board = (await listBoards(owner)).find((item) => item.id === String(req.params.boardId ?? ''));
+        if (!board) {
+          res.status(404).json({ ok: false, error: 'board_not_found' });
+          return;
+        }
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(board.name)}.grafana.json"`);
+        res.json(toGrafanaDashboard(board));
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'boards_unavailable') });
+      }
+    },
+  );
+
+  // ---- 库面板：跨看板复用的面板定义（v1 添加 = 副本，不做引用联动） ----
+
+  router.get('/api/ops/observability/library/panels', requireObservabilityAccess, async (req: Request, res: Response) => {
+    try {
+      const panels = await listLibraryPanels(resolveOpsActor(req));
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ ok: true, panels });
+    } catch (error) {
+      res.status(503).json({ ok: false, error: clientErrorCode(error, 'library_unavailable') });
+    }
+  });
+
+  router.post(
+    '/api/ops/observability/library/panels',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const panel = normalizeBoardPanel(body.panel);
+      if (!panel) {
+        res.status(400).json({ ok: false, error: 'invalid_panel_spec' });
+        return;
+      }
+      try {
+        const record = await saveLibraryPanel({
+          owner: resolveOpsActor(req),
+          panel,
+          id: typeof body.id === 'string' ? body.id : undefined,
+        });
+        res.status(201).json({ ok: true, record });
+      } catch (error) {
+        if (String((error as Error)?.message ?? '') === 'too_many_library_panels') {
+          res.status(400).json({ ok: false, error: 'too_many_library_panels' });
+          return;
+        }
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'library_unavailable') });
+      }
+    },
+  );
+
+  router.delete(
+    '/api/ops/observability/library/panels/:panelId',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const removed = await deleteLibraryPanel(resolveOpsActor(req), String(req.params.panelId ?? ''));
+        if (!removed) {
+          res.status(404).json({ ok: false, error: 'library_panel_not_found' });
+          return;
+        }
+        res.json({ ok: true });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'library_unavailable') });
       }
     },
   );

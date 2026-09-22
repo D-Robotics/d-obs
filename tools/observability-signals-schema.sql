@@ -143,6 +143,18 @@ create table if not exists public.studio_obs_dashboards (
 create index if not exists studio_obs_dashboards_owner_idx
   on public.studio_obs_dashboards (owner, position);
 
+-- ===== 库面板（跨看板复用的面板定义；添加到看板 = 副本，v1 无引用联动） =====
+create table if not exists public.studio_obs_library_panels (
+  id uuid primary key default gen_random_uuid(),
+  owner text not null,
+  panel jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists studio_obs_library_panels_owner_idx
+  on public.studio_obs_library_panels (owner, updated_at desc);
+
 -- ===== 生态接入凭据（人/服务/租户三级签发；身份只在凭据层，遥测零 PII） =====
 create table if not exists public.studio_obs_ingest_tokens (
   token_id text primary key,

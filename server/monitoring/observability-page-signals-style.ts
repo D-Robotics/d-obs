@@ -31,7 +31,7 @@ export const OPS_OBSERVABILITY_SIGNALS_STYLE = `
 .signals-panel-card.full{grid-column:1/-1}
 .signals-panel-card.dragging{opacity:.45;outline:2px dashed #3b82f6;outline-offset:2px}
 .signals-panel-card.drop-target{outline:2px solid #3b82f6;outline-offset:2px}
-.panel-actions{display:flex;gap:4px;flex-shrink:0}
+.panel-actions{display:flex;flex-wrap:wrap;gap:4px;flex-shrink:0;justify-content:flex-end}
 .signals-stat-value{font-size:34px;font-weight:700;line-height:1.1}
 .signals-stat-value.warn{color:#f59e0b}
 .signals-stat-value.crit{color:#ef4444}

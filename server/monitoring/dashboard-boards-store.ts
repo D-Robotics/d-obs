@@ -6,7 +6,7 @@
  * 一次性迁入每人一个「默认看板」）。
  */
 
-export const BOARD_PANEL_CHARTS = ['line', 'bar', 'stat'] as const;
+export const BOARD_PANEL_CHARTS = ['line', 'bar', 'stat', 'table'] as const;
 export type BoardPanelChart = (typeof BOARD_PANEL_CHARTS)[number];
 
 export type BoardPanel = {
