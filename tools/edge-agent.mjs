@@ -28,6 +28,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -42,6 +43,9 @@ const INTERVAL_SECONDS = (() => {
 })();
 const OUTBOX_PATH =
   String(process.env.RDK_EDGE_OUTBOX_PATH || '').trim() || '/var/lib/rdk-edge-agent/outbox.jsonl';
+const INTERVAL_OVERRIDE_PATH = `${dirname(OUTBOX_PATH)}/interval.txt`; // 下行命令 set-interval 的持久化
+const AGENT_PATH = fileURLToPath(import.meta.url);
+let intervalSeconds = INTERVAL_SECONDS; // 运行期可被下行命令修改
 
 const MAX_SAMPLES_PER_HEARTBEAT = 240; // 服务端单次心跳上限
 const OUTBOX_MAX_ENTRIES = 5000; // 超出丢最旧
@@ -285,6 +289,7 @@ async function runRound(token, model, firmware) {
     if (!ok) throw new Error(`HTTP ${status}`);
     const remaining = all.filter((entry) => !sentTs.has(entry.ts)); // 成功后截断已上报样本
     await writeOutbox(remaining);
+    await handleCommands(token);
     log(
       `dev=${DEVICE_ID} samples=${send.length} report=ok status=${status} outbox=${remaining.length}` +
         (sample.dropped.length ? ` drop=${sample.dropped.join(',')}` : ''),
@@ -298,6 +303,75 @@ async function runRound(token, model, firmware) {
         ` error=${shortError(error)}` +
         (sample.dropped.length ? ` drop=${sample.dropped.join(',')}` : ''),
     );
+  }
+}
+
+// ---- 下行命令：认领 → 执行 → 回执（v1 只有 ping / set-interval / update-agent） ----
+
+async function ackCommand(token, commandId, status, result) {
+  const response = await fetch(`${REPORT_URL}/api/edge/commands/${encodeURIComponent(commandId)}/ack`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-rdk-device-token': token,
+      'user-agent': 'd-obs-edge-agent/1',
+    },
+    body: JSON.stringify({ status, result }),
+    signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
+  });
+  if (!(response.status >= 200 && response.status < 300)) throw new Error(`ack HTTP ${response.status}`);
+}
+
+async function handleCommands(token) {
+  let commands = [];
+  try {
+    const response = await fetch(`${REPORT_URL}/api/edge/commands/claim`, {
+      method: 'POST',
+      headers: { 'x-rdk-device-token': token, 'user-agent': 'd-obs-edge-agent/1' },
+      signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data || !data.ok) return;
+    commands = Array.isArray(data.commands) ? data.commands : [];
+  } catch {
+    return; // 认领失败不打断上报主流程
+  }
+  for (const cmd of commands) {
+    let status = 'ok';
+    let result = '';
+    try {
+      if (cmd.type === 'ping') {
+        result = 'pong';
+      } else if (cmd.type === 'set-interval') {
+        const seconds = Number(cmd.payload?.intervalSeconds);
+        if (!Number.isFinite(seconds) || seconds < 5 || seconds > 3600) throw new Error('bad intervalSeconds');
+        intervalSeconds = seconds;
+        await mkdir(dirname(INTERVAL_OVERRIDE_PATH), { recursive: true });
+        await writeFile(INTERVAL_OVERRIDE_PATH, String(seconds), 'utf8');
+        result = `interval=${seconds}s`;
+      } else if (cmd.type === 'update-agent') {
+        const script = await fetch(`${REPORT_URL}/api/edge/agent-script`, { signal: AbortSignal.timeout(REPORT_TIMEOUT_MS) });
+        if (!(script.status >= 200 && script.status < 300)) throw new Error(`script HTTP ${script.status}`);
+        const source = await script.text();
+        if (!source.includes('d-obs-edge-agent') || source.length < 1000) throw new Error('script marker missing');
+        const tmp = `${AGENT_PATH}.update`;
+        await writeFile(tmp, source, 'utf8');
+        await rename(tmp, AGENT_PATH);
+        result = `updated ${source.length}B, restarting`;
+        await ackCommand(token, cmd.id, status, result).catch(() => {});
+        log(`dev=${DEVICE_ID} command=update-agent applied, exiting for supervisor restart`);
+        process.exit(0);
+      } else {
+        throw new Error(`unknown type ${cmd.type}`);
+      }
+    } catch (error) {
+      status = 'failed';
+      result = shortError(error);
+    }
+    try {
+      await ackCommand(token, cmd.id, status, result);
+    } catch { /* 回执失败不影响下一轮 */ }
+    log(`dev=${DEVICE_ID} command=${cmd.type} ${status} ${result}`);
   }
 }
 
@@ -340,6 +414,13 @@ async function main() {
     return;
   }
 
+  try {
+    const override = Number((await readFile(INTERVAL_OVERRIDE_PATH, 'utf8')).trim());
+    if (Number.isFinite(override) && override >= 5 && override <= 3600) intervalSeconds = override;
+  } catch {
+    // 无覆盖文件时用 env/默认值
+  }
+
   const model = String(process.env.RDK_EDGE_MODEL || '').trim() || (await detectModel()) || 'unknown';
   const firmware = String(process.env.RDK_EDGE_FIRMWARE || '').trim() || 'unknown';
 
@@ -349,7 +430,7 @@ async function main() {
   }
 
   log(
-    `dev=${DEVICE_ID} model="${model}" firmware="${firmware}" interval=${INTERVAL_SECONDS}s ` +
+    `dev=${DEVICE_ID} model="${model}" firmware="${firmware}" interval=${intervalSeconds}s ` +
       `report=${REPORT_URL} outbox=${OUTBOX_PATH} started`,
   );
 
@@ -384,7 +465,7 @@ async function main() {
     }
     running = false;
     if (stopping) break;
-    await sleep(INTERVAL_SECONDS * 1000);
+    await sleep(intervalSeconds * 1000);
   }
   process.exit(0);
 }

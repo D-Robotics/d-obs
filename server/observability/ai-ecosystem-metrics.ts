@@ -73,7 +73,7 @@ const LABEL_ALIASES: Record<string, string> = {
   'gen_ai.response.model.version': 'model_version',
 };
 
-function increment(name: string, value = 1): void {
+export function increment(name: string, value = 1): void {
   counters.set(name, (counters.get(name) ?? 0) + value);
 }
 

@@ -180,6 +180,13 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <button id="signalSavePanelBtn" class="btn" type="button">存入看板</button>
         </div>
         <div id="signalsMetricChart" class="signals-chart-wrap" aria-live="polite"><div class="signals-empty">输入指标名并点击查询</div></div>
+        <details id="signals-anomalies" class="detail-sections"><summary class="detail-summary"><strong>统计异常检测</strong><span>对落库序列做 z-score 粗筛（最新值偏离基线 ≥3.5 个标准差），命中后请下钻确认</span></summary>
+          <div class="signals-toolbar">
+            <label>时间窗口<select id="anomalyMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option></select></label>
+            <button id="anomalyDetectBtn" class="btn" type="button">检测</button>
+          </div>
+          <div id="metricAnomaliesContent" aria-live="polite"><div class="signals-empty">点「检测」扫描窗口内的统计异常</div></div>
+        </details>
       </div>
       <div class="view-module" data-view-module="signals/logs" role="tabpanel" aria-label="日志查询" hidden>
         <div class="signals-toolbar">

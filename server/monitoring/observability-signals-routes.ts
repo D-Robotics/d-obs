@@ -14,6 +14,8 @@ import { queryMetricRanges, queryMetricSeries } from '../observability/ai-ecosys
 import {
   invalidateDeviceTokenCache,
   listDevices,
+  createDeviceCommand,
+  listDeviceCommands,
   queryDeviceSamples,
   registerDevice,
   rotateDeviceToken,
@@ -36,6 +38,7 @@ import {
   type BoardSpec,
 } from './dashboard-boards-store.js';
 import { analyzeIncidentEvidence, callGatewayChat, copilotModelEnabled, extractJson, resolveGatewayChatTarget } from '../observability/copilot-model.js';
+import { detectSeriesAnomalies } from '../observability/metric-anomalies.js';
 import { buildObservabilityMcpTools, handleMcpJsonRpc } from '../observability/agent-mcp.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
 import { loadQualityTrend } from '../public-api/public-observability-quality-trend.js';
@@ -110,6 +113,44 @@ export function registerSignalsRoutes(router: Router): void {
           window: { fromMs: from, toMs: to, minutes: spanMinutes },
           series: ranges,
         });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'metrics_query_unavailable') });
+      }
+    },
+  );
+
+  router.get(
+    '/api/ops/observability/metrics/anomalies',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const query = req.query as Record<string, unknown>;
+        const windowMinutes = queryInteger(query, 'minutes', 240, 30, 60 * 24 * 14);
+        const threshold = Number(query.threshold);
+        // 扫描面控制：样本数最多的前 20 个指标，每条最多 120 点。
+        const seriesList = await queryMetricSeries({ limit: 500 });
+        const byMetric = new Map<string, number>();
+        for (const row of seriesList) byMetric.set(row.metric, (byMetric.get(row.metric) ?? 0) + 1);
+        const metrics = [...byMetric.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([metric]) => metric);
+        const to = Date.now();
+        const from = to - windowMinutes * 60_000;
+        const perMetric = await Promise.all(
+          metrics.map((metric) =>
+            queryMetricRanges({ metric, fromMs: from, toMs: to, maxPoints: 120 }).catch(() => []),
+          ),
+        );
+        const anomalies = detectSeriesAnomalies(
+          perMetric.flatMap((ranges, index) =>
+            (ranges as Array<{ labels?: unknown; points?: Array<{ ts: number; value: number }> }>).map((item) => ({
+              metric: metrics[index],
+              labels: (item.labels ?? {}) as Record<string, string>,
+              points: item.points ?? [],
+            })),
+          ),
+          { threshold: Number.isFinite(threshold) ? threshold : undefined },
+        );
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ ok: true, anomalies: anomalies.slice(0, 50), scanned: { metrics: metrics.length, windowMinutes } });
       } catch (error) {
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'metrics_query_unavailable') });
       }
@@ -671,6 +712,57 @@ export function registerSignalsRoutes(router: Router): void {
     }
     res.json(response);
   });
+
+  // ---- 边缘设备下行命令（运营签发 / 清单；设备端凭 token 认领执行） ----
+
+  router.post(
+    '/api/ops/observability/devices/:deviceId/commands',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const deviceId = String(req.params.deviceId ?? '');
+      if (!DEVICE_ID_PATTERN.test(deviceId)) {
+        res.status(400).json({ ok: false, error: 'invalid_device_id' });
+        return;
+      }
+      try {
+        const command = await createDeviceCommand({
+          deviceId,
+          type: String(body.type ?? ''),
+          payload: body.payload,
+          createdBy: resolveOpsActor(req),
+        });
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'device_command_issue',
+          summary: `向设备 ${deviceId} 下发命令 ${command.type}`,
+        });
+        res.status(201).json({ ok: true, command });
+      } catch (error) {
+        const message = String((error as Error)?.message ?? '');
+        if (message === 'invalid_command_type' || message === 'invalid_command_payload') {
+          res.status(400).json({ ok: false, error: message });
+          return;
+        }
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'device_store_unavailable') });
+      }
+    },
+  );
+
+  router.get(
+    '/api/ops/observability/devices/:deviceId/commands',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const commands = await listDeviceCommands(String(req.params.deviceId ?? ''));
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ ok: true, commands });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'device_store_unavailable') });
+      }
+    },
+  );
 
   // ---- 事故副驾模型研判（可选；未启用时客户端回落确定性证据引擎） ----
 

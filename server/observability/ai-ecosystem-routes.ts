@@ -18,7 +18,9 @@ import {
   renderPrometheusMetrics,
   observeHistogram,
   recordMetricQueueGauges,
+  increment,
 } from './ai-ecosystem-metrics.js';
+import { shouldKeepTrace, tailSampleConfigFromEnv } from './tail-sampling.js';
 import { insertLogRecords, type NormalizedLogRecord } from './ai-ecosystem-logs-store.js';
 import { enqueueMetricPoints, metricQueueDepth, metricQueueDroppedTotal } from './ai-ecosystem-metrics-store.js';
 import { resolveIngestToken } from './ingest-token-store.js';
@@ -326,6 +328,23 @@ export async function ingestTracePayload(body: JsonObject, identity: Principal):
     current.push(item);
     groups.set(key, current);
   }
+  // 服务端尾部采样：error/慢 trace 保留，其余按比例采样（默认 ratio=1 全保留）。
+  const sampling = tailSampleConfigFromEnv();
+  let sampledOut = 0;
+  if (sampling.ratio < 1) {
+    for (const [key, group] of groups) {
+      const startTime = Math.min(...group.map((item) => item.span.startTime));
+      const endTime = Math.max(...group.map((item) => item.span.endTime));
+      const keep = shouldKeepTrace(
+        { spanCount: group.length, hasError: group.some((item) => item.span.status === 'error'), durationMs: endTime - startTime },
+        sampling,
+      );
+      if (!keep) {
+        groups.delete(key);
+        sampledOut += group.length;
+      }
+    }
+  }
   let accepted = 0;
   let rejected = rows.length - normalized.length;
   let runs = 0;
@@ -350,6 +369,8 @@ export async function ingestTracePayload(body: JsonObject, identity: Principal):
     }
   }
   recordOtlpTraceIngest({ received: rows.length, accepted, rejected, runs });
+  // 采样剔除不计入 rejected（OTLP 客户端会把 rejectedSpans 视为失败重试），只进自观测指标。
+  if (sampledOut > 0) increment('rdk_ai_otlp_spans_sampled_out_total', sampledOut);
   return { valid: true, accepted, rejected, runs };
 }
 

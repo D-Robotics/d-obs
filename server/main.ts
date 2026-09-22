@@ -16,6 +16,7 @@
  *    fail-closed: unset means the endpoint is disabled).
  */
 import { timingSafeEqual } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import express from 'express';
 import { createOpsObservabilityRouter } from './monitoring/observability-routes.js';
 import {
@@ -24,6 +25,8 @@ import {
   resolveProbeReportIdentity,
 } from './monitoring/external-probe-ingest.js';
 import {
+  ackDeviceCommand,
+  claimDeviceCommands,
   parseDeviceHeartbeat,
   recordDeviceHeartbeat,
   resolveDeviceIdentity,
@@ -130,6 +133,56 @@ app.post('/api/edge/heartbeat', async (req, res) => {
   } catch {
     res.status(503).json({ ok: false, error: 'device_store_unavailable' });
   }
+});
+// 下行命令：设备凭 token 认领（pending→delivered）与回执（delivered→ok/failed）。
+app.post('/api/edge/commands/claim', async (req, res) => {
+  const deviceId = await resolveDeviceIdentity(req.header('x-rdk-device-token'));
+  if (!deviceId) {
+    res.status(401).json({ ok: false, error: 'invalid_device_token' });
+    return;
+  }
+  try {
+    const commands = await claimDeviceCommands(deviceId);
+    res.status(200).json({ ok: true, commands: commands.map((cmd) => ({ id: cmd.id, type: cmd.type, payload: cmd.payload })) });
+  } catch {
+    res.status(503).json({ ok: false, error: 'device_store_unavailable' });
+  }
+});
+app.post('/api/edge/commands/:commandId/ack', async (req, res) => {
+  const deviceId = await resolveDeviceIdentity(req.header('x-rdk-device-token'));
+  if (!deviceId) {
+    res.status(401).json({ ok: false, error: 'invalid_device_token' });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const status = String(body.status ?? '');
+  if (status !== 'ok' && status !== 'failed') {
+    res.status(400).json({ ok: false, error: 'invalid_command_status' });
+    return;
+  }
+  try {
+    const command = await ackDeviceCommand({ deviceId, commandId: String(req.params.commandId ?? ''), status, result: String(body.result ?? '') });
+    if (!command) {
+      res.status(404).json({ ok: false, error: 'command_not_found' });
+      return;
+    }
+    res.json({ ok: true });
+  } catch {
+    res.status(503).json({ ok: false, error: 'device_store_unavailable' });
+  }
+});
+// agent 自更新脚本源（只读、无敏感内容；设备端 update-agent 命令从这里拉取）。
+app.get('/api/edge/agent-script', async (_req, res) => {
+  for (const candidate of ['tools/edge-agent.mjs', '../tools/edge-agent.mjs']) {
+    try {
+      const source = await readFile(candidate, 'utf8');
+      res.type('text/javascript; charset=utf-8').send(source);
+      return;
+    } catch {
+      // 尝试下一个相对路径
+    }
+  }
+  res.status(404).json({ ok: false, error: 'agent_script_unavailable' });
 });
 // 事件级埋点摄取：租户/平台 token 鉴权，逐条消毒去重后写 studio_ops_events。
 app.use(createOpsEventIngestRouter());

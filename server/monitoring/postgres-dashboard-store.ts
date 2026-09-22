@@ -469,6 +469,7 @@ export const DEFAULT_POSTGRES_DASHBOARD_TABLES: readonly string[] = [
   'studio_alert_notifications',
   'studio_alert_worker_status',
   'studio_daily_usage',
+  'studio_device_commands',
   'studio_device_samples',
   'studio_devices',
   'studio_evolution_runs',

@@ -75,6 +75,20 @@ create table if not exists public.studio_device_samples (
   metrics jsonb not null default '{}'::jsonb,
   primary key (device_id, ts_ms)
 );
+create table if not exists public.studio_device_commands (
+  id uuid primary key default gen_random_uuid(),
+  device_id text not null,
+  type text not null check (type in ('ping', 'set-interval', 'update-agent')),
+  payload jsonb not null default '{}'::jsonb,
+  status text not null default 'pending' check (status in ('pending', 'delivered', 'ok', 'failed')),
+  result text not null default '',
+  created_by text not null default '',
+  created_at timestamptz not null default now(),
+  delivered_at timestamptz null,
+  done_at timestamptz null
+);
+create index if not exists studio_device_commands_device_idx
+  on public.studio_device_commands (device_id, created_at desc);
 `;
 
 let schemaReady: Promise<void> | null = null;
@@ -450,4 +464,129 @@ export function deviceTokenMatches(presented: string, tokenHash: string): boolea
   const a = Buffer.from(hashToken(presented));
   const b = Buffer.from(tokenHash);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// ---- 下行命令通道（v1：ping / set-interval / update-agent，不做任意 exec） ----
+
+export const DEVICE_COMMAND_TYPES = ['ping', 'set-interval', 'update-agent'] as const;
+export type DeviceCommandType = (typeof DEVICE_COMMAND_TYPES)[number];
+
+export type DeviceCommandRecord = {
+  id: string;
+  deviceId: string;
+  type: DeviceCommandType;
+  payload: Record<string, unknown>;
+  status: 'pending' | 'delivered' | 'ok' | 'failed';
+  result: string;
+  createdBy: string;
+  createdAt: string;
+  deliveredAt: string | null;
+  doneAt: string | null;
+};
+
+function normalizeCommandPayload(
+  type: DeviceCommandType,
+  payload: unknown,
+): Record<string, unknown> | null {
+  const input = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {};
+  if (type === 'ping') return {};
+  if (type === 'set-interval') {
+    const intervalSeconds = Math.trunc(Number(input.intervalSeconds));
+    if (!Number.isFinite(intervalSeconds) || intervalSeconds < 5 || intervalSeconds > 3600) return null;
+    return { intervalSeconds };
+  }
+  return {}; // update-agent：始终拉取服务端当前 agent 脚本，不接受客户端参数
+}
+
+function rowToCommand(row: Record<string, unknown>): DeviceCommandRecord {
+  const payload = row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
+    ? row.payload as Record<string, unknown>
+    : {};
+  return {
+    id: String(row.id ?? ''),
+    deviceId: String(row.device_id ?? ''),
+    type: String(row.type ?? '') as DeviceCommandType,
+    payload,
+    status: String(row.status ?? 'pending') as DeviceCommandRecord['status'],
+    result: String(row.result ?? ''),
+    createdBy: String(row.created_by ?? ''),
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at ?? ''),
+    deliveredAt: row.delivered_at instanceof Date ? row.delivered_at.toISOString() : null,
+    doneAt: row.done_at instanceof Date ? row.done_at.toISOString() : null,
+  };
+}
+
+export async function createDeviceCommand(input: {
+  deviceId: string;
+  type: string;
+  payload?: unknown;
+  createdBy: string;
+}): Promise<DeviceCommandRecord> {
+  if (!DEVICE_COMMAND_TYPES.includes(input.type as DeviceCommandType)) {
+    throw new Error('invalid_command_type');
+  }
+  const type = input.type as DeviceCommandType;
+  const payload = normalizeCommandPayload(type, input.payload);
+  if (payload === null) throw new Error('invalid_command_payload');
+  const p = await pool();
+  await ensureSchema(p);
+  const result = await p.query(
+    `insert into public.studio_device_commands (device_id, type, payload, created_by)
+     values ($1, $2, $3::jsonb, $4) returning *`,
+    [input.deviceId, type, JSON.stringify(payload), input.createdBy],
+  );
+  return rowToCommand(result.rows[0] ?? {});
+}
+
+/** 设备认领待执行命令：pending → delivered（设备凭 token 调用，已按设备隔离）。 */
+export async function claimDeviceCommands(deviceId: string, limit = 10): Promise<DeviceCommandRecord[]> {
+  const p = await pool();
+  await ensureSchema(p);
+  const claimable = await p.query(
+    `update public.studio_device_commands
+     set status = 'delivered', delivered_at = now()
+     where id in (
+       select id from public.studio_device_commands
+       where device_id = $1 and status = 'pending'
+       order by created_at
+       limit $2
+     )
+     returning *`,
+    [deviceId, Math.max(1, Math.min(20, limit))],
+  );
+  return claimable.rows.map(rowToCommand);
+}
+
+export async function ackDeviceCommand(input: {
+  deviceId: string;
+  commandId: string;
+  status: string;
+  result?: string;
+}): Promise<DeviceCommandRecord | null> {
+  if (input.status !== 'ok' && input.status !== 'failed') throw new Error('invalid_command_status');
+  const p = await pool();
+  await ensureSchema(p);
+  const result = await p.query(
+    `update public.studio_device_commands
+     set status = $3, result = $4, done_at = now()
+     where id = $2 and device_id = $1 and status = 'delivered'
+     returning *`,
+    [input.deviceId, input.commandId, input.status, String(input.result ?? '').slice(0, 300)],
+  );
+  return result.rows[0] ? rowToCommand(result.rows[0]) : null;
+}
+
+export async function listDeviceCommands(deviceId: string, limit = 50): Promise<DeviceCommandRecord[]> {
+  const p = await pool();
+  await ensureSchema(p);
+  const result = await p.query(
+    `select * from public.studio_device_commands
+     where device_id = $1
+     order by created_at desc
+     limit $2`,
+    [deviceId, Math.max(1, Math.min(200, limit))],
+  );
+  return result.rows.map(rowToCommand);
 }
