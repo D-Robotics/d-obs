@@ -1,4 +1,5 @@
 export const OPS_OBSERVABILITY_STYLE = `    :root{color-scheme:light;--bg:#f7f7f5;--panel:#fff;--panel2:#f6f6f4;--line:rgba(2,24,21,.08);--line2:rgba(111,113,113,.26);--text:#141515;--muted:rgba(20,21,21,.56);--green:#c2410c;--orange:#d46b08;--red:#d9363e;--blue:#00665f;--purple:#722ed1;--shadow:0 8px 24px rgba(2,24,21,.08),0 0 1px rgba(2,24,21,.18)}
+    .hidden{display:none!important}
     *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;background:var(--bg);color:var(--text);font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}
     button,input,select,textarea{font:inherit}button{color:inherit}a{color:inherit;text-decoration:none}
     header{height:48px;background:var(--c1);color:var(--c2);display:flex;align-items:center;padding:0 20px;position:sticky;top:0;z-index:20}

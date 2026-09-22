@@ -95,6 +95,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         if(fromInput)fromInput.value=board&&board.spec.range?tsToInputValue(board.spec.range.fromMs):'';
         if(toInput)toInput.value=board&&board.spec.range?tsToInputValue(board.spec.range.toMs):'';
         renderBoardPanels()}
+      function toggleBoardRangeBar(){const bar=$('boardRangeBar');const btn=$('boardRangeToggleBtn');if(!bar||!btn)return;const show=bar.classList.contains('hidden');bar.classList.toggle('hidden',!show);btn.classList.toggle('active',show)}
       function applyBoardRange(){const board=currentBoard();if(!board)return;const from=inputValueToTs(($('boardRangeFrom')||{}).value);const to=inputValueToTs(($('boardRangeTo')||{}).value);
         if(from==null||to==null){toast('请先选择起止时间',false);return}
         if(to<=from){toast('结束时间要晚于起始时间',false);return}
@@ -287,6 +288,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         bind('boardWindow','change',event=>{const board=currentBoard();if(!board)return;if(event.target.value==='custom'){renderBoard();return}board.spec.range=null;board.spec.windowMinutes=Number(event.target.value)||240;persistBoardSpec();renderBoard()});
         bind('boardRangeApplyBtn','click',applyBoardRange);
         bind('boardRangeClearBtn','click',clearBoardRange);
+        bind('boardRangeToggleBtn','click',toggleBoardRangeBar);
         bind('boardAutoRefresh','change',event=>setBoardAutoRefresh(Number(event.target.value)||0));
         bind('boardKioskBtn','click',toggleBoardKiosk);
         bind('boardAiBtn','click',aiBoardFlow);

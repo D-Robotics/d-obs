@@ -207,23 +207,30 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         <div id="promqlResult" class="signals-chart-wrap" aria-live="polite"><div class="signals-empty">输入 PromQL 并点击「执行查询」；超过 14 天的深度历史请到原生界面</div></div>
       </div>
       <div class="view-module" data-view-module="signals/panels" role="tabpanel" aria-label="自定义看板" hidden>
-        <div class="signals-toolbar">
-          <label>看板<select id="boardSelect"></select></label>
-          <label>时间维度<select id="boardWindow"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option><option value="20160">最近 14 天</option><option value="custom" hidden>自定义区间</option></select></label>
-          <label>从<input id="boardRangeFrom" type="datetime-local" /></label>
-          <label>至<input id="boardRangeTo" type="datetime-local" /></label>
-          <button id="boardRangeApplyBtn" class="btn" type="button">应用区间</button>
+        <div class="board-toolbar">
+          <div class="board-toolbar-group">
+            <label class="board-compact-label">看板<select id="boardSelect"></select></label>
+            <label class="board-compact-label">时间维度<select id="boardWindow"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option><option value="20160">最近 14 天</option><option value="custom" hidden>自定义区间</option></select></label>
+            <label class="board-compact-label">自动刷新<select id="boardAutoRefresh"><option value="0" selected>关闭</option><option value="10000">10 秒</option><option value="30000">30 秒</option><option value="60000">1 分钟</option><option value="300000">5 分钟</option></select></label>
+            <button id="boardRefreshBtn" class="btn" type="button" title="重新加载当前看板的面板数据">刷新</button>
+            <button id="boardKioskBtn" class="btn" type="button" title="全屏展示当前看板，适合监控大屏">大屏</button>
+          </div>
+          <div class="board-toolbar-group board-toolbar-actions">
+            <button id="boardAddPanelBtn" class="btn primary" type="button">添加面板</button>
+            <button id="boardNewBtn" class="btn" type="button">新建</button>
+            <button id="boardAiBtn" class="btn" type="button">AI 生成</button>
+            <button id="boardRangeToggleBtn" class="btn" type="button" title="设定起止时间区间，替代相对时间维度">自定义区间</button>
+            <button id="boardImportBtn" class="btn" type="button" title="导入看板模板 JSON，生成新看板">导入</button>
+            <button id="boardExportBtn" class="btn" type="button" title="导出当前看板为模板 JSON">导出</button>
+            <button id="boardRenameBtn" class="btn" type="button" title="重命名当前看板">重命名</button>
+            <button id="boardDeleteBtn" class="btn" type="button" title="删除当前看板">删除</button>
+          </div>
+        </div>
+        <div id="boardRangeBar" class="board-toolbar board-range-bar hidden">
+          <label class="board-compact-label">从<input id="boardRangeFrom" type="datetime-local" /></label>
+          <label class="board-compact-label">至<input id="boardRangeTo" type="datetime-local" /></label>
+          <button id="boardRangeApplyBtn" class="btn primary" type="button">应用区间</button>
           <button id="boardRangeClearBtn" class="btn" type="button">清除区间</button>
-          <label>自动刷新<select id="boardAutoRefresh"><option value="0" selected>关闭</option><option value="10000">10 秒</option><option value="30000">30 秒</option><option value="60000">1 分钟</option><option value="300000">5 分钟</option></select></label>
-          <button id="boardAddPanelBtn" class="btn primary" type="button">添加面板</button>
-          <button id="boardRefreshBtn" class="btn" type="button">刷新</button>
-          <button id="boardKioskBtn" class="btn" type="button">大屏</button>
-          <button id="boardNewBtn" class="btn" type="button">新建看板</button>
-          <button id="boardAiBtn" class="btn" type="button">AI 生成</button>
-          <button id="boardRenameBtn" class="btn" type="button">重命名</button>
-          <button id="boardImportBtn" class="btn" type="button">导入模板</button>
-          <button id="boardExportBtn" class="btn" type="button">导出</button>
-          <button id="boardDeleteBtn" class="btn" type="button">删除看板</button>
         </div>
         <input id="boardImportFile" type="file" accept=".json,application/json" class="hidden" />
         <p class="domain-note">拖拽面板卡片可调整排序；全局时间维度即时生效，单个面板可在编辑中单独设定。导出的 JSON 即看板模板，导入后将创建新看板。</p>

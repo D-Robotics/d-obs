@@ -3,6 +3,14 @@ export const OPS_OBSERVABILITY_SIGNALS_STYLE = `
 .signals-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:0 0 12px}
 .signals-toolbar label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
 .signals-toolbar input,.signals-toolbar select{min-width:160px}
+.board-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 8px}
+.board-toolbar-group{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.board-toolbar-group.board-toolbar-actions{padding-left:8px;border-left:1px solid var(--line)}
+.board-compact-label{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+.board-compact-label select,.board-compact-label input{height:30px;font-size:12px;min-width:0}
+.board-toolbar .btn{height:30px;padding:0 11px;font-size:12px}
+.board-range-bar{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+.board-range-bar .board-compact-label input{width:190px}
 .signals-chart-wrap{border:1px solid var(--line);border-radius:8px;background:var(--panel2);padding:12px;overflow:hidden;position:relative}
 .signals-chart-wrap svg{display:block;width:100%;height:auto}
 .signals-legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:11px;color:var(--muted)}
