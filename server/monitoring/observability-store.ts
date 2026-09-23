@@ -440,12 +440,36 @@ export async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
       // 事故对象身份回填：按「规则→对象」映射补齐存量事故的 object_id（幂等，只补空值）
       void (async () => {
         const hostTarget = `host/${os.hostname()}`;
-        for (const [ruleKey, rawTarget] of Object.entries(ALERT_RULE_OBJECT_TARGETS)) {
-          const target = rawTarget === 'host/self' ? hostTarget : rawTarget;
+        const objectTarget = (alertKey: string): string => {
+          if (alertKey.startsWith('t.')) {
+            const parts = alertKey.split('.');
+            const base = parts.slice(2).join('.');
+            const mapped = ALERT_RULE_OBJECT_TARGETS[base];
+            const resolved = mapped === 'host/self' ? hostTarget : mapped;
+            return resolved ? `${resolved}@${parts[1]}` : '';
+          }
+          const mapped = ALERT_RULE_OBJECT_TARGETS[alertKey];
+          return mapped === 'host/self' ? hostTarget : mapped ?? '';
+        };
+        const rows = await p
+          .query(`select alert_key, object_id from public.studio_alert_incidents where object_id is null`)
+          .catch(() => ({ rows: [] as Array<{ alert_key: string }> }));
+        for (const row of rows.rows) {
+          const target = objectTarget(String(row.alert_key ?? ''));
+          if (!target) continue;
           await p
             .query(
               'update public.studio_alert_incidents set object_id = $1 where alert_key = $2 and object_id is null',
-              [target, ruleKey],
+              [target, row.alert_key],
+            )
+            .catch(() => undefined);
+          const objectType = target.split('/')[0] || 'unknown';
+          await p
+            .query(
+              `insert into public.studio_obs_object_registry (owner, object_id, object_type, display_name, labels, signal_kinds)
+               values ('platform', $1, $2, $3, '{}'::jsonb, ARRAY['metrics']::text[])
+               on conflict (owner, object_id) do update set last_seen_at = now()`,
+              [target, objectType, target.split('/').slice(1).join('/') || target],
             )
             .catch(() => undefined);
         }

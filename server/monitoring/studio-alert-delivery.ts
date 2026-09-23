@@ -351,6 +351,14 @@ export async function recordCheckSnapshots(
 }
 
 function incidentObjectId(alertKey: string): string {
+  // 租户命名空间（t.<tenantId>.<check>）：对象归属该租户的同一实体，@tenant 后缀区分
+  if (alertKey.startsWith('t.')) {
+    const parts = alertKey.split('.');
+    const base = parts.slice(2).join('.');
+    const mapped = alertRuleObjectTarget(base);
+    const target = mapped === 'host/self' ? `host/${os.hostname()}` : mapped;
+    return `${target}@${parts[1]}`;
+  }
   const target = alertRuleObjectTarget(alertKey);
   return target === 'host/self' ? `host/${os.hostname()}` : target;
 }
