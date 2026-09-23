@@ -10,7 +10,7 @@ export const OPS_OBSERVABILITY_UNIFIED_STYLE = `
     .situation-hero.critical{border-left-color:var(--red)}
     .situation-hero:after{content:"";position:absolute;right:-36px;top:-58px;width:190px;height:190px;border-radius:50%;background:var(--c90);pointer-events:none}
     .situation-hero .hero-icon{width:44px;height:44px;border-radius:50%}
-    .situation-hero .hero-title{font-size:17px}
+    .situation-hero .hero-title{font-size:19px;font-weight:650}
     .situation-hero .hero-detail{max-width:720px}
     .situation-meta{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap;margin-top:7px}
     .situation-meta span{padding:3px 8px;border-radius:999px;background:var(--c91);color:var(--c92);font-size:11px}
@@ -44,7 +44,7 @@ export const OPS_OBSERVABILITY_UNIFIED_STYLE = `
     .pulse-card.critical{border-top-color:var(--red)}
     .pulse-label{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11px}
     .pulse-label span:last-child{margin-left:auto}
-    .pulse-value{margin:9px 0 3px;color:var(--c102);font-size:23px;font-weight:650;line-height:1.1}
+    .pulse-value{margin:9px 0 3px;color:var(--c102);font-size:24px;font-weight:650;line-height:1.1}
     .pulse-detail{min-height:34px;color:var(--muted);font-size:11px;line-height:1.5}
     .pulse-link{margin-top:8px;color:var(--green);font-size:11px;font-weight:600}
     .pulse-card:focus-visible{outline:2px solid var(--c11);outline-offset:2px}

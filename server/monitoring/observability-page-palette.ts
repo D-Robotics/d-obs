@@ -32,7 +32,7 @@ export const OPS_OBSERVABILITY_PALETTE_LIGHT = `:root{
     --c24: #fdf6f2;
     --c25: #f6f6f4;
     --c26: #2b2e3b;
-    --c27: #ffffff;
+    --c27: #00875a;
     --c28: #faf9f7;
     --c29: #fdf9f6;
     --c30: #fa8c16;
