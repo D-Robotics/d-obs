@@ -622,7 +622,7 @@ export const OPS_OBSERVABILITY_PALETTE_DARK = `html[data-theme="dark"]{
     --c24: #2f3a3a;
     --c25: #1d2027;
     --c26: #a3a8bc;
-    --c27: #779087;
+    --c27: #34d399;
     --c28: #1d2027;
     --c29: #1d2027;
     --c30: #fb9c37;
@@ -1038,7 +1038,7 @@ export const OPS_OBSERVABILITY_PALETTE_DARK = `html[data-theme="dark"]{
     --c440: #b1bfba;
     --c441: #2b3535;
     --c442: #7a3c18;
-    --c443: #779087;
+    --c443: #34d399;
     --c444: rgba(231,131,88,0.12);
     --c445: #3f393b;
     --c446: rgba(0,0,0,0.28);
