@@ -169,8 +169,13 @@ export async function registerPlatformObjects(): Promise<number> {
   const p = (await getOpsObservabilityPool()) as unknown as RegistryPool;
   await ensureRegistrySchema(p);
   const host = text(os.hostname(), 120) || 'production-host';
+  const ipEnv = text(process.env.RDK_NODE_PUBLIC_IP, 64);
+  const ipSelf = Object.values(os.networkInterfaces())
+    .flat()
+    .find((n) => n && !n.internal && n.family === 'IPv4')?.address;
+  const ip = ipEnv || text(ipSelf, 64);
   const objects: Array<{ objectId: string; objectType: string; displayName: string; labels: Record<string, unknown>; kind: string }> = [
-    { objectId: `host/${host}`, objectType: 'host', displayName: host, labels: { role: 'production', signal_source: 'node_exporter' }, kind: 'metrics' },
+    { objectId: `host/${host}`, objectType: 'host', displayName: host, labels: { role: 'production', signal_source: 'node_exporter', ...(ip ? { ip } : {}) }, kind: 'metrics' },
     { objectId: 'service/d-obs', objectType: 'service', displayName: 'd-obs 可观测平台', labels: { signal_source: 'self' }, kind: 'metrics' },
     { objectId: 'service/rdkstudio-web', objectType: 'service', displayName: 'rdkstudio 主站应用', labels: { signal_source: 'synthetic-probe' }, kind: 'metrics' },
     { objectId: 'gateway/model-3100-3101', objectType: 'gateway', displayName: '模型网关 3100/3101', labels: { signal_source: 'target-health' }, kind: 'metrics' },
