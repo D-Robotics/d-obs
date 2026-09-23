@@ -100,11 +100,17 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         <a class="global-tab active" href="./ops-observability#overview" aria-current="page">可观测中心</a>
       </nav>
       <nav class="module-tabs" aria-label="可观测中心模块">
-        <div class="nav-primary">
-          <button class="module-tab" data-view="overview" aria-controls="view-overview" title="判断生产是否影响用户，并查看当前待办">运营总览<span id="overviewCount" class="tab-count" title="进行中事故数" hidden>—</span></button>
-          <button class="module-tab" data-view="operator-metrics" aria-controls="view-operator-metrics" title="查看新增用户、DAU、对话次数和 Agent Run 趋势">用户增长</button>
-          <button class="module-tab" data-view="signals/panels" aria-controls="view-signals" title="搭建与查看自定义看板：多看板、拖拽排序、模板导入导出、大屏模式">看板</button>
-        </div>
+        <!-- 移动端底栏的搬运目标（≤520px 脚本把高频 tab 物理移入）；桌面布局
+             由基础样式隐藏，桌面侧的高频入口在下方"运营"折叠组内。 -->
+        <div class="nav-primary"></div>
+        <details class="nav-group" id="nav-group-primary" data-nav-group="primary" open>
+          <summary class="nav-section-toggle" aria-controls="nav-group-primary-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">运营</span></summary>
+          <div class="nav-group-items" id="nav-group-primary-items">
+            <button class="module-tab" data-view="overview" aria-controls="view-overview" title="判断生产是否影响用户，并查看当前待办">运营总览<span id="overviewCount" class="tab-count" title="进行中事故数" hidden>—</span></button>
+            <button class="module-tab" data-view="operator-metrics" aria-controls="view-operator-metrics" title="查看新增用户、DAU、对话次数和 Agent Run 趋势">用户增长</button>
+            <button class="module-tab" data-view="signals/panels" aria-controls="view-signals" title="搭建与查看自定义看板：多看板、拖拽排序、模板导入导出、大屏模式">看板</button>
+          </div>
+        </details>
         <details class="nav-group" id="nav-group-core" data-nav-group="core">
           <summary class="nav-section-toggle" aria-controls="nav-group-core-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">告警与事故</span><span class="nav-group-alert" id="navCoreAlert" hidden></span></summary>
           <div class="nav-group-items" id="nav-group-core-items">
