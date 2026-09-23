@@ -309,6 +309,26 @@ export function createOpsObservabilityRouter(): Router {
     res.status(204).end();
   });
 
+  // Browser handoff for the Grafana gate. The workbench authenticates API
+  // calls with headers (localStorage token / SSO), but a top-level navigation
+  // to /dobs/grafana/ cannot carry headers. An authenticated operator may
+  // exchange a session for a short-lived HttpOnly gate cookie, which nginx
+  // maps back to the admin-token header inside the auth subrequest. The
+  // cookie only unlocks the Grafana surface (Path=/dobs, SameSite=Lax).
+  router.get('/api/ops/grafana/session', requireObservabilityAccessTenantAware, (req, res) => {
+    const token = String(process.env.RDK_CREDITS_ADMIN_TOKEN ?? '').trim();
+    if (!token) {
+      res.status(503).json({ ok: false, error: 'central_store_disabled' });
+      return;
+    }
+    res.setHeader(
+      'set-cookie',
+      `dobs_grafana_gate=${encodeURIComponent(token)}; Path=/dobs; HttpOnly; Secure; SameSite=Lax; Max-Age=43200`,
+    );
+    res.status(204).end();
+    void req;
+  });
+
   registerSignalsRoutes(router);
 
 

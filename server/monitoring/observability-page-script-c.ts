@@ -43,6 +43,7 @@ export const OPS_OBSERVABILITY_SCRIPT_C = `      async function runChecks(){cons
         projectTelemetryState('unauthorized','账号未加入租户');
       }
       if(typeof initNavGroups==='function')initNavGroups();
+      if(typeof initGrafanaLink==='function')initGrafanaLink();
       document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>setView(button.dataset.view)));
       document.querySelectorAll('[data-module-tab]').forEach(tab=>tab.addEventListener('click',()=>setView(tab.dataset.moduleTab)));
       $('saveSettings').addEventListener('click',saveSettings);
