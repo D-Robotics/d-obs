@@ -1,6 +1,8 @@
 /** 观测查询 / 边缘设备视图样式（配色复用全局 palette token）。 */
 export const OPS_OBSERVABILITY_SIGNALS_STYLE = `
 .signals-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:0 0 12px}
+.nav-primary .module-tab{background:transparent}
+.nav-primary .module-tab.active{background:var(--c422)}
 .signals-toolbar label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
 .signals-toolbar input,.signals-toolbar select{min-width:160px}
 .board-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 8px}

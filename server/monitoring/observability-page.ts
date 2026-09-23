@@ -109,7 +109,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <summary class="nav-section-toggle" aria-controls="nav-group-core-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">告警与事故</span><span class="nav-group-alert" id="navCoreAlert" hidden></span></summary>
           <div class="nav-group-items" id="nav-group-core-items">
             <button class="module-tab" data-view="investigate" aria-controls="view-investigate" title="从异常、证据和影响范围定位事故">事故调查<span id="incidentCount" class="tab-count" title="进行中事故数">—</span></button>
-            <button class="module-tab" data-view="alerts" aria-controls="view-alerts" title="维护告警规则、阈值和通知路由">告警策略<span id="ruleCount" class="tab-count">—</span></button>
+            <button class="module-tab" data-view="alerts" aria-controls="view-alerts" title="维护告警规则、阈值和通知路由">告警策略<span id="ruleCount" class="tab-count" title="触发中的策略数" hidden>—</span></button>
             <button class="module-tab" data-view="traces" aria-controls="view-traces" title="从事故证据下钻单次 Agent 与会话运行">链路追踪</button>
           </div>
         </details>
