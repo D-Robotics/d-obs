@@ -27,6 +27,7 @@ import { renderBusinessMetricsExposition } from './business-metrics-exposition.j
 import { resolveIngestToken } from './ingest-token-store.js';
 import { decodeLogsProtobuf, decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
 import { renderDevicePrometheusMetrics } from '../monitoring/device-prometheus.js';
+import { registerObjectsFromOtlp } from '../monitoring/observability-object-registry.js';
 
 export type Principal = { owner: string; keyId: string };
 type JsonObject = Record<string, unknown>;
@@ -314,6 +315,7 @@ export type OtlpIngestResult = {
 };
 
 export async function ingestTracePayload(body: JsonObject, identity: Principal): Promise<OtlpIngestResult> {
+  void registerObjectsFromOtlp(body, identity.owner, 'traces').catch(error => console.warn('[object-registry] register failed:', error && error.message));
   const rows = resourceSpans(body);
   if (!rows.length) {
     recordOtlpRequestError('traces');
@@ -475,6 +477,7 @@ function metricPoints(body: JsonObject): Array<{ name: string; value: number; ti
 }
 
 export async function ingestMetricPayload(body: JsonObject, identity: Principal): Promise<OtlpIngestResult> {
+  void registerObjectsFromOtlp(body, identity.owner, 'metrics').catch(error => console.warn('[object-registry] register failed:', error && error.message));
   const points = metricPoints(body);
   if (!points.length) {
     recordOtlpRequestError('metrics');
@@ -570,6 +573,7 @@ function normalizeOtlpLog(raw: unknown, resource: Record<string, unknown>): Norm
 }
 
 export async function ingestLogPayload(body: JsonObject, identity: Principal): Promise<OtlpIngestResult & { rejectedRecords: number }> {
+  void registerObjectsFromOtlp(body, identity.owner, 'logs').catch(error => console.warn('[object-registry] register failed:', error && error.message));
   const rows = resourceLogs(body);
   if (!rows.length) {
     recordOtlpRequestError('logs');

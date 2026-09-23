@@ -22,6 +22,7 @@ import {
   recordOpsNotificationTest,
   updateOpsIncident,
 } from './observability-store.js';
+import { listRegisteredObjects } from './observability-object-registry.js';
 import { sanitizeOpsSummary } from './ops-event-store.js';
 import { renderStatusPage } from './ops-status-page.js';
 import {
@@ -668,6 +669,19 @@ export function createOpsObservabilityRouter(): Router {
         res.json({ ok: true, ...result });
       } catch (error) {
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'incident_list_unavailable') });
+      }
+    },
+  );
+
+  router.get(
+    '/api/ops/observability/object-registry',
+    requireObservabilityAccess,
+    async (_req: Request, res: Response) => {
+      try {
+        const objects = await listRegisteredObjects();
+        res.json({ ok: true, objects });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'object_registry_unavailable') });
       }
     },
   );

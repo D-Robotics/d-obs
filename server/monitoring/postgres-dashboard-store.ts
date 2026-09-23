@@ -492,6 +492,7 @@ export const DEFAULT_POSTGRES_DASHBOARD_TABLES: readonly string[] = [
   'studio_ops_events_tenant',
   'studio_public_observability_feedback',
   'studio_public_observability_scores',
+  'studio_obs_object_registry',
   'studio_remediation_runs',
   'studio_sli_samples',
   'studio_telemetry_audit',
