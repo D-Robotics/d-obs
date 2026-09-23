@@ -1,26 +1,29 @@
 export const OPS_OBSERVABILITY_SCRIPT_C = `      async function runChecks(){const button=$('runChecks');button.disabled=true;button.textContent='评估中…';try{await request('/api/ops/observability/run-checks',{method:'POST',body:'{}'});toast('评估任务已触发，正在刷新结果');await new Promise(resolve=>setTimeout(resolve,1200));await loadAll(true);toast('即时评估已完成，结果已刷新')}catch(error){toast('运行评估失败：'+friendlyError(error.message),false)}finally{button.disabled=false;button.textContent='立即评估'}}
       function runEvolution(){setView('overview');setTimeout(()=>{const node=$('actionLoopMount');if(node)node.scrollIntoView({behavior:'smooth',block:'start'});toast('候选进化直达触发已关闭；请在证据化行动队列中查看或提交动作。',false)},0)}
       function runRemediation(playbookId,button){const rem=state.remediation;const pb=rem&&rem.playbooks.find(item=>item.id===playbookId);const title=pb?pb.title:playbookId;if(button){button.disabled=true;button.setAttribute('aria-disabled','true')}toast('自愈「'+title+'」必须先绑定事件证据并提交行动提案，由另一位管理员审批后才能执行；本页不会直接修改生产。',false);if(button){button.disabled=false;button.removeAttribute('aria-disabled')}}
-      // 顶栏账号区：用户名 chip + 租户切换 select + 退出按钮（SSO 会话）。
+      // 账号状态常驻侧边栏左下角（Studio 式）：身份 chip + 租户切换 + 退出。
+      // 无 SSO 身份时降级展示令牌模式（运营令牌直连 / 租户只读）。
       function renderObsAccountBar(){
-        const me=obsAuthState.me;if(!me||!me.user)return;
+        const me=obsAuthState.me;
+        const label=me&&me.user?(me.user.name||me.user.email||me.user.id||'账号')+(me.admin?' · 管理员':''):(opsTenantMode?'租户只读':(opsAdminToken?'运营令牌直连':''));
+        if(!label)return;
         let bar=document.getElementById('obsAccountBar');
-        if(!bar){bar=make('div','obs-account-bar');bar.id='obsAccountBar';const header=document.querySelector('header');if(!header)return;header.appendChild(bar)}
+        if(!bar){bar=make('div','side-nav-footer');bar.id='obsAccountBar';const side=document.querySelector('.side-nav');if(!side)return;side.appendChild(bar)}
         bar.replaceChildren();
-        const label=me.user.name||me.user.email||me.user.id||'账号';
-        const chip=make('span','obs-user-chip',label+(me.admin?' · 管理员':''));
+        const chip=make('span','obs-user-chip',label);
         bar.appendChild(chip);
-        if(me.tenants&&me.tenants.length){
+        if(me&&me.user&&me.tenants&&me.tenants.length){
           const select=make('select','obs-tenant-select');select.id='obsTenantSelect';select.setAttribute('aria-label','切换租户');
           me.tenants.forEach(item=>{const option=make('option','',item.displayName||item.tenantId+(item.role==='owner'?'（owner）':''));option.value=item.tenantId;option.selected=item.tenantId===opsSsoActiveTenant;select.appendChild(option)});
           if(me.admin){const option=make('option','','平台全局视图');option.value='';option.selected=!opsSsoActiveTenant;select.appendChild(option)}
           select.addEventListener('change',()=>{const value=select.value;try{if(value)sessionStorage.setItem('d_obs_active_tenant',value);else sessionStorage.removeItem('d_obs_active_tenant')}catch{}location.reload()});
           bar.appendChild(select);
         }
-        const logout=make('button','btn obs-logout-btn','退出');logout.type='button';logout.title='退出账号登录';logout.addEventListener('click',()=>obsLogout());
+        const logout=make('button','btn obs-logout-btn',opsAdminToken?'退出令牌':'退出');logout.type='button';logout.title='退出账号登录';logout.addEventListener('click',()=>obsLogout());
         bar.appendChild(logout);
       }
       function renderObsNoTenantScreen(user){
+        document.body.classList.add('auth-gate');
         document.querySelectorAll('.view').forEach(node=>node.classList.add('hidden'));
         const box=make('section','panel access');box.dataset.accessScreen='true';
         add(box,'h2','','账号尚未加入任何租户');
@@ -34,7 +37,9 @@ export const OPS_OBSERVABILITY_SCRIPT_C = `      async function runChecks(){cons
         const actions=make('div','form-actions');
         const logout=add(actions,'button','btn','退出登录');logout.type='button';logout.addEventListener('click',()=>obsLogout());
         box.appendChild(actions);
-        const main=document.querySelector('main');if(main)main.appendChild(box);
+        let gate=document.getElementById('authGate');if(!gate){gate=make('div');gate.id='authGate'}
+        gate.replaceChildren();const brand=make('div','auth-gate-brand');const mark=add(brand,'div','brand-mark','d');const brandCopy=make('div','auth-gate-brand-copy');add(brandCopy,'strong','','可观测中心');add(brandCopy,'small','','D-OBS · Reliability Operations');brand.appendChild(brandCopy);gate.appendChild(brand);gate.appendChild(box);
+        document.body.appendChild(gate);
         projectTelemetryState('unauthorized','账号未加入租户');
       }
       if(typeof initNavGroups==='function')initNavGroups();
@@ -60,7 +65,7 @@ export const OPS_OBSERVABILITY_SCRIPT_C = `      async function runChecks(){cons
           // 未登录：本地会话可能是真过期（清掉），也可能是网络抖动（obsLoadMe 返回
           // null 时不要误清，避免把用户踢回登录屏）。
           if(sessionStorage.getItem('d_obs_sso_session')&&!me){loadAll();return}
-          if(opsAdminToken||opsTenantMode){loadAll();return}
+          if(opsAdminToken||opsTenantMode){renderObsAccountBar();loadAll();return}
           const enabled=await obsAccessEnabled();
           if(enabled===true){loadAll();return}
           renderAccess();return

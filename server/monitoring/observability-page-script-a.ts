@@ -112,7 +112,15 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
       function renderAccess(){ // admin-token 直连模式下 action/证据域仍要求 SSO 账号身份；
       // 租户 token 模式是只读降级，两种情况都不该把已渲染的看板整体盖住。
       if(opsAdminToken||opsTenantMode){projectTelemetryState('unauthorized');return}
-      projectTelemetryState('unauthorized');if(state.accessRendered)return;state.accessRendered=true;const box=make('section','panel access');box.dataset.accessScreen='true';add(box,'h2','','需要运营账号登录');add(box,'p','','本页数据受运营账号权限保护。使用主站账号登录（加入租户的组员与平台管理员均可），或使用运营令牌入口。');
+      projectTelemetryState('unauthorized');
+      // Studio 式登录门：未登录不进入工作台主体——隐藏壳层，全屏只呈现登录页。
+      document.body.classList.add('auth-gate');
+      if(state.accessRendered)return;state.accessRendered=true;
+      let gate=document.getElementById('authGate');
+      if(!gate){gate=make('div');gate.id='authGate';document.body.appendChild(gate)}
+      gate.replaceChildren();
+      const brand=make('div','auth-gate-brand');const mark=add(brand,'div','brand-mark','d');const brandCopy=make('div','auth-gate-brand-copy');add(brandCopy,'strong','','可观测中心');add(brandCopy,'small','','D-OBS · Reliability Operations');brand.appendChild(brandCopy);gate.appendChild(brand);
+      const box=make('section','panel access');box.dataset.accessScreen='true';add(box,'h2','','需要运营账号登录');add(box,'p','','本页数据受运营账号权限保护。使用主站账号登录（加入租户的组员与平台管理员均可），或使用运营令牌入口。');
       // 主站账号登录：中继可用时为主表单（组员/管理员共用）；成功后把主站
       // 会话存 sessionStorage 并整页重载，让初始化流程带会话重跑。
       const relayReady=Boolean(obsAuthState.me&&obsAuthState.me.relayConfigured);
@@ -148,7 +156,7 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
         }catch{note.textContent='网络异常，请稍后重试';note.className='feedback bad'}
         submit.disabled=false;submit.textContent='登录'});
       box.appendChild(form);
-      document.querySelectorAll('.view').forEach(node=>node.classList.add('hidden'));const main=document.querySelector('main');if(main)main.appendChild(box);const fresh=$('fresh');if(fresh)fresh.textContent='真实数据和配置受运营账号权限保护';setTimeout(()=>{try{(relayReady?userField:input).focus()}catch{}},50)}
+      gate.appendChild(box);const fresh=$('fresh');if(fresh)fresh.textContent='真实数据和配置受运营账号权限保护';setTimeout(()=>{try{(relayReady?userField:input).focus()}catch{}},50)}
       // 管理员选中租户时用 ?tenant= 把概览切到该租户视角：服务端只对管理员生效
       // 且会校验租户存在（组员模式走 x-rdk-obs-tenant 头，不经过这里）。
       function adminTenantQuery(){try{const me=obsAuthState.me;const tenant=obsActiveTenant();return me&&me.admin&&tenant?'&tenant='+encodeURIComponent(tenant):''}catch{return ''}}
