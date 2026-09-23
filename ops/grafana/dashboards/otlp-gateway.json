@@ -1,0 +1,73 @@
+{
+  "title": "接入管道 · OTLP 网关",
+  "uid": "rdk-otlp-gateway",
+  "tags": ["d-obs", "otlp", "rdk"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "OTLP 请求速率（按接收端口）",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (server.port) (rate(http.server.request.duration_count[5m]))", "legendFormat": "端口 {{server.port}}" }
+      ]
+    },
+    {
+      "id": 2, "type": "gauge", "title": "5xx 错误率",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 5 } ] } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "100 * sum(rate(http.server.request.duration_count{http.response.status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(http.server.request.duration_count[5m])), 1e-9)", "legendFormat": "5xx" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "请求时延 p50 / p95",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(http.server.request.duration_bucket[5m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(http.server.request.duration_bucket[5m])))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "信号接入量（每秒）",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(rdk_ai_otlp_metric_points_received_total[5m]))", "legendFormat": "指标点/s" },
+        { "refId": "B", "expr": "sum(rate(rdk_ai_otlp_spans_accepted_total[5m]))", "legendFormat": "Span/s" },
+        { "refId": "C", "expr": "sum(rate(rdk_ai_otlp_log_records_accepted_total[5m]))", "legendFormat": "日志条/s" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "接入拒绝与请求错误（每秒）",
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(rdk_ai_otlp_metric_points_dropped_total[5m]))", "legendFormat": "指标点丢弃" },
+        { "refId": "B", "expr": "sum(rate(rdk_ai_otlp_spans_rejected_total[5m]))", "legendFormat": "Span 拒绝" },
+        { "refId": "C", "expr": "sum(rate(rdk_ai_otlp_logs_request_errors_total[5m]))", "legendFormat": "日志请求错误" },
+        { "refId": "D", "expr": "sum(rate(rdk_ai_otlp_traces_request_errors_total[5m]))", "legendFormat": "Trace 请求错误" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "入库队列深度",
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "max(rdk_observability_metric_queue_depth)", "legendFormat": "队列深度" },
+        { "refId": "B", "expr": "sum(increase(rdk_observability_metric_queue_dropped_total[5m]))", "legendFormat": "5m 丢弃" }
+      ]
+    }
+  ]
+}

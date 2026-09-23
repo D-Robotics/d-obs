@@ -1,0 +1,76 @@
+{
+  "title": "服务器资源 · 宿主机",
+  "uid": "rdk-infra-host",
+  "tags": ["d-obs", "infra", "node"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "gauge", "title": "CPU 使用率",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 90 } ] } }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))", "legendFormat": "{{instance}}" } ]
+    },
+    {
+      "id": 2, "type": "gauge", "title": "内存使用率",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 } ] } }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "{{instance}}" } ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "系统负载 load1 / load5",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "node_load1", "legendFormat": "load1 {{instance}}" },
+        { "refId": "B", "expr": "node_load5", "legendFormat": "load5 {{instance}}" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "磁盘使用率（非临时文件系统）",
+      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 90 } ] } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\"})", "legendFormat": "{{instance}} {{mountpoint}}" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "磁盘读写",
+      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (device) (rate(node_disk_read_bytes_total[5m]))", "legendFormat": "读 {{device}}" },
+        { "refId": "B", "expr": "sum by (device) (rate(node_disk_written_bytes_total[5m]))", "legendFormat": "写 {{device}}" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "网络流量",
+      "gridPos": { "x": 0, "y": 15, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (device) (rate(node_network_receive_bytes_total{device!=\"lo\"}[5m]))", "legendFormat": "收 {{device}}" },
+        { "refId": "B", "expr": "sum by (device) (rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m]))", "legendFormat": "发 {{device}}" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "内存明细",
+      "gridPos": { "x": 12, "y": 15, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "node_memory_MemAvailable_bytes", "legendFormat": "可用 {{instance}}" },
+        { "refId": "B", "expr": "node_memory_MemTotal_bytes", "legendFormat": "总量 {{instance}}" },
+        { "refId": "C", "expr": "node_memory_Cached_bytes + node_memory_Buffers_bytes", "legendFormat": "缓存 {{instance}}" }
+      ]
+    }
+  ]
+}

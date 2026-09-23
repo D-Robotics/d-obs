@@ -1,0 +1,103 @@
+{
+  "title": "d-obs 自监控",
+  "uid": "d-obs-self",
+  "tags": [
+    "d-obs"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "OTLP span 接收/接收/采样剔除",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(rdk_ai_otlp_spans_received_total[5m]))",
+          "legendFormat": "received"
+        },
+        {
+          "expr": "sum(increase(rdk_ai_otlp_spans_accepted_total[5m]))",
+          "legendFormat": "accepted"
+        },
+        {
+          "expr": "sum(increase(rdk_ai_otlp_spans_sampled_out_total[5m]))",
+          "legendFormat": "sampled out"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 8
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "指标队列丢弃（5m 增量）",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(rdk_observability_metric_queue_dropped_total[5m]))",
+          "legendFormat": "dropped"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "业务 OTLP 指标（otlp_*，接入方上报后自动出现）",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "{__name__=~\"otlp_.*\"}",
+          "legendFormat": "{{__name__}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 8
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

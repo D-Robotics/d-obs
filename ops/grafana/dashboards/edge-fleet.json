@@ -1,0 +1,68 @@
+{
+  "title": "边缘设备 · RDK 板卡",
+  "uid": "rdk-edge-fleet",
+  "tags": ["d-obs", "edge", "rdk"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "在线设备",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "max(rdk_edge_devices_online_total)", "legendFormat": "在线" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "登记设备",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "max(rdk_edge_devices_total)", "legendFormat": "总数" } ]
+    },
+    {
+      "id": 3, "type": "gauge", "title": "在线率",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 50 }, { "color": "green", "value": 90 } ] } }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "100 * max(rdk_edge_devices_online_total) / clamp_min(max(rdk_edge_devices_total), 1)", "legendFormat": "在线率" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "最旧采样年龄",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 300 }, { "color": "red", "value": 900 } ] } }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "max(rdk_edge_device_sample_age_seconds)", "legendFormat": "最旧采样" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "设备在线状态（1=在线）",
+      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "rdk_edge_device_online", "legendFormat": "{{instance}}" } ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "采样年龄（秒）",
+      "gridPos": { "x": 12, "y": 5, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "rdk_edge_device_sample_age_seconds", "legendFormat": "{{instance}}" } ]
+    },
+    {
+      "id": 7, "type": "stat", "title": "上游部署拨测",
+      "gridPos": { "x": 0, "y": 13, "w": 12, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "mappings": [ { "type": "value", "options": { "1": { "text": "正常", "color": "green" }, "0": { "text": "异常", "color": "red" } } } ] }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "max(rdk_upstream_deploy_smoke)", "legendFormat": "部署拨测" } ]
+    },
+    {
+      "id": 8, "type": "stat", "title": "观测链路自检",
+      "gridPos": { "x": 12, "y": 13, "w": 12, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "mappings": [ { "type": "value", "options": { "1": { "text": "通过", "color": "green" }, "0": { "text": "失败", "color": "red" } } } ] }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "max(rdk_upstream_rdk_obs_selftest)", "legendFormat": "自检" } ]
+    }
+  ]
+}

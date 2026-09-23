@@ -303,6 +303,12 @@ export function createOpsObservabilityRouter(): Router {
     res.status(204).end();
   });
 
+  // Same gate for the Grafana UI: the container runs as an anonymous Viewer
+  // for usability, so this subrequest is the only access boundary.
+  router.get('/api/ops/grafana/auth', requireObservabilityAccess, (_req, res) => {
+    res.status(204).end();
+  });
+
   registerSignalsRoutes(router);
 
 
