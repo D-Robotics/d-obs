@@ -51,6 +51,56 @@ export const ALERT_MESSAGE_TEMPLATE_VARIABLES = [
   'dashboardUrl',
 ] as const;
 
+/**
+ * 规则 → 告警对象绑定（借鉴参考平台的 target 模型）：告警对象是一等实体
+ * （studio_obs_object_registry 中的 object_id），每条策略显式归属一个对象，
+ * 事故据此携带 object_id——对象从此贯穿「策略 → 触发 → 告警中心 → 处置」。
+ * 特殊值 host/self 由 worker 解析为本机主机名（host/<hostname>）。
+ */
+export const ALERT_RULE_OBJECT_TARGETS: Record<string, string> = {
+  // 服务器（本机）
+  'disk-space': 'host/self',
+  'node-memory-pressure': 'host/self',
+  'node-cpu-load': 'host/self',
+  'internal-health': 'host/self',
+  'service-crash-signature': 'host/self',
+  'process-unhandled-error': 'host/self',
+  // 网关
+  'nginx-5xx-log': 'gateway/nginx',
+  'agent-model-target-degraded': 'gateway/model-3100-3101',
+  'external-dns': 'gateway/external-entry',
+  'external-tls': 'gateway/external-entry',
+  'external-health': 'gateway/external-entry',
+  'external-entry-asset': 'gateway/external-entry',
+  // 数据库
+  'postgres-error-log': 'database/postgresql',
+  'central-database': 'database/postgresql',
+  // 主站应用（rdkstudio）
+  'api-5xx-spike': 'service/rdkstudio-web',
+  'sso-infrastructure-failure': 'service/rdkstudio-web',
+  'ai-run-degraded-rate': 'service/rdkstudio-web',
+  'ai-auth-or-quota': 'service/rdkstudio-web',
+  'llm-token-budget': 'service/rdkstudio-web',
+  'tool-failure-repeat': 'service/rdkstudio-web',
+  'slo-error-budget-burn': 'service/rdkstudio-web',
+  'synthetic-login': 'service/rdkstudio-web',
+  'synthetic-ai-chat': 'service/rdkstudio-web',
+  'synthetic-tool-call': 'service/rdkstudio-web',
+  // d-obs 平台自身
+  'evolution-worker-health': 'service/d-obs',
+  'otlp-trace-freshness': 'service/d-obs',
+  'metric-anomaly': 'service/d-obs',
+  'public-health': 'service/d-obs',
+  'north-star-skill-hit-rate': 'service/d-obs',
+  'north-star-ai-human-consistency': 'service/d-obs',
+  'north-star-retention-d1': 'service/d-obs',
+  'north-star-first-success-rate': 'service/d-obs',
+};
+
+export function alertRuleObjectTarget(key: string): string {
+  return ALERT_RULE_OBJECT_TARGETS[key] ?? `service/${key}`;
+}
+
 export const ALERT_RULE_DEFINITIONS = [
   {
     key: 'ai-run-degraded-rate',

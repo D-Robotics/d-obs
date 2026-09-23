@@ -657,11 +657,13 @@ export function createOpsObservabilityRouter(): Router {
         const severity = query.severity === 'critical' || query.severity === 'warning'
           ? (query.severity as 'critical' | 'warning')
           : undefined;
+        const target = queryText(query, 'target', 200) || undefined;
         const result = await listOpsIncidents({
           scope,
           actor: scope === 'mine' ? resolveOpsActor(req) : undefined,
           state,
           severity,
+          target,
           days: queryInteger(query, 'days', 30, 1, 90),
           limit: queryInteger(query, 'limit', 50, 1, 200),
           offset: queryInteger(query, 'offset', 0, 0, 100000),

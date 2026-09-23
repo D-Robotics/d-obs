@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { sendWebhookPayload } from '../analytics-cloud-forward.js';
 import {
   ALERT_CHANNEL_LABELS,
@@ -10,6 +11,7 @@ import {
 import {
   ALERT_MESSAGE_TEMPLATE_VARIABLES,
   ALERT_RULE_DEFINITIONS,
+  alertRuleObjectTarget,
   type AlertConfig,
 } from './alert-config.js';
 import { remediationDeepLink, remediationPlaybooksForRule } from './alert-remediation.js';
@@ -348,6 +350,11 @@ export async function recordCheckSnapshots(
   );
 }
 
+function incidentObjectId(alertKey: string): string {
+  const target = alertRuleObjectTarget(alertKey);
+  return target === 'host/self' ? `host/${os.hostname()}` : target;
+}
+
 export async function recordIncidentSnapshots(
   p: Pool,
   observations: AlertObservation[],
@@ -359,8 +366,8 @@ export async function recordIncidentSnapshots(
     if (!keyState?.active) continue;
     await p.query(
       `insert into public.studio_alert_incidents
-         (alert_key, title, severity, status, summary, first_seen_at, last_seen_at, occurrence_count)
-       values ($1, $2, $3, 'open', $4, $5, $6, 1)
+         (alert_key, object_id, title, severity, status, summary, first_seen_at, last_seen_at, occurrence_count)
+       values ($1, $2, $3, $4, 'open', $5, $6, $7, 1)
        on conflict (alert_key) do update
          set title = excluded.title,
              severity = excluded.severity,
@@ -370,6 +377,7 @@ export async function recordIncidentSnapshots(
                            then 'open' else public.studio_alert_incidents.status end,
              summary = excluded.summary,
              last_seen_at = excluded.last_seen_at,
+             object_id = coalesce(public.studio_alert_incidents.object_id, excluded.object_id),
              occurrence_count = public.studio_alert_incidents.occurrence_count + 1,
              silence_until = case when public.studio_alert_incidents.status = 'silenced'
                                       and coalesce(public.studio_alert_incidents.silence_until, now()) <= now()
@@ -382,6 +390,7 @@ export async function recordIncidentSnapshots(
              resolved_at = case when public.studio_alert_incidents.status = 'resolved' then null else public.studio_alert_incidents.resolved_at end`,
       [
         observation.key,
+        incidentObjectId(observation.key),
         observation.title,
         observation.severity,
         sanitizeOpsSummary(observation.summary, 800),
@@ -481,8 +490,8 @@ export async function recordIncident(
   }
   await p.query(
     `insert into public.studio_alert_incidents
-       (alert_key, title, severity, status, summary, first_seen_at, last_seen_at, last_notified_at, occurrence_count)
-     values ($1, $2, $3, 'open', $4, $5, $5, case when $6 then $5::timestamptz else null end, 1)
+       (alert_key, object_id, title, severity, status, summary, first_seen_at, last_seen_at, last_notified_at, occurrence_count)
+     values ($1, $7, $2, $3, 'open', $4, $5, $5, case when $6 then $5::timestamptz else null end, 1)
      on conflict (alert_key) do update
        set title = excluded.title,
            severity = excluded.severity,
@@ -510,6 +519,7 @@ export async function recordIncident(
       transition.summary,
       transition.at,
       delivered,
+      incidentObjectId(transition.key),
     ],
   );
 }

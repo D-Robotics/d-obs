@@ -11,7 +11,8 @@ import {
   sanitizeOpsSummary,
 } from './ops-event-store.js';
 import { validTenantId } from './tenant-store.js';
-import { loadAlertConfig } from './alert-config.js';
+import { ALERT_RULE_OBJECT_TARGETS, loadAlertConfig } from './alert-config.js';
+import os from 'node:os';
 import { ackTimeoutMinutes, MAX_ESCALATIONS_PER_INCIDENT } from './alert-escalation.js';
 import { CLIENT_ERROR_NON_ACTIONABLE_API_CODES } from '../../shared/client-error-telemetry.js';
 import type {
@@ -293,6 +294,8 @@ export interface OpsObservabilityOverview {
   }>;
 }
 
+let incidentObjectBackfillDone = false;
+
 type OpsIncidentAction = 'acknowledge' | 'assign' | 'silence' | 'reopen' | 'close';
 
 function incidentKey(value: string): string {
@@ -369,6 +372,7 @@ export async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
     `alter table public.studio_alert_incidents add column if not exists acknowledged_at timestamptz null`,
     `alter table public.studio_alert_incidents add column if not exists acknowledged_by text null`,
     `alter table public.studio_alert_incidents add column if not exists assignee text null`,
+    `alter table public.studio_alert_incidents add column if not exists object_id text null`,
     `alter table public.studio_alert_incidents add column if not exists resolution_note text null`,
     `alter table public.studio_alert_incidents add column if not exists silence_until timestamptz null`,
     `alter table public.studio_alert_incidents add column if not exists silence_reason text null`,
@@ -433,6 +437,19 @@ export async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
       ]) {
         await p.query(statement);
       }
+      // 事故对象身份回填：按「规则→对象」映射补齐存量事故的 object_id（幂等，只补空值）
+      void (async () => {
+        const hostTarget = `host/${os.hostname()}`;
+        for (const [ruleKey, rawTarget] of Object.entries(ALERT_RULE_OBJECT_TARGETS)) {
+          const target = rawTarget === 'host/self' ? hostTarget : rawTarget;
+          await p
+            .query(
+              'update public.studio_alert_incidents set object_id = $1 where alert_key = $2 and object_id is null',
+              [target, ruleKey],
+            )
+            .catch(() => undefined);
+        }
+      })().catch(() => undefined);
     })().catch((error) => {
       incidentSchemaReady = null;
       throw error;
@@ -599,6 +616,7 @@ function mapIncidentRow(row: Record<string, unknown>) {
     occurrences: Number(row.occurrence_count ?? 1),
     acknowledgedAt: iso(row.acknowledged_at),
     acknowledgedBy: row.acknowledged_by ? text(row.acknowledged_by, 160) : null,
+    objectId: row.object_id ? text(row.object_id, 200) : null,
     assignee: row.assignee ? text(row.assignee, 160) : null,
     resolutionNote: row.resolution_note ? text(row.resolution_note, 500) : null,
     silenceUntil: iso(row.silence_until),
@@ -612,6 +630,7 @@ export type OpsIncidentListQuery = {
   actor?: string;
   state?: 'active' | 'closed' | 'all';
   severity?: 'critical' | 'warning';
+  target?: string;
   days?: number;
   limit?: number;
   offset?: number;
@@ -633,6 +652,9 @@ export async function listOpsIncidents(query: OpsIncidentListQuery = {}): Promis
   if (query.severity === 'critical' || query.severity === 'warning') {
     conditions.push(`severity = ${push(query.severity)}`);
   }
+  if (query.target) {
+    conditions.push(`object_id = ${push(query.target)}`);
+  }
   if (query.state === 'active') conditions.push(`status in ('open','acknowledged','silenced')`);
   else if (query.state === 'closed') conditions.push(`status = 'resolved'`);
   const days = Math.max(1, Math.min(90, Math.floor(Number(query.days) || 30)));
@@ -647,7 +669,7 @@ export async function listOpsIncidents(query: OpsIncidentListQuery = {}): Promis
   const [rowsResult, countResult] = await Promise.all([
     p.query(
       `select alert_key, title, severity, status, summary, first_seen_at, last_seen_at,
-              resolved_at, occurrence_count, acknowledged_at, acknowledged_by, assignee,
+              resolved_at, occurrence_count, acknowledged_at, acknowledged_by, assignee, object_id,
               resolution_note, silence_until, silence_reason, last_notified_at
        from public.studio_alert_incidents
        ${where}
@@ -781,7 +803,7 @@ export async function getOpsObservabilityOverview(
     ),
     p.query(
       `select alert_key, title, severity, status, summary, first_seen_at, last_seen_at,
-              resolved_at, occurrence_count, acknowledged_at, acknowledged_by, assignee,
+              resolved_at, occurrence_count, acknowledged_at, acknowledged_by, assignee, object_id,
               silence_until, silence_reason, escalation_count, last_escalated_at, last_notified_at
        from public.studio_alert_incidents
        ${tenantScope ? 'where (last_seen_at >= now() - make_interval(hours => $1::int) or status = \'open\') and coalesce(tenant_id, $3::text) = $2::text' : 'where last_seen_at >= now() - make_interval(hours => $1::int) or status = \'open\''}
@@ -1303,6 +1325,7 @@ ${OBSERVABILITY_SCOPED_RUN_JOIN_SQL}
       occurrences: number(row.occurrence_count),
       acknowledgedAt: iso(row.acknowledged_at),
       acknowledgedBy: row.acknowledged_by ? text(row.acknowledged_by, 160) : null,
+    objectId: row.object_id ? text(row.object_id, 200) : null,
       assignee: row.assignee ? text(row.assignee, 160) : null,
       silenceUntil: iso(row.silence_until),
       silenceReason: row.silence_reason ? text(row.silence_reason, 400) : null,
