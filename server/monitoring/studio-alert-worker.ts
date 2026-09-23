@@ -887,7 +887,7 @@ async function collectNodeLoadObservation(config: AlertConfig): Promise<AlertObs
   const key = 'node-cpu-load' as const;
   if (!config.rules[key].enabled) return disabledObservation(config, key);
   const percentRaw = await promInstantQuery(
-    '100 * node_load1 / count(count(node_cpu_seconds_total{mode="idle"}) by (cpu))',
+    '100 * node_load1 / scalar(count(node_cpu_seconds_total{mode="idle"}))',
   );
   if (percentRaw == null) {
     return ruleObservation(config, {
