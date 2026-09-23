@@ -299,6 +299,16 @@ export interface AlertRuleConfig {
   openAfter: number;
   resolveAfter: number;
   notificationChannel: AlertNotificationChannel;
+  /**
+   * 审计元数据，只由服务端在参数真实变更时盖章（提交方携带的同名字段一律剥除）。
+   * `createdBy/createdAt` 记首次记录在案的写入者；字段上线前已写入配置文件的规则
+   * 无法回溯归属，保持缺省，由展示层按「存量」说明。内置默认值里的规则未落盘，
+   * 展示层按「内置」说明。
+   */
+  createdBy?: string;
+  createdAt?: string;
+  updatedBy?: string;
+  updatedAt?: string;
 }
 
 export interface AlertConfig {
@@ -620,6 +630,10 @@ const ruleSchema = z
     openAfter: z.number().int().min(1).max(60),
     resolveAfter: z.number().int().min(1).max(60),
     notificationChannel: z.enum(['default', ...ALERT_DELIVERY_CHANNEL_VALUES, 'none']),
+    createdBy: z.string().trim().min(1).max(160).optional(),
+    createdAt: z.string().datetime().optional(),
+    updatedBy: z.string().trim().min(1).max(160).optional(),
+    updatedAt: z.string().datetime().optional(),
   })
   .strict();
 
@@ -1057,7 +1071,9 @@ export function sanitizeStoredAlertConfig(raw: Record<string, unknown>): Record<
         if (!definition || !value || typeof value !== 'object' || Array.isArray(value)) {
           return [key, value];
         }
-        const allowed = new Set(Object.keys(definition));
+        // 审计字段不在默认规则对象里（服务端盖章后才出现），必须随白名单放行，
+        // 否则每次加载都会剥掉归属，第二次修改就会丢失首任创建者。
+        const allowed = new Set([...Object.keys(definition), ...RULE_AUDIT_KEYS]);
         return [
           key,
           Object.fromEntries(
@@ -1289,11 +1305,11 @@ export interface AlertConfigPanelWriteResult {
  */
 export async function applyPanelAlertConfigPatch(
   patch: AlertConfigPatch,
-  options: { pinRuleKeys?: readonly string[] } = {},
+  options: { pinRuleKeys?: readonly string[]; actor?: string } = {},
 ): Promise<AlertConfigPanelWriteResult> {
   const file = await alertConfigFileState();
   const current = alertConfigFromFileState(file);
-  const next = mergeAndValidateAlertConfig(current, patch);
+  const next = mergeAndValidateAlertConfig(current, patch, new Date(), { actor: options.actor });
   const plan = planAlertConfigWrite(file, current, next, options);
   if (plan.changed) await writeAlertConfigText(plan.text);
   const after = plan.changed ? alertConfigFileStateFromText(plan.text) : file;
@@ -1328,10 +1344,20 @@ export type AlertConfigPatch = {
   rules?: Partial<Record<AlertRuleKey, Partial<AlertRuleConfig>>>;
 };
 
+const RULE_AUDIT_KEYS = ['createdBy', 'createdAt', 'updatedBy', 'updatedAt'] as const;
+
+/** 审计字段只由服务端盖章：合并与等值比较前剥除，防止提交方伪造归属或凭空触发落盘。 */
+function stripRuleAudit(rule: Partial<AlertRuleConfig>): Partial<AlertRuleConfig> {
+  const rest: Record<string, unknown> = { ...rule };
+  for (const key of RULE_AUDIT_KEYS) delete rest[key];
+  return rest as Partial<AlertRuleConfig>;
+}
+
 export function mergeAndValidateAlertConfig(
   current: AlertConfig,
   patch: AlertConfigPatch,
   now = new Date(),
+  audit: { actor?: string } = {},
 ): AlertConfig {
   const notificationPatch = patch.notification ?? {};
   const syntheticPatch = patch.synthetic ?? {};
@@ -1396,7 +1422,23 @@ export function mergeAndValidateAlertConfig(
   delete (next.notification as Record<string, unknown>).clearTelegramWebhookUrl;
   delete (next.synthetic as Record<string, unknown>).clearPassword;
   for (const key of ruleKeys) {
-    next.rules[key] = { ...current.rules[key], ...(patch.rules?.[key] ?? {}) };
+    const previous = current.rules[key];
+    const patchRule = patch.rules?.[key];
+    const merged: AlertRuleConfig = {
+      ...previous,
+      ...(patchRule ? stripRuleAudit(patchRule) : {}),
+    };
+    // 只有参数确有变化才盖章：原样保存不能凭空产生「修改记录」，这与落盘侧
+    // 「updatedAt 只在确有改动时前进」的纪律是同一条规则。
+    if (audit.actor && !isDeepStrictEqual(stripRuleAudit(previous), stripRuleAudit(merged))) {
+      merged.updatedBy = audit.actor;
+      merged.updatedAt = now.toISOString();
+      if (!previous.createdBy) {
+        merged.createdBy = audit.actor;
+        merged.createdAt = now.toISOString();
+      }
+    }
+    next.rules[key] = merged;
   }
   return alertConfigSchema.parse(next) as AlertConfig;
 }

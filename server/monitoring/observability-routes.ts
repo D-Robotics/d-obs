@@ -13,9 +13,11 @@ import {
 import {
   getLatestOpsConfigurationAuditDetails,
   getOpsEventDetail,
+  getOpsIncidentSummary,
   getOpsObservabilityOverview,
   getOpsObservabilityPool,
   isOpsObservabilityConfigured,
+  listOpsIncidents,
   recordOpsConfigurationAudit,
   recordOpsNotificationTest,
   updateOpsIncident,
@@ -601,7 +603,10 @@ export function createOpsObservabilityRouter(): Router {
           const pinRuleKeys = Array.isArray(body.pinRuleKeys)
             ? body.pinRuleKeys.filter((key): key is string => typeof key === 'string')
             : [];
-          const result = await applyPanelAlertConfigPatch(body, { pinRuleKeys });
+          const result = await applyPanelAlertConfigPatch(body, {
+            pinRuleKeys,
+            actor: resolveOpsActor(req),
+          });
           unchanged = !result.changed;
           if (result.changed) {
             const changed = [...result.plan.changedFields, ...result.plan.changedRuleKeys];
@@ -625,6 +630,48 @@ export function createOpsObservabilityRouter(): Router {
     },
   );
 
+  router.get(
+    '/api/ops/observability/incidents/summary',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const days = queryInteger(req.query as Record<string, unknown>, 'days', 7, 1, 90);
+        res.json({ ok: true, summary: await getOpsIncidentSummary(days) });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'incident_summary_unavailable') });
+      }
+    },
+  );
+
+  router.get(
+    '/api/ops/observability/incidents',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const query = req.query as Record<string, unknown>;
+        const scope = query.scope === 'mine' ? 'mine' : 'all';
+        const state = ['active', 'closed', 'all'].includes(String(query.state))
+          ? (String(query.state) as 'active' | 'closed' | 'all')
+          : 'all';
+        const severity = query.severity === 'critical' || query.severity === 'warning'
+          ? (query.severity as 'critical' | 'warning')
+          : undefined;
+        const result = await listOpsIncidents({
+          scope,
+          actor: scope === 'mine' ? resolveOpsActor(req) : undefined,
+          state,
+          severity,
+          days: queryInteger(query, 'days', 30, 1, 90),
+          limit: queryInteger(query, 'limit', 50, 1, 200),
+          offset: queryInteger(query, 'offset', 0, 0, 100000),
+        });
+        res.json({ ok: true, ...result });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'incident_list_unavailable') });
+      }
+    },
+  );
+
   router.post(
     '/api/ops/observability/incidents/:incidentKey/actions',
     tenantScopeGate,
@@ -637,7 +684,7 @@ export function createOpsObservabilityRouter(): Router {
         res.status(400).json({ ok: false, error: 'invalid_incident_key' });
         return;
       }
-      if (!['acknowledge', 'assign', 'silence', 'reopen'].includes(action)) {
+      if (!['acknowledge', 'assign', 'silence', 'reopen', 'close'].includes(action)) {
         res.status(400).json({ ok: false, error: 'invalid_incident_action' });
         return;
       }
@@ -648,7 +695,7 @@ export function createOpsObservabilityRouter(): Router {
       }
       try {
         await updateOpsIncident(incidentKey, {
-          action: action as 'acknowledge' | 'assign' | 'silence' | 'reopen',
+          action: action as 'acknowledge' | 'assign' | 'silence' | 'reopen' | 'close',
           actor: resolveOpsActor(req),
           assignee: req.body?.assignee,
           minutes: Number(req.body?.minutes),

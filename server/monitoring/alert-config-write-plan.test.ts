@@ -228,3 +228,67 @@ test('固定时忽略未知键与文件里已有的键，不误写别的规则',
     assert.deepEqual(Object.keys(after.rules).sort(), Object.keys(before.rules).sort());
   });
 });
+
+test('带操作者的真实改动盖上审计戳：首写建归属，再改保留归属并推进修改人', async () => {
+  await withConfigFile(`${JSON.stringify(SHARED_FILE, null, 2)}\n`, async (_dir, file) => {
+    // 值未变化的保存：不产生审计戳，也不落盘
+    const noop = await applyPanelAlertConfigPatch(
+      { rules: { 'disk-space': { enabled: true } } },
+      { actor: 'ops@example.com' },
+    );
+    assert.equal(noop.changed, false, '参数没有变化的保存不得产生修改记录');
+
+    const first = await applyPanelAlertConfigPatch(
+      { rules: { 'disk-space': { enabled: false } } },
+      { actor: 'ops@example.com' },
+    );
+    assert.equal(first.changed, true);
+    const rule = (await readJson(file)).rules['disk-space'];
+    assert.equal(rule.createdBy, 'ops@example.com');
+    assert.ok(rule.createdAt, '首次落盘必须带创建时间');
+    assert.equal(rule.updatedBy, 'ops@example.com');
+    assert.equal(rule.updatedAt, rule.createdAt);
+
+    const second = await applyPanelAlertConfigPatch(
+      { rules: { 'disk-space': { threshold: 8 } } },
+      { actor: 'another@example.com' },
+    );
+    assert.equal(second.changed, true);
+    const rule2 = (await readJson(file)).rules['disk-space'];
+    assert.equal(rule2.createdBy, 'ops@example.com', '创建归属保持首任记录在案的写入者');
+    assert.equal(rule2.updatedBy, 'another@example.com');
+    assert.notEqual(rule2.updatedAt, rule2.createdAt);
+  });
+});
+
+test('提交方携带的审计字段一律剥除：归属只能由服务端写入', async () => {
+  await withConfigFile(`${JSON.stringify(SHARED_FILE, null, 2)}\n`, async (_dir, file) => {
+    const result = await applyPanelAlertConfigPatch(
+      {
+        rules: {
+          'disk-space': {
+            enabled: false,
+            createdBy: 'forged',
+            createdAt: '2020-01-01T00:00:00.000Z',
+          },
+        },
+      },
+      { actor: 'ops@example.com' },
+    );
+    assert.equal(result.changed, true);
+    const rule = (await readJson(file)).rules['disk-space'];
+    assert.equal(rule.createdBy, 'ops@example.com');
+    assert.notEqual(rule.createdAt, '2020-01-01T00:00:00.000Z');
+  });
+});
+
+test('不带操作者的写盘保持旧语义：不写审计字段（存量配置兼容）', async () => {
+  await withConfigFile(`${JSON.stringify(SHARED_FILE, null, 2)}\n`, async (_dir, file) => {
+    await applyPanelAlertConfigPatch({ rules: { 'disk-space': { enabled: false } } });
+    const rule = (await readJson(file)).rules['disk-space'];
+    assert.equal(rule.createdBy, undefined);
+    assert.equal(rule.createdAt, undefined);
+    assert.equal(rule.updatedBy, undefined);
+    assert.equal(rule.updatedAt, undefined);
+  });
+});

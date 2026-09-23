@@ -293,7 +293,7 @@ export interface OpsObservabilityOverview {
   }>;
 }
 
-type OpsIncidentAction = 'acknowledge' | 'assign' | 'silence' | 'reopen';
+type OpsIncidentAction = 'acknowledge' | 'assign' | 'silence' | 'reopen' | 'close';
 
 function incidentKey(value: string): string {
   const key = String(value ?? '').trim();
@@ -369,6 +369,7 @@ export async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
     `alter table public.studio_alert_incidents add column if not exists acknowledged_at timestamptz null`,
     `alter table public.studio_alert_incidents add column if not exists acknowledged_by text null`,
     `alter table public.studio_alert_incidents add column if not exists assignee text null`,
+    `alter table public.studio_alert_incidents add column if not exists resolution_note text null`,
     `alter table public.studio_alert_incidents add column if not exists silence_until timestamptz null`,
     `alter table public.studio_alert_incidents add column if not exists silence_reason text null`,
     `alter table public.studio_alert_incidents add column if not exists tenant_id text not null default 'platform'`,
@@ -541,12 +542,25 @@ export async function updateOpsIncident(
        returning alert_key`,
       [key, minutes, reason, tenantScope ?? coalesceTenant(key)],
     );
+  } else if (action === 'close') {
+    // 蓝图语义：结案必须沉淀解决方案（等价于他们的"关闭强制填解决方案"），
+    // 这是 MTTR 之外的第二份运营资产——复盘时知道每起事故是怎么处置的。
+    const resolution = text(input.reason, 500);
+    if (resolution.length < 2) throw new Error('incident_resolution_required');
+    summary = `已结案：${resolution}`;
+    result = await p.query(
+      `update public.studio_alert_incidents
+       set status = 'resolved', resolved_at = coalesce(resolved_at, now()), resolution_note = $2
+       where alert_key = $1 and coalesce(tenant_id, 'platform') = $3
+       returning alert_key`,
+      [key, resolution, tenantScope ?? coalesceTenant(key)],
+    );
   } else {
     summary = '已重新打开事故';
     result = await p.query(
       `update public.studio_alert_incidents
        set status = 'open', acknowledged_at = null, acknowledged_by = null,
-           silence_until = null, silence_reason = null, resolved_at = null
+           silence_until = null, silence_reason = null, resolved_at = null, resolution_note = null
        where alert_key = $1 and coalesce(tenant_id, 'platform') = $2
        returning alert_key`,
       [key, tenantScope ?? coalesceTenant(key)],
@@ -558,6 +572,143 @@ export async function updateOpsIncident(
      values ($1, $2, $3, $4)`,
     [key, action, actor, summary],
   );
+}
+
+/** 告警中心的处置阶段映射：open=待认领，acknowledged/silenced=处理中，resolved=已关闭。 */
+function incidentStage(status: string): 'pending' | 'processing' | 'closed' {
+  if (status === 'open') return 'pending';
+  if (status === 'resolved') return 'closed';
+  return 'processing';
+}
+
+function mapIncidentRow(row: Record<string, unknown>) {
+  const iso = (value: unknown): string | null => {
+    const date = value instanceof Date ? value : value ? new Date(String(value)) : null;
+    return date && Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  };
+  return {
+    key: String(row.alert_key ?? ''),
+    title: String(row.title ?? ''),
+    severity: String(row.severity ?? 'warning'),
+    status: String(row.status ?? 'open'),
+    stage: incidentStage(String(row.status ?? 'open')),
+    summary: String(row.summary ?? ''),
+    firstSeenAt: iso(row.first_seen_at),
+    lastSeenAt: iso(row.last_seen_at),
+    resolvedAt: iso(row.resolved_at),
+    occurrences: Number(row.occurrence_count ?? 1),
+    acknowledgedAt: iso(row.acknowledged_at),
+    acknowledgedBy: row.acknowledged_by ? text(row.acknowledged_by, 160) : null,
+    assignee: row.assignee ? text(row.assignee, 160) : null,
+    resolutionNote: row.resolution_note ? text(row.resolution_note, 500) : null,
+    silenceUntil: iso(row.silence_until),
+    silenceReason: row.silence_reason ? text(row.silence_reason, 400) : null,
+    lastNotifiedAt: iso(row.last_notified_at),
+  };
+}
+
+export type OpsIncidentListQuery = {
+  scope?: 'all' | 'mine';
+  actor?: string;
+  state?: 'active' | 'closed' | 'all';
+  severity?: 'critical' | 'warning';
+  days?: number;
+  limit?: number;
+  offset?: number;
+};
+
+/** 告警中心列表：scope=mine 只看与当前操作者相关的（已认领/被指派/已结案留痕）。 */
+export async function listOpsIncidents(query: OpsIncidentListQuery = {}): Promise<{
+  incidents: ReturnType<typeof mapIncidentRow>[];
+  total: number;
+}> {
+  const p = await pool();
+  await ensureIncidentOperationsSchema(p);
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  const push = (value: unknown): string => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  if (query.severity === 'critical' || query.severity === 'warning') {
+    conditions.push(`severity = ${push(query.severity)}`);
+  }
+  if (query.state === 'active') conditions.push(`status in ('open','acknowledged','silenced')`);
+  else if (query.state === 'closed') conditions.push(`status = 'resolved'`);
+  const days = Math.max(1, Math.min(90, Math.floor(Number(query.days) || 30)));
+  conditions.push(`first_seen_at >= now() - make_interval(days => ${push(days)}::int)`);
+  if (query.scope === 'mine' && query.actor) {
+    const actor = push(query.actor);
+    conditions.push(`(acknowledged_by = ${actor} or assignee = ${actor})`);
+  }
+  const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
+  const limit = Math.max(1, Math.min(200, Math.floor(Number(query.limit) || 50)));
+  const offset = Math.max(0, Math.floor(Number(query.offset) || 0));
+  const [rowsResult, countResult] = await Promise.all([
+    p.query(
+      `select alert_key, title, severity, status, summary, first_seen_at, last_seen_at,
+              resolved_at, occurrence_count, acknowledged_at, acknowledged_by, assignee,
+              resolution_note, silence_until, silence_reason, last_notified_at
+       from public.studio_alert_incidents
+       ${where}
+       order by (status in ('open','acknowledged','silenced')) desc, first_seen_at desc
+       limit ${limit} offset ${offset}`,
+      params,
+    ),
+    p.query(`select count(*)::int total from public.studio_alert_incidents ${where}`, params),
+  ]);
+  return {
+    incidents: rowsResult.rows.map((row) => mapIncidentRow(row as Record<string, unknown>)),
+    total: Number(countResult.rows[0]?.total ?? 0),
+  };
+}
+
+/** 大盘统计：待认领/处理中/已关闭、级别分布、今日新增、MTTA/MTTR（分钟）。 */
+export async function getOpsIncidentSummary(days = 7): Promise<{
+  pending: number;
+  processing: number;
+  closed: number;
+  todayNew: number;
+  criticalActive: number;
+  warningActive: number;
+  mttaMinutes: number | null;
+  mttrMinutes: number | null;
+  windowDays: number;
+}> {
+  const p = await pool();
+  await ensureIncidentOperationsSchema(p);
+  const windowDays = Math.max(1, Math.min(90, Math.floor(Number(days) || 7)));
+  const result = await p.query(
+    `select
+       count(*) filter (where status = 'open')::int pending_count,
+       count(*) filter (where status in ('acknowledged','silenced'))::int processing_count,
+       count(*) filter (where status = 'resolved')::int closed_count,
+       count(*) filter (where first_seen_at >= now() - interval '24 hours')::int today_new,
+       count(*) filter (where severity = 'critical' and status in ('open','acknowledged','silenced'))::int critical_active,
+       count(*) filter (where severity = 'warning' and status in ('open','acknowledged','silenced'))::int warning_active,
+       avg(extract(epoch from (acknowledged_at - first_seen_at)))
+         filter (where acknowledged_at is not null and first_seen_at >= now() - make_interval(days => $1::int))::double precision avg_ack_seconds,
+       avg(extract(epoch from (resolved_at - first_seen_at)))
+         filter (where resolved_at is not null and first_seen_at >= now() - make_interval(days => $1::int))::double precision avg_resolve_seconds
+     from public.studio_alert_incidents`,
+    [windowDays],
+  );
+  const row = (result.rows[0] ?? {}) as Record<string, unknown>;
+  const toMinutes = (value: unknown): number | null => {
+    const seconds = Number(value);
+    return Number.isFinite(seconds) ? Math.max(0, Math.round(seconds / 60)) : null;
+  };
+  return {
+    pending: Number(row.pending_count ?? 0),
+    processing: Number(row.processing_count ?? 0),
+    closed: Number(row.closed_count ?? 0),
+    todayNew: Number(row.today_new ?? 0),
+    criticalActive: Number(row.critical_active ?? 0),
+    warningActive: Number(row.warning_active ?? 0),
+    mttaMinutes: toMinutes(row.avg_ack_seconds),
+    mttrMinutes: toMinutes(row.avg_resolve_seconds),
+    windowDays,
+  };
 }
 
 export async function getOpsObservabilityOverview(
