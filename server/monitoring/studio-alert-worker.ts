@@ -779,10 +779,43 @@ async function collectDatabaseObservations(
   return observations;
 }
 
+/** PromQL 即时查询：返回首个序列的数值；未配置/失败返回 null（调用方自行兜底）。 */
+async function promInstantQuery(query: string): Promise<number | null> {
+  const base = String(process.env.RDK_PROMETHEUS_QUERY_URL ?? '').trim();
+  if (!base) return null;
+  try {
+    const response = await fetch(`${base}/api/v1/query?query=${encodeURIComponent(query)}`, {
+      signal: AbortSignal.timeout(6_000),
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as {
+      data?: { result?: Array<{ value?: [unknown, string] }> };
+    };
+    const parsed = Number(payload.data?.result?.[0]?.value?.[1]);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function collectDiskObservation(config: AlertConfig): Promise<AlertObservation> {
   const key = 'disk-space' as const;
   if (!config.rules[key].enabled) return disabledObservation(config, key);
+  // 数据源优先级：Prometheus node_exporter（统一采集主路径）→ 本机 statfs 兜底。
+  const promPercent = await promInstantQuery(
+    'max(100*(1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint="/"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs",mountpoint="/"}))',
+  );
   const target = String(process.env.RDK_ALERT_DISK_PATH ?? '').trim() || '/opt/rdstudio-web-opt';
+  if (promPercent != null) {
+    const usedPercent = Math.round(promPercent);
+    return ruleObservation(config, {
+      key,
+      title: '生产服务器磁盘空间不足',
+      severity: ruleSeverity(config, key, usedPercent),
+      unhealthy: usedPercent >= config.rules[key].threshold,
+      summary: `${usedPercent}%（阈值 ${config.rules[key].threshold}% / 严重 ${config.rules[key].criticalThreshold}%）· node_exporter`,
+    });
+  }
   try {
     const stats = await statfs(target);
     const total = Number(stats.blocks) * Number(stats.bsize);
@@ -821,6 +854,58 @@ function countSignatures(text: string, signatures: string[]): number {
     }
     return total + count;
   }, 0);
+}
+
+/** 本机内存压力：MemAvailable/MemTotal（node_exporter，经 Prometheus）。 */
+async function collectNodeMemoryObservation(config: AlertConfig): Promise<AlertObservation> {
+  const key = 'node-memory-pressure' as const;
+  if (!config.rules[key].enabled) return disabledObservation(config, key);
+  const percentRaw = await promInstantQuery(
+    'max(100*(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))',
+  );
+  if (percentRaw == null) {
+    return ruleObservation(config, {
+      key,
+      title: '本机内存压力',
+      severity: 'warning',
+      unhealthy: false,
+      summary: 'node_exporter 指标不可用（Prometheus 未配置或目标离线）',
+    });
+  }
+  const percent = Math.round(percentRaw);
+  return ruleObservation(config, {
+    key,
+    title: '本机内存压力',
+    severity: ruleSeverity(config, key, percent),
+    unhealthy: percent >= config.rules[key].threshold,
+    summary: `内存已用 ${percent}%（阈值 ${config.rules[key].threshold}% / 严重 ${config.rules[key].criticalThreshold}%）`,
+  });
+}
+
+/** 本机 CPU 负载：load1 / 核数，100% = 满载一核（node_exporter，经 Prometheus）。 */
+async function collectNodeLoadObservation(config: AlertConfig): Promise<AlertObservation> {
+  const key = 'node-cpu-load' as const;
+  if (!config.rules[key].enabled) return disabledObservation(config, key);
+  const percentRaw = await promInstantQuery(
+    '100 * node_load1 / count(count(node_cpu_seconds_total{mode="idle"}) by (cpu))',
+  );
+  if (percentRaw == null) {
+    return ruleObservation(config, {
+      key,
+      title: '本机 CPU 负载',
+      severity: 'warning',
+      unhealthy: false,
+      summary: 'node_exporter 指标不可用（Prometheus 未配置或目标离线）',
+    });
+  }
+  const percent = Math.round(percentRaw);
+  return ruleObservation(config, {
+    key,
+    title: '本机 CPU 负载',
+    severity: ruleSeverity(config, key, percent),
+    unhealthy: percent >= config.rules[key].threshold,
+    summary: `每核负载 ${percent}%（阈值 ${config.rules[key].threshold}% / 严重 ${config.rules[key].criticalThreshold}%）`,
+  });
 }
 
 async function collectJournalObservation(config: AlertConfig): Promise<AlertObservation> {
@@ -1091,6 +1176,8 @@ async function runWorker(): Promise<void> {
           errorCategory: 'disabled' as const,
         }),
     collectDiskObservation(config),
+    collectNodeMemoryObservation(config),
+    collectNodeLoadObservation(config),
     collectJournalObservation(config),
     collectNginxObservation(config),
     collectPostgresLogObservation(config),

@@ -118,6 +118,20 @@ export const ALERT_RULE_DEFINITIONS = [
     fields: ['threshold', 'criticalThreshold'],
   },
   {
+    key: 'node-memory-pressure',
+    category: 'metric',
+    title: '本机内存压力',
+    description: 'node_exporter 上报的内存使用率（经 Prometheus 查询）。',
+    fields: ['threshold', 'criticalThreshold'],
+  },
+  {
+    key: 'node-cpu-load',
+    category: 'metric',
+    title: '本机 CPU 负载',
+    description: 'node_exporter 每核负载百分比（100% = 满载一核）。',
+    fields: ['threshold', 'criticalThreshold'],
+  },
+  {
     key: 'slo-error-budget-burn',
     category: 'metric',
     title: 'SLO 错误预算燃烧过快',
@@ -493,6 +507,16 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
       threshold: 90,
       criticalThreshold: 95,
       openAfter: 1,
+    }),
+    'node-memory-pressure': rule({
+      threshold: 90,
+      criticalThreshold: 95,
+      openAfter: 3,
+    }),
+    'node-cpu-load': rule({
+      threshold: 100,
+      criticalThreshold: 200,
+      openAfter: 3,
     }),
     'slo-error-budget-burn': rule({
       threshold: 2,
