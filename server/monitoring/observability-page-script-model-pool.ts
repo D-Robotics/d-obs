@@ -30,22 +30,43 @@ export const OPS_OBSERVABILITY_SCRIPT_MODEL_POOL = `
         const missing=[];routeNames.forEach(name=>{const key=primaryKeyOf(name);if(!targetByKey.has(key)&&!targetPos.has(key)&&!missing.includes(key))missing.push(key)});
         missing.forEach((key,k)=>targetPos.set(key,{y:padTop+(targets.length+k)*rowH+rowH/2}));
         const height=padTop+Math.max(routeNames.length,targets.length+missing.length)*rowH+6;
-        const svg=mpSvg('svg');svg.setAttribute('class','mp-topo-svg');svg.setAttribute('viewBox','0 0 920 '+height);svg.setAttribute('preserveAspectRatio','xMidYMid meet');svg.setAttribute('role','img');svg.setAttribute('aria-label','模型路由拓扑图');
-        const edges=mpSvg('g');
+        const edgesDef=[];
         routeNames.forEach(name=>{
-          const from=routePos.get(name);const to=targetPos.get(primaryKeyOf(name));if(!from||!to)return;
-          const weight=mapping[name]&&mapping[name].weight;
-          const path=mpSvg('path');path.setAttribute('d','M '+leftX+' '+from.y+' C '+(leftX+110)+' '+from.y+', '+(rightX-110)+' '+to.y+', '+rightX+' '+to.y);path.setAttribute('class','mp-edge-primary');path.setAttribute('stroke-width',String(mpEdgeWidth(weight)));edges.appendChild(path);
-          if(weight!=null&&Number.isFinite(Number(weight))){const label=mpSvg('text');label.setAttribute('x',String((leftX+rightX)/2));label.setAttribute('y',String((from.y+to.y)/2-7));label.setAttribute('text-anchor','middle');label.setAttribute('class','mp-edge-weight');label.textContent='权重 '+Number(weight);edges.appendChild(label)}
-          const fallbacks=(((mapping[name]||{}).fallbacks)||[]).map(v=>typeof v==='string'?v:(v&&v.ref)||'').filter(Boolean);
-          fallbacks.forEach((fb,order)=>{const fto=targetPos.get(primaryKeyOf(fb));if(!fto)return;const dashed=mpSvg('path');dashed.setAttribute('d','M '+leftX+' '+from.y+' C '+(leftX+110)+' '+from.y+', '+(rightX-110)+' '+fto.y+', '+rightX+' '+fto.y);dashed.setAttribute('class','mp-edge-fallback');edges.appendChild(dashed);const badge=mpSvg('text');badge.setAttribute('x',String((leftX+rightX)/2));badge.setAttribute('y',String((from.y+fto.y)/2+11));badge.setAttribute('text-anchor','middle');badge.setAttribute('class','mp-edge-order');badge.textContent='备 '+(order+1);edges.appendChild(badge)});
+          const from=routePos.get(name);if(!from)return;
+          const entry=mapping[name]||{};const weight=entry.weight;
+          const pkey=primaryKeyOf(name);const to=targetPos.get(pkey);
+          if(to)edgesDef.push({kind:'primary',route:name,from:from,to:to,toKey:pkey,weight:weight});
+          const fallbacks=((entry.fallbacks)||[]).map(v=>typeof v==='string'?v:(v&&v.ref)||'').filter(Boolean);
+          fallbacks.forEach((fb,order)=>{const fto=targetPos.get(primaryKeyOf(fb));if(!fto)return;edgesDef.push({kind:'fallback',route:name,from:from,to:fto,toKey:primaryKeyOf(fb),order:order})});
         });
+        const byDepart=new Map();const byArrive=new Map();
+        edgesDef.forEach(e=>{if(!byDepart.has(e.route))byDepart.set(e.route,[]);byDepart.get(e.route).push(e);if(!byArrive.has(e.toKey))byArrive.set(e.toKey,[]);byArrive.get(e.toKey).push(e)});
+        edgesDef.forEach(e=>{
+          const ds=byDepart.get(e.route).slice().sort((a,b)=>a.to.y-b.to.y);const di=ds.indexOf(e);const dn=ds.length;
+          e.sy=e.from.y+(dn>1?(di/(dn-1)-0.5)*20:0);
+          const as=byArrive.get(e.toKey).slice().sort((a,b)=>a.from.y-b.from.y);const ai=as.indexOf(e);const an=as.length;
+          e.ty=e.to.y+(an>1?(ai/(an-1)-0.5)*26:0);
+        });
+        const svg=mpSvg('svg');svg.setAttribute('class','mp-topo-svg');svg.setAttribute('viewBox','0 0 920 '+height);svg.setAttribute('preserveAspectRatio','xMidYMid meet');svg.setAttribute('role','img');svg.setAttribute('aria-label','模型路由拓扑图');
+        const edges=mpSvg('g');const midX=(leftX+rightX)/2;
+        const edgePath=e=>'M '+leftX+' '+e.sy+' C '+midX+' '+e.sy+', '+midX+' '+e.ty+', '+rightX+' '+e.ty;
+        const badges=[];
+        edgesDef.filter(e=>e.kind==='fallback').forEach(e=>{const dashed=mpSvg('path');dashed.setAttribute('d',edgePath(e));dashed.setAttribute('class','mp-edge-fallback');edges.appendChild(dashed);badges.push({y:Math.max((e.sy+e.ty)/2,padTop+8),text:'备 '+(e.order+1)})});
+        edgesDef.filter(e=>e.kind==='primary').forEach(e=>{
+          const path=mpSvg('path');path.setAttribute('d',edgePath(e));path.setAttribute('class','mp-edge-primary');path.setAttribute('stroke-width',String(mpEdgeWidth(e.weight)));edges.appendChild(path);
+          if(e.weight!=null&&Number.isFinite(Number(e.weight))){const label=mpSvg('text');label.setAttribute('x',String(leftX+24));label.setAttribute('y',String(e.sy-8));label.setAttribute('class','mp-edge-weight');label.textContent='权重 '+Number(e.weight);edges.appendChild(label)}
+        });
+        badges.sort((a,b)=>a.y-b.y);
+        for(let i=1;i<badges.length;i++){if(badges[i].y-badges[i-1].y<14)badges[i].y=badges[i-1].y+14}
+        if(badges.length&&badges[badges.length-1].y>height-10){badges[badges.length-1].y=height-10;for(let i=badges.length-2;i>=0;i--){if(badges[i].y>badges[i+1].y-14)badges[i].y=badges[i+1].y-14}}
+        badges.forEach(b=>{const badge=mpSvg('text');badge.setAttribute('x',String(midX));badge.setAttribute('y',String(b.y+3));badge.setAttribute('text-anchor','middle');badge.setAttribute('class','mp-edge-order');badge.textContent=b.text;edges.appendChild(badge)});
         svg.appendChild(edges);
         const nodes=mpSvg('g');
         routeNames.forEach(name=>{
           const pos=routePos.get(name);const entry=mapping[name]||{};const locked=name===protectedModel;
           const node=mpSvg('g');node.setAttribute('class','mp-node'+(locked?' mp-locked':''));node.setAttribute('data-route',name);
           const rect=mpSvg('rect');rect.setAttribute('x',String(leftX-238));rect.setAttribute('y',String(pos.y-19));rect.setAttribute('width','236');rect.setAttribute('height','38');rect.setAttribute('rx','9');rect.setAttribute('class','mp-node-rect');node.appendChild(rect);
+          const accent=mpSvg('rect');accent.setAttribute('x',String(leftX-234));accent.setAttribute('y',String(pos.y-13));accent.setAttribute('width','3');accent.setAttribute('height','26');accent.setAttribute('rx','1.5');accent.setAttribute('class','mp-node-accent');node.appendChild(accent);
           const t1=mpSvg('text');t1.setAttribute('x',String(leftX-222));t1.setAttribute('y',String(pos.y-3));t1.setAttribute('class','mp-node-title');t1.textContent=mpShort(name,26)+(locked?' · 已锁定':'');node.appendChild(t1);
           const t2=mpSvg('text');t2.setAttribute('x',String(leftX-222));t2.setAttribute('y',String(pos.y+12));t2.setAttribute('class','mp-node-sub');t2.textContent=mpShort((entry.label?entry.label+' · ':'')+(entry.model||''),34);node.appendChild(t2);
           node.addEventListener('click',()=>focusModelRouteRow(name));
