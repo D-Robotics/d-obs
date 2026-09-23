@@ -216,3 +216,22 @@ location /dobs/ {
 同机还有一条 9 月 11 日上线的 `@rdk-studio/observability`（`/rdkstudio/observability/`
 前缀、SSO 登录、`rdk-observability.service`）。两者共用中心库的
 `studio_alert_incidents` 表但服务独立、互不干扰。合流或下线旧线另行决策。
+
+## Grafana 看板（ops/grafana/）
+
+Grafana（容器 `d-obs-grafana`，`/dobs/grafana/` 前缀）的全部配置与看板以
+`ops/grafana/` 为唯一真源，服务器目录只是部署目标：
+
+```bash
+ops/grafana-sync.sh            # 同步 provisioning + dashboards 并重启容器
+ops/grafana-sync.sh --dry-run  # 只预览
+ops/grafana-container.sh       # 按标准参数重建容器（改镜像/环境变量时用）
+```
+
+- 数据源固定 `Prometheus`（uid `prometheus` → VictoriaMetrics/Prometheus）；
+  新看板统一放 `ops/grafana/dashboards/*.json`，uid 以 `rdk-` 前缀。
+- 访问模型：Grafana 本体为匿名 Viewer，公网入口由 nginx `auth_request`
+  （`/_dobs_grafana_auth` → `/api/ops/grafana/auth`）统一把关；浏览器侧经
+  `/dobs/api/ops/grafana/session` 换取 12 小时 HttpOnly 门禁 cookie
+  （工作台"Grafana 大盘"链接已自动完成换取）。
+- 管理员密码在服务器 `/opt/d-obs/grafana/.admin-password`（600，不入库）。
