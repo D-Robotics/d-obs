@@ -885,7 +885,22 @@ export function registerSignalsRoutes(router: Router): void {
           panel,
           id: typeof body.id === 'string' ? body.id : undefined,
         });
-        res.status(201).json({ ok: true, record });
+        // 链接式传播：更新已有库面板时，同步所有引用它的看板面板定义。
+        let syncedBoards = 0;
+        if (body.id && record) {
+          const owner = resolveOpsActor(req);
+          for (const board of await listBoards(owner)) {
+            if (!board.spec.panels.some((p) => p.libraryId === record.id)) continue;
+            const panels = board.spec.panels.map((p) =>
+              p.libraryId === record.id
+                ? { ...panel, libraryId: record.id }
+                : p,
+            );
+            await updateBoard(owner, board.id, { spec: { ...board.spec, panels } });
+            syncedBoards += 1;
+          }
+        }
+        res.status(201).json({ ok: true, record, syncedBoards });
       } catch (error) {
         if (String((error as Error)?.message ?? '') === 'too_many_library_panels') {
           res.status(400).json({ ok: false, error: 'too_many_library_panels' });

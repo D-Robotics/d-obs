@@ -30,7 +30,7 @@ test('normalizeBoardSpec：默认值与字段钳制', () => {
   assert.ok(spec);
   assert.equal(spec.windowMinutes, 5);
   assert.deepEqual(spec.panels, [
-    { title: '订单时延', metric: 'http.server.duration', windowMinutes: 20160, chart: 'line', width: 1, warnValue: null, critValue: null },
+    { title: '订单时延', metric: 'http.server.duration', windowMinutes: 20160, chart: 'line', width: 1, warnValue: null, critValue: null, libraryId: null },
   ]);
 });
 
@@ -58,10 +58,10 @@ test('normalizeBoardSpec：绝对时间范围（合法保留，非法/超跨度/
 
 test('normalizeBoardPanel：stat 阈值字段解析（可空、非有限数容忍为 null）', () => {
   assert.deepEqual(normalizeBoardPanel({ title: 't', metric: 'm', warnValue: '12.5', critValue: 80 }), {
-    title: 't', metric: 'm', windowMinutes: null, chart: 'line', width: 1, warnValue: 12.5, critValue: 80,
+    title: 't', metric: 'm', windowMinutes: null, chart: 'line', width: 1, warnValue: 12.5, critValue: 80, libraryId: null,
   });
   assert.deepEqual(normalizeBoardPanel({ title: 't', metric: 'm', warnValue: 'oops' }), {
-    title: 't', metric: 'm', windowMinutes: null, chart: 'line', width: 1, warnValue: null, critValue: null,
+    title: 't', metric: 'm', windowMinutes: null, chart: 'line', width: 1, warnValue: null, critValue: null, libraryId: null,
   });
 });
 
@@ -87,7 +87,7 @@ test('parseBoardTemplate：完整导出 / title 变体 / 裸 spec / 拒绝垃圾
   const spec = { windowMinutes: 1440, panels: [{ title: 'QPS', metric: 'rdk.qps', windowMinutes: null, chart: 'bar', width: 2 }] };
   assert.deepEqual(parseBoardTemplate({ kind: 'd-obs-board', version: 1, name: '核心看板', spec }), {
     name: '核心看板',
-    spec: { windowMinutes: 1440, range: null, filters: null, panels: [{ title: 'QPS', metric: 'rdk.qps', windowMinutes: null, chart: 'bar', width: 2, warnValue: null, critValue: null }] },
+    spec: { windowMinutes: 1440, range: null, filters: null, panels: [{ title: 'QPS', metric: 'rdk.qps', windowMinutes: null, chart: 'bar', width: 2, warnValue: null, critValue: null, libraryId: null }] },
   });
   assert.equal(parseBoardTemplate({ title: '老导出', spec })?.name, '老导出');
   assert.equal(parseBoardTemplate({ windowMinutes: 60, panels: [] })?.name, null);

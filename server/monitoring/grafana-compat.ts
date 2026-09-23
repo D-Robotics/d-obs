@@ -118,6 +118,7 @@ function mapGrafanaPanel(raw: Record<string, unknown>): { panel: BoardPanel } | 
       chart,
       width,
       warnValue: null,
+      libraryId: null,
       critValue: null,
     },
   };

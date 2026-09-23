@@ -72,8 +72,8 @@ test('Grafana 导出：time/panels 结构可被反向解析（回环一致）', 
       range: null,
       filters: null,
       panels: [
-        { title: 'QPS', metric: 'rdk.qps', windowMinutes: null, chart: 'line' as const, width: 2 as const, warnValue: null, critValue: null },
-        { title: '水位', metric: 'rdk.level', windowMinutes: 60, chart: 'stat' as const, width: 1 as const, warnValue: 80, critValue: 90 },
+        { title: 'QPS', metric: 'rdk.qps', windowMinutes: null, chart: 'line' as const, width: 2 as const, warnValue: null, critValue: null, libraryId: null },
+        { title: '水位', metric: 'rdk.level', windowMinutes: 60, chart: 'stat' as const, width: 1 as const, warnValue: 80, critValue: 90, libraryId: null },
       ],
     },
   };

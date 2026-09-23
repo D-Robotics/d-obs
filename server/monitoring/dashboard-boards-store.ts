@@ -20,6 +20,8 @@ export type BoardPanel = {
   /** stat 大数字阈值着色：最新值 ≥ warn 显示警示色，≥ crit 显示严重色 */
   warnValue: number | null;
   critValue: number | null;
+  /** 链接式库面板：非空时该面板由库面板派生，库面板更新会自动同步此定义 */
+  libraryId: string | null;
 };
 
 export type BoardSpec = {
@@ -80,6 +82,7 @@ export function normalizeBoardPanel(value: unknown): BoardPanel | null {
     ? (input.chart as BoardPanelChart)
     : 'line';
   const width = Number(input.width) === 2 ? 2 : 1;
+  const libraryId = input.libraryId == null ? null : String(input.libraryId).replace(/\0/g, '').trim().slice(0, 64) || null;
   return {
     title,
     metric,
@@ -88,6 +91,7 @@ export function normalizeBoardPanel(value: unknown): BoardPanel | null {
     width,
     warnValue: parseThreshold(input.warnValue),
     critValue: parseThreshold(input.critValue),
+    libraryId,
   };
 }
 
