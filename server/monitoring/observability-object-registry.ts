@@ -1,3 +1,4 @@
+import os from 'node:os';
 /**
  * 告警对象自动注册表：OTLP resource attributes → 监控对象。
  *
@@ -27,14 +28,14 @@ let schemaReady: Promise<void> | null = null;
 
 async function ensureRegistrySchema(p: RegistryPool): Promise<void> {
   if (!schemaReady) {
-    schemaReady = p
-      .query(
+    schemaReady = (async () => {
+      await p.query(
         `create table if not exists public.studio_obs_object_registry (
       owner text not null,
       object_id text not null,
       object_type text not null default 'unknown'
         constraint studio_obs_object_registry_type_check
-        check (object_type in ('service', 'host', 'device', 'robot', 'project', 'unknown')),
+        check (object_type in ('service','host','device','robot','project','database','gateway','unknown')),
       display_name text not null default '',
       labels jsonb not null default '{}'::jsonb,
       signal_kinds text[] not null default '{}',
@@ -42,12 +43,19 @@ async function ensureRegistrySchema(p: RegistryPool): Promise<void> {
       last_seen_at timestamptz not null default now(),
       primary key (owner, object_id)
     )`,
-      )
-      .then(() => undefined)
-      .catch((error) => {
-        schemaReady = null;
-        throw error;
-      });
+      );
+      // 类型枚举扩展（database/gateway）对已建表做幂等迁移
+      await p
+        .query(`alter table public.studio_obs_object_registry
+        drop constraint if exists studio_obs_object_registry_type_check;
+      alter table public.studio_obs_object_registry
+        add constraint studio_obs_object_registry_type_check
+        check (object_type in ('service','host','device','robot','project','database','gateway','unknown'))`)
+        .catch(() => undefined);
+    })().catch((error) => {
+      schemaReady = null;
+      throw error;
+    });
   }
   await schemaReady;
 }
@@ -154,6 +162,35 @@ export async function registerObjectsFromOtlp(
     ).catch(error => console.warn('[object-registry] upsert failed:', error && error.message));
   }
   return seen.size;
+}
+
+/** 平台已知实体自登记：服务器主机 + 自家服务/网关/数据库（每轮 worker 触发，幂等）。 */
+export async function registerPlatformObjects(): Promise<number> {
+  const p = (await getOpsObservabilityPool()) as unknown as RegistryPool;
+  await ensureRegistrySchema(p);
+  const host = text(os.hostname(), 120) || 'production-host';
+  const objects: Array<{ objectId: string; objectType: string; displayName: string; labels: Record<string, unknown>; kind: string }> = [
+    { objectId: `host/${host}`, objectType: 'host', displayName: host, labels: { role: 'production', signal_source: 'node_exporter' }, kind: 'metrics' },
+    { objectId: 'service/d-obs', objectType: 'service', displayName: 'd-obs 可观测平台', labels: { signal_source: 'self' }, kind: 'metrics' },
+    { objectId: 'service/rdkstudio-web', objectType: 'service', displayName: 'rdkstudio 主站应用', labels: { signal_source: 'synthetic-probe' }, kind: 'metrics' },
+    { objectId: 'gateway/model-3100-3101', objectType: 'gateway', displayName: '模型网关 3100/3101', labels: { signal_source: 'target-health' }, kind: 'metrics' },
+    { objectId: 'database/postgresql', objectType: 'database', displayName: 'PostgreSQL 中心库', labels: { signal_source: 'log-signature' }, kind: 'logs' },
+  ];
+  for (const item of objects) {
+    await p
+      .query(
+        `insert into public.studio_obs_object_registry
+           (owner, object_id, object_type, display_name, labels, signal_kinds)
+         values ('platform', $1, $2, $3, $4::jsonb, array[$5::text])
+         on conflict (owner, object_id) do update set
+           display_name = excluded.display_name,
+           labels = excluded.labels,
+           last_seen_at = now()`,
+        [item.objectId, item.objectType, item.displayName, JSON.stringify(item.labels), item.kind],
+      )
+      .catch((error) => console.warn('[object-registry] platform upsert failed:', error && error.message));
+  }
+  return objects.length;
 }
 
 export async function listRegisteredObjects(ownerFilter?: string): Promise<RegisteredObject[]> {

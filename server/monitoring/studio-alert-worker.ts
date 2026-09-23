@@ -1134,6 +1134,7 @@ async function collectSyntheticObservations(
 }
 
 async function runWorker(): Promise<void> {
+  void registerPlatformObjects().catch(() => undefined);
   const config = await loadAlertConfig();
   if (!config.global.enabled) {
     console.log('[alert-worker] disabled');
@@ -1496,3 +1497,4 @@ if (invokedAsScript) {
     });
   }
 }
+import { registerPlatformObjects } from './observability-object-registry.js';
