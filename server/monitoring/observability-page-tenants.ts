@@ -37,10 +37,13 @@ export const OPS_OBSERVABILITY_TENANTS_STYLE = `
     .role-chip{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:650}
     .role-chip.owner{background:var(--c521);color:var(--c522)}
     .role-chip.member{background:var(--c523);color:var(--c524)}
-    .obs-account-bar{display:flex;align-items:center;gap:10px;margin-left:auto}
-    .obs-user-chip{font-size:12px;color:var(--text);border:1px solid var(--line);border-radius:999px;padding:4px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .obs-tenant-select{font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);max-width:200px}
-    .obs-logout-btn{font-size:12px;padding:4px 12px}
+    .obs-account-bar{display:flex;align-items:center;gap:8px;margin-left:0;flex:0 1 auto;min-width:0}
+    header .obs-user-chip{font-size:11px;color:var(--c5);border:1px solid var(--c7);background:var(--c6);border-radius:999px;padding:6px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    header .obs-tenant-select{font-size:11px;padding:6px 9px;border:1px solid var(--c7);border-radius:8px;background:var(--c6);color:var(--c2);max-width:200px}
+    header .obs-logout-btn{height:32px;font-size:11px;padding:4px 12px;background:transparent;border-color:var(--line2);color:var(--text);box-shadow:none}
+    header .obs-logout-btn:hover{background:var(--c6);border-color:var(--c2);color:var(--c2);box-shadow:none;transform:none}
+    @media(max-width:900px){header .obs-user-chip{display:none}header .obs-tenant-select{max-width:110px}}
+    @media(max-width:520px){header .brand-copy{display:none}header .obs-tenant-select{max-width:90px}header .obs-account-bar{gap:4px;flex-wrap:nowrap}header .obs-logout-btn{padding:4px 8px}}
     @media(max-width:720px){.tenant-toolbar .field{flex:1 1 100%}.tenant-toolbar .field input{width:100%}.member-toolbar{display:grid;grid-template-columns:1fr 1fr;align-items:end;gap:8px}.member-toolbar .field{margin:0}.member-toolbar .field input,.member-toolbar .field select{width:100%}.tenant-row{grid-template-columns:1fr 1fr}.tenant-row.head{display:none}.tenant-row .tenant-actions{grid-column:1/-1;justify-self:stretch;flex-wrap:wrap}.member-row{grid-template-columns:1fr 1fr}.member-row.head{display:none}.member-row .member-actions{grid-column:1/-1;justify-self:stretch;flex-wrap:wrap}.tenant-row [data-label]::before,.member-row [data-label]::before{content:attr(data-label);margin-right:4px;color:var(--muted);font-size:10px}.obs-account-bar{flex-wrap:wrap}}
 `;
 
