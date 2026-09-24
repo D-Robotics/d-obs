@@ -65,7 +65,13 @@ function transitionCardSpec(
   }
 }
 
-function buildFeishuAlertCard(
+/** 告警通知里的「查看看板」深链：看板解析 #alert=<key> 后直达该策略的告警详情。 */
+export function alertDetailDeepLink(config: AlertConfig, key: string): string {
+  const base = config.notification.dashboardUrl.split('#')[0];
+  return `${base}#alert=${encodeURIComponent(key)}`;
+}
+
+export function buildFeishuAlertCard(
   transition: AlertTransition,
   config: AlertConfig,
   options?: { forceTest?: boolean },
@@ -118,7 +124,7 @@ function buildFeishuAlertCard(
       tag: 'button',
       text: { tag: 'plain_text', content: '查看看板' },
       type: 'default',
-      url: config.notification.dashboardUrl,
+      url: alertDetailDeepLink(config, transition.key),
     },
   ];
   if (
@@ -170,7 +176,7 @@ function buildNotificationText(transition: AlertTransition, config: AlertConfig)
       transition.kind === 'resolved'
         ? '告警已恢复，可在看板确认事故状态。'
         : config.notification.actionGuide,
-    dashboardUrl: config.notification.dashboardUrl,
+    dashboardUrl: alertDetailDeepLink(config, transition.key),
   };
   const rendered = config.notification.messageTemplate
     .replace(
@@ -747,7 +753,7 @@ export async function deliverTransition(
       transition.kind === 'resolved'
         ? '告警已恢复，可在看板确认事故状态。'
         : config.notification.actionGuide,
-    dashboardUrl: config.notification.dashboardUrl,
+    dashboardUrl: alertDetailDeepLink(config, transition.key),
   };
   const result = await sendAlertWebhookWithRetry(
     url,

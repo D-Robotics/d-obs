@@ -61,6 +61,7 @@ interface Harness {
   confirmCalls: string[];
   setConfirm(v: boolean): void;
   setJsonResponse(value: unknown): void;
+  setIdNull(id: string): void;
   asyncErrors: Error[];
   text(node: StubNode): string;
   all(node: StubNode): StubNode[];
@@ -123,6 +124,7 @@ function setup(): Harness {
       },
       querySelector: () => null,
       querySelectorAll: () => [] as StubNode[],
+      closest: () => null,
       addEventListener(type: string, fn: (e?: unknown) => unknown) {
         (listeners[type] ||= []).push(fn);
       },
@@ -140,6 +142,9 @@ function setup(): Harness {
       },
       focus() {},
     };
+    Object.defineProperty(node, 'firstElementChild', {
+      get: () => node.children[0] ?? null,
+    });
     Object.defineProperty(node, 'className', {
       get: () => [...classes].join(' '),
       set: (v: string) => {
@@ -176,6 +181,9 @@ function setup(): Harness {
   };
 
   const byId = new Map<string, StubNode>();
+  // 惰性挂载的节点（如告警详情抽屉）依赖 getElementById 首查返回 null；
+  // 登记到 nullIds 的 id 走真实 null 语义，由脚本自行 create+append。
+  const nullIds = new Set<string>();
   const docListeners: Record<string, Array<(e?: unknown) => unknown>> = {};
   const body = el('body');
   const documentStub = {
@@ -183,8 +191,25 @@ function setup(): Harness {
     createElementNS: (_ns: string, t: string) => el(t),
     createTextNode: (text: string) => ({ nodeType: 3, textContent: text }),
     getElementById: (id: string) => {
-      if (!byId.has(id)) byId.set(id, el('div'));
-      return byId.get(id)!;
+      if (byId.has(id)) return byId.get(id)!;
+      // 动态挂载的节点（如惰性创建的抽屉）先按 id 扫真实树，模拟真实语义。
+      const findById = (node: StubNode): StubNode | null => {
+        if (node.id === id) return node;
+        for (const child of node.children) {
+          const found = findById(child);
+          if (found) return found;
+        }
+        return null;
+      };
+      const attached = findById(body);
+      if (attached) {
+        byId.set(id, attached);
+        return attached;
+      }
+      if (nullIds.has(id)) return null;
+      const created = el('div');
+      byId.set(id, created);
+      return created;
     },
     querySelector: () => null,
     querySelectorAll: () => [],
@@ -266,6 +291,7 @@ function setup(): Harness {
       "renderActionCenter:typeof renderActionCenter!=='undefined'?renderActionCenter:null," +
       "renderMaintenancePanel:typeof renderMaintenancePanel!=='undefined'?renderMaintenancePanel:null," +
       "setView:typeof setView!=='undefined'?setView:null," +
+      "consumePendingAlertDetail:typeof consumePendingAlertDetail!=='undefined'?consumePendingAlertDetail:null," +
       "resolveViewRequest:typeof resolveViewRequest!=='undefined'?resolveViewRequest:null," +
       "renderSettings:typeof renderSettings!=='undefined'?renderSettings:null," +
       "renderModelPool:typeof renderModelPool!=='undefined'?renderModelPool:null," +
@@ -299,6 +325,9 @@ function setup(): Harness {
     },
     setJsonResponse: (value: unknown) => {
       fetchJson = value;
+    },
+    setIdNull: (id: string) => {
+      nullIds.add(id);
     },
     asyncErrors,
     text,
@@ -361,6 +390,72 @@ test('两级路由：旧 hash 别名规范化为 视图/子模块，未知视图
   const setView = h.obs.setView as (r: string, u?: boolean) => unknown;
   setView('bogus/whatever', false);
   assert.equal((h.obs.getObsState as () => Record<string, unknown>)().view, 'overview', '未知视图回落总览');
+});
+
+test('告警深链 #alert=<key>：定位告警视图并打开详情抽屉，未知键回落列表', () => {
+  const h = setup();
+  const obs = h.obs;
+  const consume = obs.consumePendingAlertDetail as () => void;
+  assert.equal(typeof consume, 'function', '应能取到 consumePendingAlertDetail');
+  const state = obs.getObsState as () => Record<string, unknown>;
+  h.setIdNull('alertDetailDrawer');
+  (obs.setObsState as (p: Record<string, unknown>) => unknown)({
+    pendingAlertDetail: 'nginx-5xx-log',
+    config: {
+      definitions: [{ key: 'nginx-5xx-log', category: 'log', title: 'Nginx 5xx 日志异常' }],
+      rules: {
+        'nginx-5xx-log': {
+          enabled: true,
+          windowMinutes: 5,
+          threshold: 3,
+          criticalThreshold: 10,
+          minSamples: 1,
+          openAfter: 2,
+          resolveAfter: 2,
+          notificationChannel: 'default',
+          createdAt: '2026-09-24T00:00:00Z',
+        },
+      },
+      objects: null,
+      global: {
+        enabled: true,
+        environmentLabel: 'production / 47110',
+        autoRemediation: false,
+        remediationCooldownMinutes: 10,
+        remindersEnabled: false,
+        notifyOnRecovery: true,
+        cooldownMinutes: 30,
+        maxNotificationsPerHour: 20,
+      },
+      notification: {
+        channel: 'feishu',
+        channels: [],
+        enabled: true,
+        shadowMode: false,
+        minSeverity: 'warning',
+        criticalChannel: '',
+        warningChannel: '',
+      },
+    },
+  });
+  h.setJsonResponse({ ok: true, objects: [] });
+  consume();
+  assert.equal(state().view, 'alerts', '深链应定位到告警视图');
+  assert.equal(state().pendingAlertDetail, null, '深链待办应被消费');
+  const drawer = h.all(h.body).find((n) => n.id === 'alertDetailDrawer');
+  assert.ok(drawer, '详情抽屉应挂载到 body');
+  assert.ok(drawer!.classList.contains('open'), '抽屉应处于打开状态');
+  assert.ok(h.text(drawer!).includes('Nginx 5xx 日志异常'), '抽屉标题应为命中策略');
+
+  // 未知键（如租户命名空间探针）：回落到告警策略列表，不打开抽屉。
+  (obs.setObsState as (p: Record<string, unknown>) => unknown)({
+    pendingAlertDetail: 't.acme.probe-login',
+  });
+  consume();
+  assert.equal(state().view, 'alerts');
+  assert.equal(state().pendingAlertDetail, null);
+  assert.ok(!drawer!.classList.contains('open'), '未知键不得打开详情抽屉');
+  assert.equal(h.innerHTMLWrites.length, 0);
 });
 
 test('系统设置子模块：setView 记录子模块，renderSettings 分发四张配置卡', () => {
