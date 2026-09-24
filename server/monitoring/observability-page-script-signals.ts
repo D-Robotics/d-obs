@@ -348,6 +348,8 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         bind('signalMetricInput','keydown',event=>{if(event.key==='Enter')runSignalsMetricQuery()});
         bind('signalSavePanelBtn','click',saveSignalsPanel);
         bind('signalLogQueryBtn','click',runSignalsLogQuery);
+        bind('signalLogService','change',runSignalsLogQuery);
+        bind('signalLogOwner','change',runSignalsLogQuery);
         bind('promqlRunBtn','click',runPromqlQuery);
         bind('promqlInput','keydown',event=>{if(event.key==='Enter')runPromqlQuery()});
         bind('anomalyDetectBtn','click',loadMetricAnomalies);
