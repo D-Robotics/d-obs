@@ -3,9 +3,12 @@
  * 恢复之前，同级内保持 reconcile 的稳定产出顺序。
  */
 import assert from 'node:assert/strict';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 
-import { prioritizeAlertTransitions } from './studio-alert-worker.js';
+import { assertStatePathWritable, prioritizeAlertTransitions } from './studio-alert-worker.js';
 import type { AlertTransition } from './studio-alert-state.js';
 
 function transition(
@@ -65,4 +68,32 @@ test('不修改输入数组（返回新数组）', () => {
     input.map((t) => t.key),
     copy.map((t) => t.key),
   );
+});
+
+test('状态路径可写探测：可写目录通过且不留残留文件', async () => {
+  const previous = process.env.RDK_ALERT_STATE_PATH;
+  const dir = await mkdtemp(path.join(tmpdir(), 'alert-state-probe-'));
+  try {
+    process.env.RDK_ALERT_STATE_PATH = path.join(dir, 'nested', 'state.json');
+    await assertStatePathWritable();
+    const entries = await readdir(path.join(dir, 'nested'));
+    assert.deepEqual(entries, []);
+  } finally {
+    process.env.RDK_ALERT_STATE_PATH = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('状态路径可写探测：目录被文件占据时拒绝（阻止评估与投递）', async () => {
+  const previous = process.env.RDK_ALERT_STATE_PATH;
+  const dir = await mkdtemp(path.join(tmpdir(), 'alert-state-blocked-'));
+  try {
+    const blocker = path.join(dir, 'blocker');
+    await writeFile(blocker, '', { encoding: 'utf8' });
+    process.env.RDK_ALERT_STATE_PATH = path.join(blocker, 'state.json');
+    await assert.rejects(() => assertStatePathWritable());
+  } finally {
+    process.env.RDK_ALERT_STATE_PATH = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
 });

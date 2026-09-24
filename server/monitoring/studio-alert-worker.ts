@@ -1,7 +1,7 @@
 /** 独立告警 worker：由 systemd 每分钟巡检，状态落盘并同步中心 incident。 */
 import { execFile } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { mkdir, readFile, rename, statfs, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, statfs, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -163,6 +163,17 @@ async function saveState(state: AlertWorkerState): Promise<void> {
   const temp = `${target}.${process.pid}.tmp`;
   await writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   await rename(temp, target);
+}
+
+/** 状态持久化必须先于任何评估/投递验证：保存若在投递之后才失败，下一轮会以空白
+ *  状态把同一批告警当“首次失败”重发（2026-09-24 生产通知风暴的根因）。探测与
+ *  saveState 同路径同语义（mkdir + 写临时文件），在 systemd 沙箱/只读挂载下提前暴露。 */
+export async function assertStatePathWritable(): Promise<void> {
+  const target = statePath();
+  const probe = `${target}.probe-${process.pid}.tmp`;
+  await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  await writeFile(probe, '', { encoding: 'utf8', mode: 0o600 });
+  await rm(probe, { force: true });
 }
 
 async function createPool(): Promise<Pool> {
@@ -1141,6 +1152,13 @@ async function runWorker(): Promise<void> {
     return;
   }
   const previous = await loadState();
+  try {
+    await assertStatePathWritable();
+  } catch (error) {
+    throw new Error(
+      `状态文件路径不可写（${statePath()}）：${sanitizeOpsSummary(error, 200)} — 已阻止本轮评估与投递，避免状态无法持久化导致的通知重发`,
+    );
+  }
   let state = previous;
   let p: Pool | null = null;
   // 维护窗口键集合与升级候选：try 块内收集（DB 不可用时为空/空集，投递不受影响）。
