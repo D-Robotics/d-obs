@@ -39,6 +39,16 @@ import { flushMetricQueueNow } from './observability/ai-ecosystem-metrics-store.
 import { startConfiguredAiEcosystemGrpcServer, type AiEcosystemGrpcRuntime } from './observability/ai-ecosystem-grpc.js';
 import { startTelemetryGovernanceRuntime } from './observability/governance-runtime-service.js';
 import { resolveTrustProxySetting } from './trusted-proxy.js';
+import { flushSelfLogs, installSelfProcessGuards, recordSelfLog } from './observability/self-log-reporter.js';
+import { installNodeConsoleErrorTelemetry } from './monitoring/node-console-error-telemetry.js';
+
+// 自观测回灌：进程级错误守卫 + console ERROR/WARN 摘要写入 OTLP 日志域
+//（生产 NODE_ENV=production 时激活，见 node-console-error-telemetry.ts）。
+installSelfProcessGuards();
+installNodeConsoleErrorTelemetry({
+  component: 'web',
+  selfLogSink: (entry) => recordSelfLog('web', entry),
+});
 
 const app = express();
 app.disable('x-powered-by');
@@ -217,6 +227,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     server.close(async () => {
       // 退出前把异步指标队列刷完（有上限，防卡死退出）。
       await flushMetricQueueNow().catch(() => undefined);
+      await flushSelfLogs().catch(() => undefined);
       process.exit(0);
     });
   });

@@ -7,6 +7,7 @@
  * behaviour, emits only a low-sensitivity summary, and always fails open.
  */
 import { recordOpsEvent, sanitizeOpsSummary, type OpsEventInput } from './ops-event-store.js';
+import type { SelfLogEntry, SelfLogLevel, SelfLogSink } from '../observability/self-log-reporter.js';
 
 type OpsEventRecorder = (input: OpsEventInput) => Promise<boolean> | boolean | void;
 
@@ -15,6 +16,8 @@ interface InstallOptions {
   /** Test-only escape hatch; production is enabled automatically. */
   force?: boolean;
   recorder?: OpsEventRecorder;
+  /** ERROR/WARN 摘要同步喂给 OTLP 日志域（与 ops 事件通路独立，'[process]' 信号也要进）。 */
+  selfLogSink?: SelfLogSink;
 }
 
 interface ConsoleTelemetryGlobal {
@@ -22,6 +25,8 @@ interface ConsoleTelemetryGlobal {
 }
 
 type ConsoleLevel = 'error' | 'warn';
+
+const WARN_NOISE_PATTERN = /\b(?:error|failed|failure|exception|timeout|unavailable)\b|(?:失败|异常|错误|超时|不可用)/i;
 
 function safeObjectErrorField(value: unknown, key: 'name' | 'message' | 'code'): unknown {
   if (!value || typeof value !== 'object') return undefined;
@@ -89,9 +94,7 @@ export function buildNodeConsoleErrorOpsEvent(
   if (
     logLevel === 'warn' &&
     !args.some((value) => value instanceof Error) &&
-    !/\b(?:error|failed|failure|exception|timeout|unavailable)\b|(?:失败|异常|错误|超时|不可用)/i.test(
-      summary,
-    )
+    !WARN_NOISE_PATTERN.test(summary)
   ) {
     return null;
   }
@@ -119,6 +122,39 @@ export function buildNodeConsoleErrorOpsEvent(
   };
 }
 
+/**
+ * 日志域条目与 ops 事件共用同一套脱敏与降噪；区别是保留 '[process]'
+ * 前缀的进程级信号（ops 事件通路刻意跳过它们），并跳过事件入库失败的
+ * 自报告前缀以防回灌自我循环。
+ */
+export function buildConsoleSelfLogEntry(
+  args: unknown[],
+  level: SelfLogLevel,
+): SelfLogEntry | null {
+  const first = typeof args[0] === 'string' ? args[0] : '';
+  if (/^\[ops-events\]\s+insert failed:/i.test(first)) return null;
+  const summary = sanitizeOpsSummary(args.map(safeArgumentText).join(' '), 500);
+  if (!summary) return null;
+  if (
+    level === 'warn' &&
+    !args.some((value) => value instanceof Error) &&
+    !WARN_NOISE_PATTERN.test(summary)
+  ) {
+    return null;
+  }
+  const error = firstError(args);
+  const errorName = sanitizeOpsSummary(error?.name ?? '', 80);
+  const frame = topStackFrame(error);
+  const tag = consoleTag(args);
+  return {
+    level,
+    summary,
+    ...(errorName ? { errorName } : {}),
+    ...(frame ? { topFrame: frame } : {}),
+    ...(tag ? { tag } : {}),
+  };
+}
+
 export function installNodeConsoleErrorTelemetry(options: InstallOptions): () => void {
   if (!options.force && process.env.NODE_ENV !== 'production') return () => {};
   const telemetryGlobal = globalThis as typeof globalThis & ConsoleTelemetryGlobal;
@@ -139,10 +175,19 @@ export function installNodeConsoleErrorTelemetry(options: InstallOptions): () =>
     } catch {
       return;
     }
-    if (!event) return;
+    let entry: SelfLogEntry | null = null;
+    if (options.selfLogSink) {
+      try {
+        entry = buildConsoleSelfLogEntry(args, 'error');
+      } catch {
+        entry = null;
+      }
+    }
+    if (!event && !entry) return;
     emitting = true;
     try {
-      Promise.resolve(recorder(event)).catch(() => undefined);
+      if (entry) options.selfLogSink?.(entry);
+      if (event) Promise.resolve(recorder(event)).catch(() => undefined);
     } catch {
       // Error telemetry must never become a second application error.
     } finally {
@@ -159,10 +204,19 @@ export function installNodeConsoleErrorTelemetry(options: InstallOptions): () =>
     } catch {
       return;
     }
-    if (!event) return;
+    let entry: SelfLogEntry | null = null;
+    if (options.selfLogSink) {
+      try {
+        entry = buildConsoleSelfLogEntry(args, 'warn');
+      } catch {
+        entry = null;
+      }
+    }
+    if (!event && !entry) return;
     emitting = true;
     try {
-      Promise.resolve(recorder(event)).catch(() => undefined);
+      if (entry) options.selfLogSink?.(entry);
+      if (event) Promise.resolve(recorder(event)).catch(() => undefined);
     } catch {
       // Error telemetry must never become a second application error.
     } finally {

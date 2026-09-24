@@ -26,6 +26,8 @@ import {
 } from './synthetic-probes.js';
 import { collectServiceLevelBurnObservation } from './studio-alert-slo.js';
 import { scanRecentMetricAnomalies } from '../observability/metric-anomalies.js';
+import { flushSelfLogs, installSelfProcessGuards, recordSelfLog } from '../observability/self-log-reporter.js';
+import { installNodeConsoleErrorTelemetry } from './node-console-error-telemetry.js';
 import {
   ensureServiceLevelSchema,
   recordServiceLevelSamples,
@@ -1496,6 +1498,11 @@ const invokedAsScript = (() => {
 })();
 
 if (invokedAsScript) {
+  installSelfProcessGuards();
+  installNodeConsoleErrorTelemetry({
+    component: 'alert-worker',
+    selfLogSink: (entry) => recordSelfLog('alert-worker', entry),
+  });
   const command = process.argv.slice(2)[0];
   if (command === '--check-config') {
     loadAlertConfig()
