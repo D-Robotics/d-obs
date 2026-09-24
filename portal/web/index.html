@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RDK 产品门户 — D-Robotics 开发者产品矩阵</title>
+<meta name="description" content="D-Robotics RDK 产品矩阵：RDK Studio 开发者工作台、RDK 训练平台与 RDK 可观测平台，覆盖机器人开发、训练与运维全生命周期。" />
+<link rel="icon" href="assets/rdk-studio-icon.png" />
+<link rel="stylesheet" href="assets/style.css" />
+</head>
+<body id="top">
+
+<header class="site-header">
+  <div class="shell header-inner">
+    <a class="brand" href="#top" aria-label="返回顶部">
+      <span class="brand-mark" aria-hidden="true">›_</span>
+      <span class="brand-text">
+        <strong>RDK 产品门户</strong>
+        <small>D-Robotics</small>
+      </span>
+    </a>
+    <nav class="top-nav" aria-label="页面导航">
+      <a href="#products" class="is-active" data-spy="products">产品矩阵</a>
+      <a href="#studio" data-spy="studio">开发者工作台</a>
+      <a href="#learning" data-spy="learning">训练与仿真</a>
+      <a href="#observability" data-spy="observability">运维与可观测</a>
+    </nav>
+    <button type="button" class="all-products-btn" id="open-catalog" aria-haspopup="dialog" aria-controls="catalog-overlay">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16"/></svg>
+      全部产品
+    </button>
+  </div>
+</header>
+
+<main>
+  <!-- ============ Hero ============ -->
+  <section class="hero" aria-label="产品矩阵概览">
+    <div class="shell hero-grid">
+      <div class="hero-copy reveal">
+        <h1>三个产品，覆盖机器人<em>开发 · 训练 · 运维</em></h1>
+        <p class="hero-sub">RDK Studio、RDK 训练平台与 RDK 可观测平台——从开发板上的第一行代码，到生产环境的持续运维。</p>
+        <div class="hero-actions">
+          <button type="button" class="btn btn-primary" id="hero-open-catalog" aria-haspopup="dialog" aria-controls="catalog-overlay">浏览全部产品</button>
+        </div>
+      </div>
+      <div class="hero-visual reveal" aria-hidden="true">
+        <div class="hero-frame">
+          <div class="hero-frame-bar">
+            <i></i><i></i><i></i>
+            <span>RDK Studio · 工作台</span>
+          </div>
+          <img src="assets/studio-hero.jpg" alt="" loading="eager" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 产品矩阵 ============ -->
+  <section class="products-section" id="products" aria-labelledby="products-title">
+    <div class="shell">
+      <h2 class="section-title reveal" id="products-title">产品矩阵</h2>
+
+      <div class="products-grid">
+        <a class="product-card tone-dev reveal" href="#studio">
+          <span class="product-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22"><rect x="3.2" y="4.2" width="17.6" height="15.6" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m7.4 9.4 3 2.6-3 2.6M12.6 15h4.2"/></svg>
+          </span>
+          <span class="product-card-name">RDK Studio <i class="badge badge-hot">HOT</i></span>
+          <span class="product-card-desc">一体化 AI 原生工作台，开发、运行与调试 RDK 机器人的完整闭环。</span>
+          <span class="product-card-caps"><i>AI Agent 协作</i><i>设备连接与烧录</i><i>终端 · 文件 · 桌面 · IDE</i><i>自动化工作流</i></span>
+        </a>
+
+        <a class="product-card tone-train reveal" href="#learning">
+          <span class="product-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M3 13h3.4l2.2-6.4 4 11 2.4-7h6"/></svg>
+          </span>
+          <span class="product-card-name">RDK 训练平台 <i class="badge badge-new">NEW</i></span>
+          <span class="product-card-desc">机器人学习工作台，从浏览器仿真到 RDK-X5 真机受控部署。</span>
+          <span class="product-card-caps"><i>仿真与录制</i><i>策略训练</i><i>Sim2Real 评测</i><i>受控部署</i></span>
+        </a>
+
+        <a class="product-card tone-ops reveal" href="#observability">
+          <span class="product-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M12 4.8a7.2 7.2 0 0 1 7.2 7.2M12 1.6A10.4 10.4 0 0 1 22.4 12"/></svg>
+          </span>
+          <span class="product-card-name">RDK 可观测平台</span>
+          <span class="product-card-desc">独立可观测平台，一个进程提供运营工作台、告警、追踪与边缘设备观测。</span>
+          <span class="product-card-caps"><i>运营工作台与 SLO</i><i>告警与自愈</i><i>链路追踪</i><i>边缘设备观测</i><i>观测查询</i><i>生态接入</i></span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RDK Studio ============ -->
+  <section class="detail-section detail-alt tone-dev" id="studio" aria-labelledby="studio-title">
+    <div class="shell detail-grid">
+      <div class="detail-copy reveal">
+        <p class="detail-kicker"><span class="kicker-dot"></span>开发者工作台</p>
+        <h2 id="studio-title">RDK Studio</h2>
+        <p class="detail-lead">面向 D-Robotics RDK 机器人开发、运行与调试的一体化 AI 原生工作台。</p>
+        <p class="detail-para">基于 DSH 的 Agent 理解项目、经受控工具操作已连接设备、解释失败，把终端、文件、远程桌面、编辑器、烧录流程和验证证据放在同一产品中。</p>
+        <div class="detail-caps">
+          <div class="cap-card"><h3>AI Agent 协作</h3><p>Agent 理解项目上下文，经受控工具操作设备并解释失败</p></div>
+          <div class="cap-card"><h3>烧录与验证</h3><p>系统烧录流程化，验证证据同屏留存、可回溯</p></div>
+          <div class="cap-card"><h3>一体化界面</h3><p>终端、文件、远程桌面与 IDE 收敛到同一工作台</p></div>
+          <div class="cap-card"><h3>自动化工作流</h3><p>可复用 Skills 把重复开发步骤固化为手动可控的一键任务</p></div>
+        </div>
+      </div>
+      <figure class="detail-media reveal">
+        <div class="media-frame">
+          <div class="media-bar"><i></i><i></i><i></i></div>
+          <img src="assets/studio-hero.jpg" alt="RDK Studio 工作台界面：连接 RDK 开发板后的终端、文件与 Agent 面板" loading="lazy" />
+        </div>
+        <figcaption>RDK Studio 连接 RDK 开发板</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ RDK 训练平台 ============ -->
+  <section class="detail-section tone-train" id="learning" aria-labelledby="learning-title">
+    <div class="shell detail-grid detail-grid-reverse">
+      <div class="detail-copy reveal">
+        <p class="detail-kicker kicker-train"><span class="kicker-dot"></span>训练与仿真</p>
+        <h2 id="learning-title">RDK 训练平台</h2>
+        <p class="detail-lead">从浏览器里的第一步，到 RDK-X5 上的下一步。</p>
+        <p class="detail-para">仿真、录制、训练、评测与部署围绕同一份可追溯模型契约：浏览器负责观察和录制，服务端负责权限、制品与审计，板端与云端 adapter 负责真正的执行。</p>
+        <div class="detail-caps">
+          <div class="cap-card"><h3>仿真与录制</h3><p>浏览器低门槛动作入口，轨迹沉淀为统一契约</p></div>
+          <div class="cap-card"><h3>策略训练</h3><p>PPO、MLP 行为克隆与 ACT，ONNX 导出数值校验</p></div>
+          <div class="cap-card"><h3>Sim2Real 评测</h3><p>统一时间轴回放、奖励曲线与虚实偏差摘要</p></div>
+          <div class="cap-card"><h3>受控部署</h3><p>制品、板型预检与人工审批构成可审计发布链</p></div>
+        </div>
+      </div>
+      <figure class="detail-media reveal">
+        <div class="media-frame frame-train">
+          <img src="assets/learning-hero.svg" alt="RDK 训练平台：从浏览器仿真到 RDK-X5 真机的产品闭环" loading="lazy" />
+        </div>
+        <figcaption>从仿真到真机的产品闭环</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ RDK 可观测平台 ============ -->
+  <section class="detail-section detail-alt tone-ops" id="observability" aria-labelledby="observability-title">
+    <div class="shell detail-grid">
+      <div class="detail-copy reveal">
+        <p class="detail-kicker kicker-ops"><span class="kicker-dot"></span>运维与可观测</p>
+        <h2 id="observability-title">RDK 可观测平台</h2>
+        <p class="detail-lead">面向生产环境的独立可观测平台，一个进程提供全部能力。</p>
+        <p class="detail-para">可独立部署、独立扩缩容，与业务站点只通过 HTTP 端点和版本化 contract 耦合；全部能力均有 JSON API，支持 OTLP 三信号与 Prometheus 接入。</p>
+        <div class="detail-caps">
+          <div class="cap-card"><h3>运营工作台与 SLO</h3><p>当前态势、SLO 错误预算与证据化行动环</p></div>
+          <div class="cap-card"><h3>告警与自愈</h3><p>三类规则 60 秒评估，六渠道投递与白名单剧本</p></div>
+          <div class="cap-card"><h3>事故管理</h3><p>事故工作台、证据化根因假设与行动审批闭环</p></div>
+          <div class="cap-card"><h3>链路追踪</h3><p>Agent 原生 Trace 与按 run 下钻的运行证据链</p></div>
+          <div class="cap-card"><h3>边缘设备观测</h3><p>板级注册、心跳在线与 CPU/内存/温度/BPU 指标</p></div>
+          <div class="cap-card"><h3>观测查询与面板</h3><p>OTLP 落库指标与日志查询，可保存为自定义面板</p></div>
+        </div>
+      </div>
+      <div class="detail-media obs-panel reveal" role="img" aria-label="RDK 可观测平台工作台能力分区示意">
+        <div class="obs-panel-head">
+          <span class="obs-dot"></span><span class="obs-dot"></span><span class="obs-dot"></span>
+          <span class="obs-panel-title">运营工作台 · 能力分区</span>
+        </div>
+        <div class="obs-panel-body">
+          <div class="obs-panel-grid">
+            <span>当前态势</span><span>事故调查</span><span>告警策略</span><span>链路追踪</span>
+            <span>运营指标</span><span>观测查询</span><span>边缘设备</span><span>数据库资产</span>
+            <span>模型池</span><span>通知模板</span><span>租户管理</span><span>公开状态页</span>
+          </div>
+          <div class="obs-panel-foot">
+            <span class="obs-metric"><strong>SLO</strong>错误预算</span>
+            <span class="obs-metric"><strong>60s</strong>规则评估周期</span>
+            <span class="obs-metric"><strong>6</strong>告警投递渠道</span>
+            <span class="obs-metric"><strong>OTLP</strong>三信号接入</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ============ 全部产品目录浮层 ============ -->
+<div class="catalog-overlay" id="catalog-overlay" hidden>
+  <div class="overlay-backdrop" data-close></div>
+  <div class="catalog-panel" role="dialog" aria-modal="true" aria-label="全部产品目录">
+    <div class="catalog-head">
+      <h2 class="catalog-title">全部产品</h2>
+      <div class="catalog-search">
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z"/></svg>
+        <input id="catalog-search-input" type="search" placeholder="搜索产品或产品能力" aria-label="搜索产品或产品能力" />
+      </div>
+      <button type="button" class="catalog-close" data-close aria-label="关闭产品目录">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="catalog-body">
+      <div class="catalog-cols">
+        <div class="cat-group">
+          <a class="ov-product tone-dev" href="#studio">
+            <span class="ov-product-head">
+              <span class="ov-product-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18"><rect x="3.2" y="4.2" width="17.6" height="15.6" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m7.4 9.4 3 2.6-3 2.6M12.6 15h4.2"/></svg>
+              </span>
+              <span class="ov-product-name">RDK Studio <i class="badge badge-hot">HOT</i></span>
+            </span>
+            <span class="ov-product-desc">面向 RDK 机器人开发、运行与调试的一体化 AI 原生工作台</span>
+            <span class="ov-caps"><i>AI Agent 协作</i><i>设备连接与烧录</i><i>终端 · 文件 · 远程桌面 · IDE</i><i>自动化工作流</i></span>
+          </a>
+        </div>
+        <div class="cat-group">
+          <a class="ov-product tone-train" href="#learning">
+            <span class="ov-product-head">
+              <span class="ov-product-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M3 13h3.4l2.2-6.4 4 11 2.4-7h6"/></svg>
+              </span>
+              <span class="ov-product-name">RDK 训练平台 <i class="badge badge-new">NEW</i></span>
+            </span>
+            <span class="ov-product-desc">从浏览器仿真到 RDK-X5 真机的机器人学习工作台</span>
+            <span class="ov-caps"><i>浏览器仿真与录制</i><i>策略训练</i><i>Sim2Real 评测</i><i>遥测回放与数据体检</i><i>受控部署与板型预检</i></span>
+          </a>
+        </div>
+        <div class="cat-group">
+          <a class="ov-product tone-ops" href="#observability">
+            <span class="ov-product-head">
+              <span class="ov-product-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M12 4.8a7.2 7.2 0 0 1 7.2 7.2M12 1.6A10.4 10.4 0 0 1 22.4 12"/></svg>
+              </span>
+              <span class="ov-product-name">RDK 可观测平台</span>
+            </span>
+            <span class="ov-product-desc">面向生产环境的独立可观测平台，一个进程提供全部能力</span>
+            <span class="ov-caps"><i>运营工作台与 SLO</i><i>告警与自愈</i><i>事故管理与副驾</i><i>链路追踪</i><i>边缘设备观测</i><i>观测查询与自定义面板</i><i>公开状态页</i><i>开放生态接入</i><i>模型池控制面</i></span>
+          </a>
+        </div>
+      </div>
+    </div>
+    <p class="catalog-empty" id="catalog-empty" hidden>没有匹配的产品或能力，请更换关键词。</p>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="shell footer-bar">
+    <a class="brand brand-invert" href="#top">
+      <span class="brand-mark" aria-hidden="true">›_</span>
+      <span class="brand-text"><strong>RDK 产品门户</strong><small>D-Robotics</small></span>
+    </a>
+    <nav class="footer-links" aria-label="产品矩阵">
+      <a href="#studio">RDK Studio</a>
+      <a href="#learning">RDK 训练平台</a>
+      <a href="#observability">RDK 可观测平台</a>
+      <button type="button" class="footer-link-btn" id="grid-open-catalog" aria-haspopup="dialog" aria-controls="catalog-overlay">全部产品目录</button>
+    </nav>
+  </div>
+  <div class="footer-bottom">
+    <div class="shell">
+      <p>© 2026 D-Robotics · 内容整理自各产品官方资料</p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/main.js"></script>
+</body>
+</html>
