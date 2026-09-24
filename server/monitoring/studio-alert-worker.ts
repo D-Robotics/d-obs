@@ -1260,7 +1260,10 @@ async function runWorker(): Promise<void> {
       );
       return new Set<string>();
     });
-    pendingEscalations = await collectEscalationCandidates(p).catch(
+    pendingEscalations = await collectEscalationCandidates(p, {
+      ackTimeoutMinutes: config.notification.escalation?.ackTimeoutMinutes,
+      maxEscalations: config.notification.escalation?.maxEscalations,
+    }).catch(
       (error): import('./alert-escalation.js').EscalationCandidate[] => {
         console.warn(
           '[alert-worker] escalation pass failed:',

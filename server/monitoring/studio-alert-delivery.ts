@@ -179,7 +179,11 @@ function buildNotificationText(transition: AlertTransition, config: AlertConfig)
         : config.notification.actionGuide,
     dashboardUrl: alertDetailDeepLink(config, transition.key),
   };
-  const rendered = config.notification.messageTemplate
+  const template =
+    transition.kind === 'resolved' && config.notification.recoveryTemplate
+      ? config.notification.recoveryTemplate
+      : config.notification.messageTemplate;
+  const rendered = template
     .replace(
       /\{\{([a-zA-Z]+)\}\}/g,
       (_match, key: string) => values[key as keyof typeof values] ?? '',
@@ -684,9 +688,25 @@ export async function deliverTransition(
   }
   const levelOverride =
     levelChannel && levelChannel !== 'none' && levelChannel !== 'default' ? levelChannel : '';
+  // 升级链渠道路由（P3）：escalated 转换可路由到指定渠道（值班/经理群语义，
+  // 吸收理想 upgrade_assign_user 的渠道化等价）；'none' = 升级仅记录不外发。
+  const escalationChannel =
+    transition.kind === 'escalated'
+      ? String(config.notification.escalation?.channel ?? '')
+      : '';
+  if (!options?.forceTest && escalationChannel === 'none') {
+    return {
+      delivered: false,
+      channel: 'suppressed',
+      attempts: 0,
+      error: 'escalation_notification_disabled',
+    };
+  }
+  const escalationOverride = escalationChannel !== 'none' ? escalationChannel : '';
   const rawChannel =
     options?.channel ??
-    (levelOverride ||
+    (escalationOverride ||
+      levelOverride ||
       (ruleChannel === 'default' ? config.notification.channel : ruleChannel));
   if (!isAlertDeliveryChannel(rawChannel)) {
     return {

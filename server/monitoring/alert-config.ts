@@ -405,6 +405,14 @@ export interface AlertConfig {
     channel: AlertDeliveryChannel;
     criticalChannel: string;
     warningChannel: string;
+    /** 恢复通知正文模板；空串沿用 messageTemplate（P3）。 */
+    recoveryTemplate: string;
+    /** 升级链（P3）：无人确认超时升级重发，可路由到指定渠道（'none'=仅记录）。 */
+    escalation: {
+      ackTimeoutMinutes: number;
+      maxEscalations: number;
+      channel: string;
+    };
     minSeverity: 'warning' | 'critical';
     titlePrefix: string;
     messageTemplate: string;
@@ -475,6 +483,8 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
     dashboardUrl: 'http://127.0.0.1:47110/ops-observability#alerts',
       criticalChannel: '',
       warningChannel: '',
+    recoveryTemplate: '',
+    escalation: { ackTimeoutMinutes: 15, maxEscalations: 3, channel: '' },
     dingtalkWebhookUrl: '',
     wecomWebhookUrl: '',
     slackWebhookUrl: '',
@@ -760,6 +770,17 @@ const alertConfigSchema = z
         warningChannel: z
           .union([z.literal(''), z.enum(['default', ...ALERT_DELIVERY_CHANNEL_VALUES, 'none'])])
           .default(''),
+        recoveryTemplate: z.string().trim().max(2_000).default(''),
+        escalation: z
+          .object({
+            ackTimeoutMinutes: z.number().int().min(5).max(720),
+            maxEscalations: z.number().int().min(0).max(10),
+            channel: z
+              .union([z.literal(''), z.enum(['default', ...ALERT_DELIVERY_CHANNEL_VALUES, 'none'])])
+              .default(''),
+          })
+          .strict()
+          .default({ ackTimeoutMinutes: 15, maxEscalations: 3, channel: '' }),
         feishuWebhookUrl: z.string().max(2_048),
         webhookUrl: z.string().max(2_048),
         bearerSecret: z.string().max(512),
