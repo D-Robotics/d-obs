@@ -270,6 +270,7 @@ function setup(): Harness {
       "renderSettings:typeof renderSettings!=='undefined'?renderSettings:null," +
       "renderModelPool:typeof renderModelPool!=='undefined'?renderModelPool:null," +
       "renderBoardPanels:typeof renderBoardPanels!=='undefined'?renderBoardPanels:null," +
+      "renderObjects:typeof renderObjects!=='undefined'?renderObjects:null," +
       "setObsState:(patch)=>Object.assign(state,patch)," +
       "getObsState:()=>state" +
       "};})();";
@@ -606,4 +607,36 @@ test('看板：复合路由、工具条渲染、面板卡片、服务变量与�
   const body = JSON.parse(putAfterDelete!.body!);
   assert.equal(body.spec.panels.length, 1, '删除面板后 spec 应只剩一张');
   assert.equal(body.spec.panels[0].title, 'P2');
+});
+
+test('告警对象：本机数据源聚合为服务器身份，扩展层渲染不得中断数据装载', async () => {
+  const h = setup();
+  const definitions = [
+    { key: 'node-cpu-load', category: 'metric', title: 'CPU 负载' },
+    { key: 'internal-health', category: 'health', title: '内部健康' },
+    { key: 'nginx-5xx-log', category: 'log', title: 'Nginx 5xx' },
+  ];
+  const overview = {
+    incidents: [],
+    checks: [{ key: 'node-cpu-load', category: 'metric', checkedAt: '2026-09-24T10:00:00Z', status: 'ok' }],
+  };
+  (h.obs.setObsState as (p: Record<string, unknown>) => unknown)({ config: { definitions }, overview, objects: null });
+  h.setJsonResponse({ ok: true, objects: [] });
+
+  const renderObjects = h.obs.renderObjects as () => void;
+  assert.equal(typeof renderObjects, 'function', 'renderObjects 应可从钩子取得');
+  renderObjects();
+
+  const root = h.byIdNode('objectsContent');
+  assert.ok(root, '对象容器应存在');
+  const layerNodes = h.all(root).filter((n) => n.getAttribute('data-alert-objects-layer') === '1');
+  assert.equal(layerNodes.length, 1, '扩展层应渲染且只渲染一份');
+
+  const tableText = h.text(root);
+  assert.ok(tableText.includes('服务器 · 本机'), '本机指标/systemd 数据源应聚合为服务器身份');
+  assert.ok(tableText.includes('网关'), 'Nginx 数据源应归入网关分类');
+  assert.ok(tableText.includes('2 条规则'), '两个本机数据源应聚合到同一服务器对象');
+
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(h.asyncErrors, [], '渲染与注册表读取不得产生未捕获异常');
 });
