@@ -3,7 +3,10 @@ import {
   type FlywheelDataHealth,
   type FlywheelLoginBreakdown,
 } from '../../shared/ops-data-health.js';
-import type { FlywheelOverview } from './flywheel-metrics-types.js';
+import type {
+  FlywheelOverview,
+  FlywheelSkillLifecycle,
+} from './flywheel-metrics-types.js';
 import { readConversationAggregate, readDailyActiveUsers } from './conversation-aggregate-store.js';
 export type { FlywheelDailyPoint, FlywheelOverview } from './flywheel-metrics-types.js';
 
@@ -58,6 +61,16 @@ function shortScalar(value: unknown, max = 160): string | null {
   const text = String(value ?? '').trim();
   return text ? text.slice(0, max) : null;
 }
+
+/** Skill 生命周期事件名（主站埋点写入口径）→ 前端阶段 key。 */
+const SKILL_LIFECYCLE_EVENT_NAMES: Array<[keyof FlywheelSkillLifecycle, string]> = [
+  ['candidateWritten', 'skill_candidate_written'],
+  ['shadowStarted', 'skill_shadow_started'],
+  ['canaryStarted', 'skill_canary_started'],
+  ['canaryPassed', 'skill_canary_passed'],
+  ['personalPromoted', 'skill_personal_promoted'],
+  ['publicApproved', 'skill_review_approved'],
+];
 
 export async function getFlywheelOverview(daysInput = 30): Promise<FlywheelOverview> {
   const days = clampDays(daysInput);
@@ -425,6 +438,99 @@ export async function getFlywheelOverview(daysInput = 30): Promise<FlywheelOverv
     // The retry_count column may not exist on older deployments.
   }
 
+  // —— Skill 数据闭环（埋点与台账由主站应用写入，d-obs 只读聚合）——
+  // 表未建的旧部署：对应指标保持 null（区别于真实的 0），dataHealth 显示未配置。
+  let skillEventsConfigured = false;
+  let skillMatchedSamples = 0;
+  let skillHitRate: number | null = null;
+  let skillEventsLastAt: string | null = null;
+  try {
+    const hit = await p.query(
+      `select count(*)::int total,
+              count(*) filter (where coalesce((properties->>'matched_count')::int, 0) > 0)::int hit,
+              max(occurred_at)::text last_at
+       from public.product_events
+       where event_name = 'skill_matched'
+         and occurred_at >= now() - make_interval(days => $1::int)`,
+      [days],
+    );
+    skillEventsConfigured = true;
+    skillMatchedSamples = num(hit.rows[0]?.total);
+    skillEventsLastAt = shortScalar(hit.rows[0]?.last_at, 64);
+    skillHitRate = skillMatchedSamples > 0 ? num(hit.rows[0]?.hit) / skillMatchedSamples : null;
+  } catch {
+    // product_events 尚未建表 → Skill 命中率保持不可用。
+  }
+
+  const lifecycle: FlywheelSkillLifecycle = {
+    candidateWritten: 0,
+    shadowStarted: 0,
+    canaryStarted: 0,
+    canaryPassed: 0,
+    personalPromoted: 0,
+    publicApproved: 0,
+  };
+  try {
+    const stageRows = await p.query(
+      `select event_name, count(*)::int n
+       from public.product_events
+       where event_name = any($2::text[])
+         and occurred_at >= now() - make_interval(days => $1::int)
+       group by 1`,
+      [days, SKILL_LIFECYCLE_EVENT_NAMES.map(([, eventName]) => eventName)],
+    );
+    for (const row of stageRows.rows) {
+      const matched = SKILL_LIFECYCLE_EVENT_NAMES.find(
+        ([, eventName]) => eventName === String(row.event_name),
+      );
+      if (matched) lifecycle[matched[0]] = num(row.n);
+    }
+  } catch {
+    // product_events 缺失时生命周期计数保持 0。
+  }
+
+  let skillLedgerConfigured = false;
+  let reviewPending: number | null = null;
+  let reviewQueueSamples = 0;
+  let reviewQueueLastAt: string | null = null;
+  let storePublished: number | null = null;
+  let storeInstalls: number | null = null;
+  let storeLastAt: string | null = null;
+  try {
+    const queue = await p.query(
+      `select count(*) filter (where human_verdict is null)::int pending,
+              count(*)::int total,
+              max(submitted_at)::text last_at
+       from public.skill_review_queue`,
+    );
+    skillLedgerConfigured = true;
+    reviewQueueSamples = num(queue.rows[0]?.total);
+    reviewPending = num(queue.rows[0]?.pending);
+    reviewQueueLastAt = shortScalar(queue.rows[0]?.last_at, 64);
+  } catch {
+    // skill_review_queue 未建表。
+  }
+  try {
+    const store = await p.query(
+      `select count(*)::int published,
+              coalesce(sum(install_count), 0)::int installs,
+              max(published_at)::text last_at
+       from public.skill_store`,
+    );
+    skillLedgerConfigured = true;
+    storePublished = num(store.rows[0]?.published);
+    storeInstalls = num(store.rows[0]?.installs);
+    storeLastAt = shortScalar(store.rows[0]?.last_at, 64);
+  } catch {
+    // skill_store 未建表。
+  }
+  const skillLedgerSamples = reviewQueueSamples + (storePublished ?? 0);
+  const skillLedgerLastAt =
+    [reviewQueueLastAt, storeLastAt]
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ?? null;
+
   const runTotal = num(runAgg.rows[0]?.total);
   const runOk = num(runAgg.rows[0]?.ok);
   const runErr = num(runAgg.rows[0]?.err);
@@ -612,6 +718,26 @@ export async function getFlywheelOverview(daysInput = 30): Promise<FlywheelOverv
       lastEventAt: journeyLastEventAt,
       coverageRate: null,
     },
+    skillEvents: {
+      state: classifyOpsDataHealth({
+        configured: skillEventsConfigured,
+        sampleCount: skillMatchedSamples,
+      }),
+      source: 'product_events · skill_matched',
+      sampleCount: skillMatchedSamples,
+      lastEventAt: skillEventsLastAt,
+      coverageRate: null,
+    },
+    skillLedger: {
+      state: classifyOpsDataHealth({
+        configured: skillLedgerConfigured,
+        sampleCount: skillLedgerSamples,
+      }),
+      source: 'skill_review_queue + skill_store',
+      sampleCount: skillLedgerSamples,
+      lastEventAt: skillLedgerLastAt,
+      coverageRate: null,
+    },
   };
 
   return {
@@ -674,6 +800,14 @@ export async function getFlywheelOverview(daysInput = 30): Promise<FlywheelOverv
     channels,
     loginBreakdown,
     acquisition,
+    flywheel: {
+      skillHitRate,
+      reviewPending,
+      storePublished,
+      storeInstalls,
+      runsWithRetry,
+      lifecycle,
+    },
     dataHealth,
   };
 }

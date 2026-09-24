@@ -53,6 +53,10 @@ export interface FlywheelDataHealth {
   feedback: OpsDataHealthSignal;
   acquisition: OpsDataHealthSignal;
   loginChannels: OpsDataHealthSignal;
+  /** Skill 事件埋点（product_events · skill_matched）；旧部署缺表时缺省。 */
+  skillEvents?: OpsDataHealthSignal;
+  /** Skill 台账（skill_review_queue / skill_store）；表未建时缺省。 */
+  skillLedger?: OpsDataHealthSignal;
 }
 
 export function classifyOpsDataHealth(input: {

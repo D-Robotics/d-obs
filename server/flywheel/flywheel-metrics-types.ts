@@ -13,6 +13,31 @@ export interface FlywheelDailyPoint {
   cancelled: number;
 }
 
+/** Skill 生命周期各阶段的 product_events 计数（窗口内）。 */
+export interface FlywheelSkillLifecycle {
+  candidateWritten: number;
+  shadowStarted: number;
+  canaryStarted: number;
+  canaryPassed: number;
+  personalPromoted: number;
+  publicApproved: number;
+}
+
+/**
+ * Skill 数据闭环聚合。埋点与台账由主站应用写入、d-obs 只读；
+ * 台账表未建的旧部署对应计数为 null（区别于真实的 0）。
+ */
+export interface FlywheelSkillOverview {
+  /** skill_matched 事件中 matched_count>0 的占比；无样本或表缺失为 null。 */
+  skillHitRate: number | null;
+  /** 待人工审核候选数（skill_review_queue.human_verdict 为空）。 */
+  reviewPending: number | null;
+  storePublished: number | null;
+  storeInstalls: number | null;
+  runsWithRetry: number | null;
+  lifecycle: FlywheelSkillLifecycle;
+}
+
 export interface FlywheelOverview {
   generatedAt: string;
   windowDays: number;
@@ -74,5 +99,6 @@ export interface FlywheelOverview {
     coverageRate: number | null;
     lastAttributedAt: string | null;
   };
+  flywheel: FlywheelSkillOverview;
   dataHealth: FlywheelDataHealth;
 }
