@@ -55,11 +55,88 @@ function unitToService(unit) {
   return UNITS.includes(name) ? name : 'systemd';
 }
 
+const MERGE_WINDOW_MS = 2_000;
+const MERGE_BODY_LIMIT = 8_000;
+
+/**
+ * 多行重组：journald 把 stdout 多行输出（pretty JSON dump、堆栈）按行拆成
+ * 独立条目，直接上报就是碎片噪音。这里把「同单元同进程 2 秒内、且行长像
+ * 续行」的条目并回上一条。
+ *
+ * 续行判定（保守）：行首为闭合碎片（} ] " , 空白缩进），或行首为 { [ 但
+ * 括号不平衡（pretty dump 的起始行）；平衡的 { 开头视为独立的单行 JSON
+ * 日志，不并。[tag] message 形态（[ 后紧跟字母）始终视为新消息开头。
+ */
+export function createReassembler() {
+  let last = null;
+  function isContinuation(entry, message) {
+    if (!last) return false;
+    if (String(entry._SYSTEMD_UNIT ?? '') !== last.unit) return false;
+    if (String(entry._PID ?? '') !== last.pid) return false;
+    const timeUs = Number(entry.__REALTIME_TIMESTAMP ?? 0);
+    if (Number.isFinite(timeUs) && timeUs / 1000 - last.timeMs > MERGE_WINDOW_MS) return false;
+    const trimmedStart = message.trimStart();
+    const head = trimmedStart[0];
+    if (!head) return false;
+    if (/^\[[A-Za-z]/.test(trimmedStart)) return false;
+    if ('}",)]'.includes(head)) return true;
+    if (head === '{' || head === '[') {
+      // 平衡且闭合 → 独立单行 JSON；不平衡 → pretty dump 起始行。
+      const open = head === '{' ? ['{', '}'] : ['[', ']'];
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      for (const ch of trimmedStart) {
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (ch === '\\') escaped = true;
+          else if (ch === '"') inString = false;
+          continue;
+        }
+        if (ch === '"') inString = true;
+        else if (ch === open[0]) depth += 1;
+        else if (ch === open[1]) depth -= 1;
+      }
+      return inString || depth !== 0;
+    }
+    return false;
+  }
+  return {
+    push(entry) {
+      const message = typeof entry.MESSAGE === 'string' ? entry.MESSAGE : '';
+      if (!message.trim()) return null;
+      if (last && isContinuation(entry, message)) {
+        if (last.body.length + message.length + 1 <= MERGE_BODY_LIMIT) {
+          last.body += `\n${message}`;
+        }
+        last.timeEndMs = Number(entry.__REALTIME_TIMESTAMP ?? 0) / 1000;
+        return null;
+      }
+      const record = {
+        unit: String(entry._SYSTEMD_UNIT ?? ''),
+        pid: String(entry._PID ?? ''),
+        timeMs: Number(entry.__REALTIME_TIMESTAMP ?? 0) / 1000,
+        priority: entry.PRIORITY,
+        body: message,
+      };
+      last = record;
+      return record;
+    },
+    /** flush 后调用：上一条可能已发出，续行不能再并入。 */
+    flushed(record) {
+      if (last === record) last = null;
+    },
+  };
+}
+
 const pending = [];
 let dropped = 0;
 let lastDropReportAt = 0;
+const reassembler = createReassembler();
 
-function enqueue(record) {
+function enqueue(entry) {
+  const record = reassembler.push(entry);
+  if (!record) return;
   if (pending.length >= QUEUE_LIMIT) {
     pending.shift();
     dropped += 1;
@@ -72,26 +149,25 @@ function enqueue(record) {
   pending.push(record);
 }
 
-function toLogRecord(entry) {
-  const message = typeof entry.MESSAGE === 'string' ? entry.MESSAGE : '';
-  if (!message.trim()) return null;
-  const severity = severityFromPriority(entry.PRIORITY);
-  const timestampUs = BigInt(String(entry.__REALTIME_TIMESTAMP ?? '0'));
+function toLogRecord(record) {
+  if (!record.body.trim()) return null;
+  const severity = severityFromPriority(record.priority);
+  const timestampMs = Math.round(record.timeMs);
   return {
-    timeUnixNano: (timestampUs * 1_000n).toString(),
+    timeUnixNano: (BigInt(Number.isFinite(timestampMs) ? timestampMs : 0) * 1_000_000n).toString(),
     severityText: severity.text,
     severityNumber: severity.number,
-    body: { stringValue: message.slice(0, MAX_BODY) },
+    body: record.body.slice(0, MAX_BODY),
   };
 }
 
-/** 按单元分组打包为 OTLP/HTTP JSON logs resourceLogs。 */
-export function buildOtlpPayload(entries) {
+/** 按单元分组打包为 OTLP/HTTP JSON logs resourceLogs（输入为重组后的记录）。 */
+export function buildOtlpPayload(records) {
   const groups = new Map();
-  for (const entry of entries) {
-    const record = toLogRecord(entry);
-    if (!record) continue;
-    const service = unitToService(entry._SYSTEMD_UNIT);
+  for (const record of records) {
+    const logRecord = toLogRecord(record);
+    if (!logRecord) continue;
+    const service = unitToService(record.unit);
     let group = groups.get(service);
     if (!group) {
       group = {
@@ -106,7 +182,7 @@ export function buildOtlpPayload(entries) {
       };
       groups.set(service, group);
     }
-    group.scopeLogs[0].logRecords.push(record);
+    group.scopeLogs[0].logRecords.push(logRecord);
   }
   return { resourceLogs: [...groups.values()] };
 }
@@ -136,6 +212,7 @@ let retryCount = 0;
 async function flush() {
   if (!pending.length) return;
   const batch = pending.splice(0, Math.min(FLUSH_BATCH, pending.length));
+  for (const record of batch) reassembler.flushed(record);
   try {
     await postBatch(batch);
     retryCount = 0;
