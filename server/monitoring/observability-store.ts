@@ -720,6 +720,7 @@ export async function getOpsIncidentSummary(days = 7): Promise<{
   mttaMinutes: number | null;
   mttrMinutes: number | null;
   windowDays: number;
+  daily: Array<{ day: string; count: number }>;
 }> {
   const p = await pool();
   await ensureIncidentOperationsSchema(p);
@@ -739,6 +740,15 @@ export async function getOpsIncidentSummary(days = 7): Promise<{
      from public.studio_alert_incidents`,
     [windowDays],
   );
+  const dailyResult = await p
+    .query(
+      `select to_char(date_trunc('day', first_seen_at), 'MM-DD') as day, count(*)::int count
+       from public.studio_alert_incidents
+       where first_seen_at >= now() - make_interval(days => $1::int)
+       group by 1 order by 1`,
+      [windowDays],
+    )
+    .catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
   const row = (result.rows[0] ?? {}) as Record<string, unknown>;
   const toMinutes = (value: unknown): number | null => {
     const seconds = Number(value);
@@ -754,6 +764,7 @@ export async function getOpsIncidentSummary(days = 7): Promise<{
     mttaMinutes: toMinutes(row.avg_ack_seconds),
     mttrMinutes: toMinutes(row.avg_resolve_seconds),
     windowDays,
+    daily: dailyResult.rows.map((r) => ({ day: String(r.day ?? ''), count: Number(r.count ?? 0) })),
   };
 }
 
