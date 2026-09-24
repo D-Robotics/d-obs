@@ -1550,6 +1550,16 @@ async function runWorker(): Promise<void> {
     await p
       .query(`delete from public.studio_sli_samples where sampled_at < now() - interval '35 days'`)
       .catch(() => {});
+    await import('./observability-store.js')
+      .then((store) => store.recycleStaleIncidents(p))
+      .then((recycled) => {
+        if (recycled > 0) {
+          console.log(`[alert-worker] recycled ${recycled} stale warning incidents (auto-closed)`);
+        }
+      })
+      .catch((error) => {
+        console.warn('[alert-worker] incident recycle failed:', sanitizeOpsSummary(error, 240));
+      });
     state.lastCleanupAt = new Date().toISOString();
   }
   await saveState(state);

@@ -840,7 +840,7 @@ export function createOpsObservabilityRouter(): Router {
         res.status(400).json({ ok: false, error: 'invalid_incident_key' });
         return;
       }
-      if (!['acknowledge', 'assign', 'silence', 'reopen', 'close'].includes(action)) {
+      if (!['acknowledge', 'assign', 'silence', 'reopen', 'close', 'note'].includes(action)) {
         res.status(400).json({ ok: false, error: 'invalid_incident_action' });
         return;
       }
@@ -859,7 +859,7 @@ export function createOpsObservabilityRouter(): Router {
         await updateOpsIncident(
           incidentKey,
           {
-            action: action as 'acknowledge' | 'assign' | 'silence' | 'reopen' | 'close',
+            action: action as 'acknowledge' | 'assign' | 'silence' | 'reopen' | 'close' | 'note',
             actor: resolveOpsActor(req),
             assignee: req.body?.assignee,
             minutes: Number(req.body?.minutes),

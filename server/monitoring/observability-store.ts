@@ -297,7 +297,7 @@ export interface OpsObservabilityOverview {
 
 let incidentObjectBackfillDone = false;
 
-type OpsIncidentAction = 'acknowledge' | 'assign' | 'silence' | 'reopen' | 'close';
+type OpsIncidentAction = 'acknowledge' | 'assign' | 'silence' | 'reopen' | 'close' | 'note';
 
 function incidentKey(value: string): string {
   const key = String(value ?? '').trim();
@@ -551,6 +551,22 @@ export async function updateOpsIncident(
   const action = input.action;
   let summary = '';
   let result: PgQueryResult;
+  if (action === 'note') {
+    // 备注：只写处置流水，不改变故状态（复盘留痕用，理想蓝图备注 Tab 的等价物）。
+    const note = text(input.reason, 500);
+    if (note.length < 2) throw new Error('incident_note_required');
+    await p.query(
+      `update public.studio_alert_incidents set last_seen_at = last_seen_at
+        where alert_key = $1 and coalesce(tenant_id, 'platform') = $2`,
+      [key, tenantScope ?? coalesceTenant(key)],
+    );
+    await p.query(
+      `insert into public.studio_alert_incident_activity (alert_key, action, actor, summary)
+       values ($1, 'note', $2, $3)`,
+      [key, actor, note],
+    );
+    return;
+  }
   if (action === 'acknowledge') {
     summary = '已确认，等待处置或恢复';
     result = await p.query(
@@ -716,6 +732,50 @@ export async function listOpsIncidents(query: OpsIncidentListQuery = {}): Promis
     incidents: rowsResult.rows.map((row) => mapIncidentRow(row as Record<string, unknown>)),
     total: Number(countResult.rows[0]?.total ?? 0),
   };
+}
+
+/**
+ * 隔日回收（理想 alarm_recycle_task 的保守版）：低级别（warning）、从未认领、
+ * 升级链已至少走过一轮（通知过仍无人管）、超 7 天的 open 事故自动结案并留
+ * 处置痕迹，防止长尾未处理事故无界堆积。严重级事故永不自动关闭。
+ */
+export async function recycleStaleIncidents(
+  p: Pool,
+  options: { minAgeDays?: number; minEscalations?: number } = {},
+): Promise<number> {
+  await ensureIncidentOperationsSchema(p);
+  const minAgeDays = Math.max(1, Math.min(90, Math.floor(Number(options.minAgeDays) || 7)));
+  const minEscalations = Math.max(1, Math.min(10, Math.floor(Number(options.minEscalations) || 1)));
+  const result = await p.query(
+    `update public.studio_alert_incidents
+       set status = 'resolved', resolved_at = now(),
+           resolution_note = $1
+     where status = 'open'
+       and severity = 'warning'
+       and acknowledged_at is null
+       and coalesce(escalation_count, 0) >= $2::int
+       and first_seen_at < now() - make_interval(days => $3::int)
+     returning alert_key`,
+    ['隔日回收：低级别事故长期未处理，已自动结案（可在处置时间线追溯；如需继续跟踪请重新打开）', minEscalations, minAgeDays],
+  );
+  const recycled = result.rowCount ?? 0;
+  if (recycled > 0) {
+    const keys = await p.query(
+      `select alert_key from public.studio_alert_incidents
+        where resolution_note = $1 and resolved_at >= now() - interval '1 minute'`,
+      ['隔日回收：低级别事故长期未处理，已自动结案（可在处置时间线追溯；如需继续跟踪请重新打开）'],
+    );
+    for (const row of keys.rows) {
+      await p
+        .query(
+          `insert into public.studio_alert_incident_activity (alert_key, action, actor, summary)
+           values ($1, 'close', 'system-recycle', $2)`,
+          [String(row.alert_key ?? ''), `隔日回收：超 ${minAgeDays} 天未处理自动结案`],
+        )
+        .catch(() => undefined);
+    }
+  }
+  return recycled;
 }
 
 /** 大盘统计：待认领/处理中/已关闭、级别分布、今日新增、MTTA/MTTR（分钟）。 */
