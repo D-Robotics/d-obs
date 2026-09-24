@@ -222,3 +222,56 @@ export async function logServicesForOwner(owner?: string): Promise<string[]> {
   );
   return result.rows.map((row) => String(row.service ?? '')).filter(Boolean);
 }
+
+export type LogFacet = {
+  service: string;
+  owner: string;
+  ownerLabel: string;
+  subjectType: string;
+  rows: number;
+  lastAtMs: number;
+};
+
+/**
+ * 应用维度聚合：近 N 天内每个 (service, owner) 的日志量与最近时间，
+ * 并 join 接入凭据注册表把 owner 哈希翻成可读的应用归属名。
+ * 注册表为空/不存在时降级为不带归属名的聚合，保证 facets 始终可用。
+ */
+export async function logFacets(sinceMs: number): Promise<LogFacet[]> {
+  const p = await pool();
+  await ensureSchema(p);
+  const base = String(Math.max(0, Math.trunc(sinceMs)));
+  const joined = `select l.service, l.owner,
+         coalesce(nullif(t.display_name, ''), '') as owner_label,
+         coalesce(t.subject_type, '') as subject_type,
+         count(*)::int as rows,
+         max(l.timestamp_ms)::bigint as last_at
+    from public.studio_observability_logs l
+    left join public.studio_obs_ingest_tokens t
+      on t.owner = l.owner and t.status = 'active'
+   where l.timestamp_ms >= $1
+   group by l.service, l.owner, owner_label, subject_type
+   order by last_at desc
+   limit 300`;
+  const plain = `select service, owner, '' as owner_label, '' as subject_type,
+         count(*)::int as rows, max(timestamp_ms)::bigint as last_at
+    from public.studio_observability_logs
+   where timestamp_ms >= $1
+   group by service, owner
+   order by last_at desc
+   limit 300`;
+  let result;
+  try {
+    result = await p.query(joined, [base]);
+  } catch {
+    result = await p.query(plain, [base]);
+  }
+  return result.rows.map((row) => ({
+    service: String(row.service ?? 'unknown'),
+    owner: String(row.owner ?? ''),
+    ownerLabel: String(row.owner_label ?? ''),
+    subjectType: String(row.subject_type ?? ''),
+    rows: Number(row.rows ?? 0),
+    lastAtMs: Number(row.last_at ?? 0),
+  }));
+}

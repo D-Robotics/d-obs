@@ -207,11 +207,13 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div class="view-module" data-view-module="signals/logs" role="tabpanel" aria-label="日志查询" hidden>
         <div class="signals-query-card">
           <div class="signals-toolbar">
-            <label class="grow">服务<input id="signalLogService" type="text" autocomplete="off" spellcheck="false" placeholder="service.name，可留空" /></label>
+            <label>应用<select id="signalLogService"><option value="">全部应用</option></select></label>
+            <label>归属<select id="signalLogOwner"><option value="">全部来源</option></select></label>
             <label>最低级别<select id="signalLogSeverity"><option value="1">全部</option><option value="9" selected>INFO+</option><option value="13">WARN+</option><option value="17">ERROR+</option></select></label>
             <label>时间窗口<select id="signalLogMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option></select></label>
             <button id="signalLogQueryBtn" class="btn primary" type="button">查询</button>
           </div>
+          <p class="domain-note">应用与归属清单来自近 14 天落库聚合；按应用隔离视图，归属对应接入凭据（d-obs 平台自身 / rdkstudio 主站等）。</p>
         </div>
         <div id="signalsLogTable" aria-live="polite"><div class="signals-empty">设置条件并点击查询</div></div>
       </div>

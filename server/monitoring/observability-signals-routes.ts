@@ -10,7 +10,7 @@ import {
 } from './observability-route-kit.js';
 import { recordOpsConfigurationAudit, getOpsIncident } from './observability-store.js';
 import { buildIncidentCorrelation } from './incident-correlate.js';
-import { queryLogs } from '../observability/ai-ecosystem-logs-store.js';
+import { queryLogs, logFacets } from '../observability/ai-ecosystem-logs-store.js';
 import { queryMetricRanges, queryMetricSeries } from '../observability/ai-ecosystem-metrics-store.js';
 import {
   invalidateDeviceTokenCache,
@@ -188,6 +188,20 @@ export function registerSignalsRoutes(router: Router): void {
   );
 
   router.get(
+    '/api/ops/observability/logs/facets',
+    requireObservabilityAccess,
+    async (_req: Request, res: Response) => {
+      try {
+        const facets = await logFacets(Date.now() - 14 * 24 * 60 * 60_000);
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ ok: true, facets });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'logs_facets_unavailable') });
+      }
+    },
+  );
+
+  router.get(
     '/api/ops/observability/logs',
     requireObservabilityAccess,
     async (req: Request, res: Response) => {
@@ -197,6 +211,7 @@ export function registerSignalsRoutes(router: Router): void {
         const to = Date.now();
         const rows = await queryLogs({
           service: queryText(query, 'service', 160),
+          owner: queryText(query, 'owner', 160),
           severityMin: queryInteger(query, 'severityMin', 1, 1, 24),
           fromMs: to - windowMinutes * 60_000,
           toMs: to,
