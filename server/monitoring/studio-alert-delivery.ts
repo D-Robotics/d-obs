@@ -11,11 +11,12 @@ import {
 import {
   ALERT_MESSAGE_TEMPLATE_VARIABLES,
   ALERT_RULE_DEFINITIONS,
-  alertRuleObjectTarget,
   type AlertConfig,
 } from './alert-config.js';
+import { resolveAlertRuleObjectTarget } from './observability-object-registry.js';
 import { remediationDeepLink, remediationPlaybooksForRule } from './alert-remediation.js';
 import { sanitizeOpsSummary } from './ops-event-store.js';
+import { tenantScopeFromAlertKey as tenantScopeFromAlertKeyPublic } from './observability-store.js';
 import type { AlertObservation, AlertTransition, AlertWorkerState } from './studio-alert-state.js';
 
 type PgQueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number | null };
@@ -356,16 +357,16 @@ export async function recordCheckSnapshots(
   );
 }
 
-function incidentObjectId(alertKey: string): string {
+async function incidentObjectId(alertKey: string): Promise<string> {
   // 租户命名空间（t.<tenantId>.<check>）：对象归属该租户的同一实体，@tenant 后缀区分
   if (alertKey.startsWith('t.')) {
     const parts = alertKey.split('.');
     const base = parts.slice(2).join('.');
-    const mapped = alertRuleObjectTarget(base);
+    const mapped = await resolveAlertRuleObjectTarget(base);
     const target = mapped === 'host/self' ? `host/${os.hostname()}` : mapped;
     return `${target}@${parts[1]}`;
   }
-  const target = alertRuleObjectTarget(alertKey);
+  const target = await resolveAlertRuleObjectTarget(alertKey);
   return target === 'host/self' ? `host/${os.hostname()}` : target;
 }
 
@@ -404,7 +405,7 @@ export async function recordIncidentSnapshots(
              resolved_at = case when public.studio_alert_incidents.status = 'resolved' then null else public.studio_alert_incidents.resolved_at end`,
       [
         observation.key,
-        incidentObjectId(observation.key),
+        await incidentObjectId(observation.key),
         observation.title,
         observation.severity,
         sanitizeOpsSummary(observation.summary, 800),
@@ -504,8 +505,8 @@ export async function recordIncident(
   }
   await p.query(
     `insert into public.studio_alert_incidents
-       (alert_key, object_id, title, severity, status, summary, first_seen_at, last_seen_at, last_notified_at, occurrence_count)
-     values ($1, $7, $2, $3, 'open', $4, $5, $5, case when $6 then $5::timestamptz else null end, 1)
+       (alert_key, object_id, title, severity, status, summary, first_seen_at, last_seen_at, last_notified_at, occurrence_count, tenant_id)
+     values ($1, $7, $2, $3, 'open', $4, $5, $5, case when $6 then $5::timestamptz else null end, 1, $8)
      on conflict (alert_key) do update
        set title = excluded.title,
            severity = excluded.severity,
@@ -533,7 +534,10 @@ export async function recordIncident(
       transition.summary,
       transition.at,
       delivered,
-      incidentObjectId(transition.key),
+      await incidentObjectId(transition.key),
+      // 租户归属由键命名空间推导（t.<tenant>.* → tenant；裸键 → platform），
+      // 自定义策略等动态键的事故因此天然带租户身份。
+      tenantScopeFromAlertKeyPublic(transition.key),
     ],
   );
 }

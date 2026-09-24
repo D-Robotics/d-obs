@@ -11,7 +11,8 @@ import {
   sanitizeOpsSummary,
 } from './ops-event-store.js';
 import { validTenantId } from './tenant-store.js';
-import { ALERT_RULE_OBJECT_TARGETS, loadAlertConfig } from './alert-config.js';
+import { loadAlertConfig } from './alert-config.js';
+import { resolveAlertRuleObjectTarget } from './observability-object-registry.js';
 import os from 'node:os';
 import { ackTimeoutMinutes, MAX_ESCALATIONS_PER_INCIDENT } from './alert-escalation.js';
 import { CLIENT_ERROR_NON_ACTIONABLE_API_CODES } from '../../shared/client-error-telemetry.js';
@@ -440,22 +441,22 @@ export async function ensureIncidentOperationsSchema(p: Pool): Promise<void> {
       // 事故对象身份回填：按「规则→对象」映射补齐存量事故的 object_id（幂等，只补空值）
       void (async () => {
         const hostTarget = `host/${os.hostname()}`;
-        const objectTarget = (alertKey: string): string => {
+        const objectTarget = async (alertKey: string): Promise<string> => {
           if (alertKey.startsWith('t.')) {
             const parts = alertKey.split('.');
             const base = parts.slice(2).join('.');
-            const mapped = ALERT_RULE_OBJECT_TARGETS[base];
+            const mapped = await resolveAlertRuleObjectTarget(base);
             const resolved = mapped === 'host/self' ? hostTarget : mapped;
             return resolved ? `${resolved}@${parts[1]}` : '';
           }
-          const mapped = ALERT_RULE_OBJECT_TARGETS[alertKey];
+          const mapped = await resolveAlertRuleObjectTarget(alertKey);
           return mapped === 'host/self' ? hostTarget : mapped ?? '';
         };
         const rows = await p
           .query(`select alert_key, object_id from public.studio_alert_incidents where object_id is null`)
           .catch(() => ({ rows: [] as Array<{ alert_key: string }> }));
         for (const row of rows.rows) {
-          const target = objectTarget(String(row.alert_key ?? ''));
+          const target = await objectTarget(String(row.alert_key ?? ''));
           if (!target) continue;
           await p
             .query(

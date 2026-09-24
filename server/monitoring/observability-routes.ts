@@ -22,7 +22,14 @@ import {
   recordOpsNotificationTest,
   updateOpsIncident,
 } from './observability-store.js';
-import { listRegisteredObjects } from './observability-object-registry.js';
+import {
+  deleteManualObject,
+  listAlertRuleObjectBindings,
+  listRegisteredObjects,
+  registerManualObject,
+  setAlertRuleObjectBinding,
+  updateRegisteredObjectIdentity,
+} from './observability-object-registry.js';
 import { sanitizeOpsSummary } from './ops-event-store.js';
 import { renderStatusPage } from './ops-status-page.js';
 import {
@@ -686,6 +693,135 @@ export function createOpsObservabilityRouter(): Router {
         res.json({ ok: true, objects });
       } catch (error) {
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'object_registry_unavailable') });
+      }
+    },
+  );
+
+  // —— 规则↔对象绑定：代码映射是默认兜底，自定义绑定存 studio_obs_object_bindings ——
+  router.get(
+    '/api/ops/observability/object-bindings',
+    requireObservabilityAccess,
+    async (_req: Request, res: Response) => {
+      try {
+        const data = await listAlertRuleObjectBindings();
+        res.json({ ok: true, ...data });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'object_bindings_unavailable') });
+      }
+    },
+  );
+
+  router.put(
+    '/api/ops/observability/object-bindings',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      const bindings = req.body?.bindings;
+      if (!bindings || typeof bindings !== 'object' || Array.isArray(bindings)) {
+        res.status(400).json({ ok: false, error: 'invalid_bindings' });
+        return;
+      }
+      const entries = Object.entries(bindings as Record<string, unknown>);
+      if (entries.length > 200) {
+        res.status(400).json({ ok: false, error: 'invalid_bindings' });
+        return;
+      }
+      try {
+        for (const [ruleKey, value] of entries) {
+          await setAlertRuleObjectBinding(
+            ruleKey,
+            value == null || String(value).trim() === '' ? null : String(value),
+            resolveOpsActor(req),
+          );
+        }
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'object_bindings_update',
+          summary: `更新 ${entries.length} 条规则↔对象绑定`,
+          details: bindings,
+        });
+        res.json({ ok: true });
+      } catch (error) {
+        res.status(400).json({ ok: false, error: clientErrorCode(error, 'binding_update_failed') });
+      }
+    },
+  );
+
+  router.post(
+    '/api/ops/observability/object-registry',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const created = await registerManualObject({
+          objectType: String(req.body?.objectType ?? ''),
+          objectId: String(req.body?.objectId ?? ''),
+          displayName: req.body?.displayName == null ? undefined : String(req.body.displayName),
+          labels: req.body?.labels,
+        });
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'object_registry_manual_register',
+          summary: `手动登记对象 ${created.objectId}`,
+          details: created,
+        });
+        res.status(201).json({ ok: true, ...created });
+      } catch (error) {
+        res.status(400).json({ ok: false, error: clientErrorCode(error, 'object_register_failed') });
+      }
+    },
+  );
+
+  router.patch(
+    '/api/ops/observability/object-registry',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const updated = await updateRegisteredObjectIdentity(
+          String(req.body?.owner ?? ''),
+          String(req.body?.objectId ?? ''),
+          { displayName: req.body?.displayName, labels: req.body?.labels },
+        );
+        if (!updated) {
+          res.status(404).json({ ok: false, error: 'object_not_found' });
+          return;
+        }
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'object_registry_update',
+          summary: `编辑对象 ${String(req.body?.objectId ?? '')} 元数据`,
+          details: { owner: req.body?.owner, displayName: req.body?.displayName, labels: req.body?.labels },
+        });
+        res.json({ ok: true });
+      } catch (error) {
+        res.status(400).json({ ok: false, error: clientErrorCode(error, 'object_update_failed') });
+      }
+    },
+  );
+
+  router.delete(
+    '/api/ops/observability/object-registry',
+    requireObservabilityAccess,
+    requireOpsMutationGuard,
+    async (req: Request, res: Response) => {
+      try {
+        const removed = await deleteManualObject(
+          String(req.query.owner ?? ''),
+          String(req.query.objectId ?? ''),
+        );
+        if (!removed) {
+          res.status(404).json({ ok: false, error: 'object_not_found' });
+          return;
+        }
+        await recordOpsConfigurationAudit({
+          actor: resolveOpsActor(req),
+          action: 'object_registry_manual_delete',
+          summary: `删除手动登记对象 ${String(req.query.objectId ?? '')}`,
+        });
+        res.json({ ok: true });
+      } catch (error) {
+        res.status(400).json({ ok: false, error: clientErrorCode(error, 'object_delete_failed') });
       }
     },
   );

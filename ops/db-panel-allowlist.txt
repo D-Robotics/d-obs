@@ -64,3 +64,4 @@ studio_alert_maintenance_windows
 studio_public_observability_feedback
 studio_public_observability_scores
 studio_obs_object_registry
+studio_obs_object_bindings
