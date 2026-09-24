@@ -67,6 +67,8 @@ export interface AlertWorkerState {
   lastSyntheticAt?: string;
   syntheticResults?: Partial<Record<AlertRuleKey, SyntheticProbeResult>>;
   notificationHistory?: string[];
+  /** ops 事件 → 日志域镜像的 created_at 游标（ISO 字符串）。 */
+  logMirrorCursor?: string;
 }
 
 export interface AlertTransition {

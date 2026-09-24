@@ -29,6 +29,7 @@ import { scanRecentMetricAnomalies } from '../observability/metric-anomalies.js'
 import { evaluateStrategies } from './alert-strategy-engine.js';
 import { flushSelfLogs, installSelfProcessGuards, recordSelfLog } from '../observability/self-log-reporter.js';
 import { installNodeConsoleErrorTelemetry } from './node-console-error-telemetry.js';
+import { mirrorOpsEventsToLogs } from './ops-event-log-mirror.js';
 import {
   ensureServiceLevelSchema,
   recordServiceLevelSamples,
@@ -1510,6 +1511,24 @@ async function runWorker(): Promise<void> {
         console.warn('[alert-worker] status snapshot failed:', sanitizeOpsSummary(error, 240));
       },
     );
+    // 事故生命周期写日志域：opened/escalated 按严重度、resolved INFO，
+    // 让日志查询与根因关联能按时间线回放告警状态变化。
+    for (const transition of reconciled.transitions) {
+      recordSelfLog('alert-worker', {
+        level: transition.kind === 'resolved' ? 'info' : transition.severity === 'critical' ? 'error' : 'warn',
+        summary: `[incident] ${transition.kind} ${transition.key}: ${transition.title}`,
+        tag: '[alert-worker]',
+      });
+    }
+    // 白名单错误事件增量镜像进日志域；游标随 state 落盘，幂等。
+    try {
+      const mirror = await mirrorOpsEventsToLogs(p, state.logMirrorCursor ?? null);
+      if (mirror.mirrored > 0 && mirror.nextCursor) {
+        state.logMirrorCursor = mirror.nextCursor;
+      }
+    } catch (error) {
+      console.warn('[alert-worker] ops-event log mirror failed:', sanitizeOpsSummary(error, 240));
+    }
   }
 
   const lastCleanup = state.lastCleanupAt ? Date.parse(state.lastCleanupAt) : 0;
