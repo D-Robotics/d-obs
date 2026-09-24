@@ -1,16 +1,103 @@
 # d-obs — RDK 可观测平台
 
+项目许可证、贡献流程和适配层边界见 [docs/open-source.md](./docs/open-source.md)；贡献规范见
+[CONTRIBUTING.md](./CONTRIBUTING.md)，安全问题见 [SECURITY.md](./SECURITY.md)。当前产品评分口径
+见 [docs/scorecard.md](./docs/scorecard.md)；内部生产质量评分与产品化评分分开记录。
+
 面向 D-Robotics 生产环境的独立可观测平台：**一个进程**提供运营工作台（Web UI）、
 告警评估与投递、链路追踪、运营指标、数据库只读资产与模型池控制面，可独立部署、
 独立扩缩容、独立演进。与业务站点的耦合只通过 HTTP 端点、版本化 contract 和共享数据库，
 不依赖任何业务站点的 composition root。
+
+运行要求：Node.js 22 或更高版本；生产环境使用 PostgreSQL 持久化状态，Prometheus/
+Grafana、VictoriaMetrics 和外部探针按部署规模选配。未配置数据库时服务仍可启动，
+但只提供无状态或降级能力。
+
+## 文档导航
+
+- [产品文档](./docs/product-document.md)：定位、核心场景和验收标准
+- [部署手册](./docs/deploy.md)：发布、反代、Grafana 和生产配置
+- [运维手册](./docs/operations.md)：API、告警规则、行动环和排障
+- [接入指南](./docs/onboarding.md)：新服务器 / 新应用 / 边缘设备 / 租户拨测的路径选择与步骤
+- [AI 原生接入](./docs/ecosystem.md)：OTLP、边缘设备、MCP 和评估接口
+- [租户接入](./docs/tenant-onboarding.md)：自助注册、探针和数据隔离
+- [容量验收](./docs/capacity.md)：OTLP 压测门槛与扩容触发器
+- [架构边界](./docs/decisions/D-010-observability-domain-boundary.md)：与业务站点的依赖约束
+- [开源与贡献](./docs/open-source.md) · [贡献规范](./CONTRIBUTING.md) · [安全策略](./SECURITY.md)
+
+## 平台总览
+
+d-obs 由 **Web 服务**（运营工作台、公开状态页、OTLP/公共 API 接入）与**告警 worker**
+（规则评估、通知投递、升级链、自愈、行动后置验证）两个进程组成，共享同一个
+PostgreSQL；与业务站点只通过 HTTP 端点、版本化 contract 和共享数据库耦合。
+
+```mermaid
+flowchart LR
+    subgraph observed["被观测对象"]
+        services["业务服务 / 网关 / 日志"]
+        aiapp["AI 应用（OTLP SDK / Phoenix / Langfuse）"]
+        edges["RDK 边缘设备（edge-agent）"]
+        probe["外部拨测探针"]
+    end
+
+    subgraph dobs["d-obs 进程组"]
+        web["Web 服务<br/>运营工作台 · 公开状态页<br/>OTLP/HTTP · OTLP/gRPC · /metrics"]
+        worker["告警 Worker<br/>规则评估 · 通知投递 · 升级链<br/>自愈剧本 · 行动后置验证"]
+    end
+
+    pg[("PostgreSQL<br/>检查 · 事故 · 审计 · 租户 · 信号投影")]
+    gateway["模型网关 admin API"]
+    grafana["Prometheus / Grafana（选配）"]
+
+    subgraph channels["通知渠道"]
+        feishu["飞书"]
+        dingtalk["钉钉"]
+        wecom["企业微信"]
+        slack["Slack"]
+        telegram["Telegram"]
+        webhook["通用 Webhook"]
+    end
+
+    watchdog["异机看门狗 obs-self-probe"]
+
+    services -->|"健康 / 日志 / 拨测信号"| web
+    probe -->|"/api/health/external-probe-report"| web
+    aiapp -->|"/v1/traces · /v1/metrics · /v1/logs"| web
+    edges -->|"heartbeat · /edge-metrics"| web
+    web --> pg
+    worker -->|"每 60 秒评估"| pg
+    web <-->|"目标健康 · 路由 · 探测"| gateway
+    worker --> channels
+    web --- grafana
+    watchdog -->|"/status · /ops-observability 探测"| web
+    watchdog -.->|"宕机告警旁路（不经过 d-obs）"| channels
+```
+
+运营工作台为服务端渲染单页，亮 / 暗双主题；⌘K 唤起命令面板，移动端底部 tab 导航。
+
+**当前态势** — 进行中告警、SLO 错误预算与待办行动集中在首屏：
+
+![运营工作台 · 当前态势](docs/images/workbench-overview.png)
+
+**告警中心** — 待认领处置队列、MTTA / MTTR、级别与状态分布、按日告警趋势：
+
+![告警中心](docs/images/alert-center.png)
+
+**告警对象** — 对象作为一等实体贯通规则、事故、通知与观测数据，OTLP resource 自动登记：
+
+![告警对象](docs/images/alert-objects.png)
+
+**模型路由池** — 网关目标健康与容量、路由优先级（fallback 顺序 + 权重）拓扑：
+
+![模型路由池](docs/images/model-pool.png)
 
 ## 能力总览
 
 | 能力 | 入口 | 说明 |
 | --- | --- | --- |
 | **运营工作台** | `GET /ops-observability` | 单页工作台（服务端渲染 HTML，无前端构建）。当前态势、SLO 错误预算、事故调查、告警策略管理、通知模板、链路追踪、运营指标、数据健康、数据库目录、Skill 数据闭环、每日自我进化、系统设置、**模型池**；**亮/暗双主题**（右上角 ◐ 切换，localStorage 持久化，590+ 色板 token 化） |
-| **巡检与告警** | worker 进程 | 指标/日志/拨测三类规则，每 60 秒评估，Pending→告警→恢复状态机；**6 渠道投递**（飞书/钉钉/企微/Slack/Telegram/通用 Webhook，含重试、降噪、恢复通知、影子模式）；**维护窗口**（静默期，事故照常记录不投递，窗口后自动补发）；**值班升级链**（ack 超时自动升级重发，每事故最多 3 次，确认即止） |
+| **巡检与告警** | worker 进程 | 指标/日志/拨测三类规则，每 60 秒评估，Pending→告警→恢复状态机；**6 渠道投递**（飞书/钉钉/企微/Slack/Telegram/通用 Webhook，含重试、降噪、恢复通知、影子模式）；critical/warning 可分别覆盖投递渠道；**维护窗口**（静默期，事故照常记录不投递，窗口后自动补发）；**值班升级链**（ack 超时自动升级重发，每事故最多 3 次，确认即止） |
+| **告警中心与对象注册** | 工作台“告警中心 / 告警对象” | 以对象为一等实体贯通规则、事故、通知和观测数据；自动登记主机、服务、网关、数据库、设备及 OTLP resource；提供级别/状态摘要、按日趋势和对象下钻 |
 | **公开状态页** | `GET /status` | 免鉴权只读：worker 存活、检查通过率、进行中事故摘要；输出脱敏（URL/email 占位），无 token/租户/通道泄漏 |
 | **事故管理** | 工作台“事故调查” | 事故工作台、负责人、活动记录、事故副驾（证据化根因假设，本部署为确定性证据引擎） |
 | **证据化行动环** | `/api/ops/observability/actions` | 所有变更类操作走“提案→带证据 proof→他人审批→白名单剧本执行→后置验证”闭环；不提供裸执行。行动标记来源（人工/副驾建议）并统计采纳率；worker 周期自动推进 `executing` 行动的后置验证；失败行动可一键重新提案 |
@@ -18,17 +105,43 @@
 | **链路追踪** | 工作台“链路追踪” | Agent 原生 Trace（Langfuse 公开看板嵌入）+ 运行证据链（`GET /api/ops/observability/runs/:locator`，按 run 下钻模型/工具/审批） |
 | **运营指标** | 工作台“运营指标” | 按天 token 消耗（含按模型拆分的用量占比）、新增用户、DAU、对话次数、Agent Run |
 | **数据库资产** | 工作台“数据库” | PostgreSQL 运行状态、表目录/关系图、分页预览、整表 CSV 导出 |
+| **基础设施看板** | 工作台“Grafana 大盘” / `ops/grafana/` | Prometheus 数据源、主机/边缘设备/OTLP 网关看板；Grafana 通过受保护的反代入口访问 |
 | **模型池控制面** | 工作台“模型池” | 3100/3101 网关目标健康（成功率/P95/并发/冷却）、单目标真实探测、无路由引用目标的一键清理、路由优先级（fallback 顺序+权重）、目标替换（先预探测新目标，失败不写入；旧目标存快照可一键回滚；Agent 主路由受保护） |
 | **外部拨测接入** | `POST /api/health/external-probe-report` | 异地探针把 DNS/TLS/健康/入口数据回传，计入告警评估 |
 | **租户组员与账号登录** | 工作台登录屏 / 租户管理面板 | 主站账号密码登录（SSO 中继），组员按租户获得隔离只读视图，owner 管理组员与角色（[docs/tenant-members.md](./docs/tenant-members.md)） |
-| **公共可观测 API** | `/api/ops/observability/*` | 全部能力均有 JSON API；访问受运营鉴权保护 |
+| **公共可观测 API** | `/api/ops/observability/*`、`/api/v1/observability/*` | 运营工作台 API 与应用侧 run/trace/feedback/evaluation API；写入可用 Bearer/API key 保护 |
 | **AI 原生生态接入** | `/v1/traces` / `/v1/metrics` / `/v1/logs` / OTLP/gRPC / `/metrics` | OTLP/HTTP JSON、HTTP protobuf、标准 OTLP/gRPC（traces/metrics/logs 三信号）、GenAI/OpenInference 语义映射、Phoenix/Langfuse OTLP 兼容入口、Prometheus 抓取；OTLP metrics/logs 落库（默认保留 14 天） |
 | **观测查询与自定义面板** | 工作台“观测查询” | 平台内查询 OTLP 落库指标与日志（折线图 + 表格），常用查询可保存为自定义面板卡片，不必跳转外部 UI |
-| **边缘设备面** | 工作台“边缘设备” / `POST /api/edge/heartbeat` | RDK 板级设备注册（独立 256-bit token，库内只存哈希）、心跳在线状态、板级指标下钻（CPU/内存/温度/BPU）；`tools/edge-agent.mjs` 弱网本地缓冲 + 补传 |
+| **边缘设备面** | 工作台“边缘设备” / `POST /api/edge/heartbeat` | RDK 板级设备注册（独立 256-bit token，库内只存哈希）、心跳在线状态、板级指标下钻（CPU/内存/温度/BPU）；`tools/edge-agent.mjs` 支持 HTTPS 强制、弱网本地缓冲、指数退避、抖动、agent 版本和下行命令回执 |
+| **AI 评估与质量门禁** | `/api/v1/observability/runs/:runId/evaluations` | 把离线/在线评估写回同一个 run，记录 evaluator、dataset、模型/Prompt 版本、阈值和 passed/failed/unrated 状态；只接收低敏感结果字段 |
 | **token 成本归因** | 工作台“用户增长” | `studio_model_prices` 单价表（每百万 token），按模型聚合成本（输入/输出/合计），未定价模型优雅降级 |
 | **事故副驾模型通道（可选）** | `RDK_COPILOT_MODEL_ENABLED=1` | 启用后副驾先走模型池主路由生成证据约束假设（服务端逐条校验 evidence ref，只读不执行）；失败/未启用回落确定性证据引擎 |
 
+### 证据化行动环
+
+所有变更类操作不提供裸执行，走同一闭环；行动标记来源（人工 / 副驾建议）并统计采纳率，
+worker 周期自动推进 `executing` 行动的后置验证，失败行动可一键重新提案：
+
+```mermaid
+flowchart LR
+    p["提案 pending_approval<br/>附证据 proof · 标记 human / ai-copilot"]
+    ap["approved"]
+    dj["denied"]
+    ex["executing<br/>白名单剧本执行"]
+    ok["succeeded"]
+    vf["verification_failed"]
+
+    p -->|"他人审批"| ap
+    p -->|"拒绝"| dj
+    ap --> ex
+    ex -->|"后置验证通过"| ok
+    ex -->|"后置验证失败"| vf
+    vf -->|"重新提案"| p
+```
+
 ## 快速开始
+
+安装 Node.js 22+ 后：
 
 ```bash
 npm install
@@ -43,9 +156,43 @@ npm start
 AI 应用接入与生态配置见 [docs/ecosystem.md](./docs/ecosystem.md)。平台支持
 OpenTelemetry OTLP/HTTP JSON、HTTP protobuf 和可选的标准 OTLP/gRPC receiver；Phoenix、
 Langfuse 以及其他支持 OTLP 的 SDK 可以直接上报，平台只保留低敏感 AI 语义字段，不接收
-prompt、completion 或工具参数。
+prompt、completion 或工具参数。评估结果和质量门禁的请求示例见该文档的“AI 评估与质量门禁”
+小节；默认不保存原始用户内容。
+
+## 被观测对象接入（新服务器 / 新应用 / 边缘设备）
+
+接入口径是**对象自动注册**：接入方按约定上报数据，resource 身份属性
+（`device.id` / `robot.id` / `host.name` / `service.name` / `project.id`）自动登记为
+告警对象，对象清单无需手工维护。按接入对象选路径：
+
+| 接入对象 | 路径 |
+| --- | --- |
+| RDK 边缘设备 / 开发板 | 工作台注册设备 + `tools/edge-agent.mjs` 心跳（可 SSH 时一键 `ops/edge-agent/bootstrap.sh`） |
+| 一般 Linux 服务器 | node_exporter 进 Prometheus（指标历史）+ OTLP 携带 `host.name`（对象登记） |
+| 云端应用 / AI 应用 | OTLP 三信号 `/v1/traces` · `/v1/metrics` · `/v1/logs`（HTTP JSON / protobuf / gRPC，Phoenix/Langfuse 兼容） |
+| 只需存活拨测的项目 | `POST /api/ops/tenants/register` 自助注册 + `tenant-probe@<project>.timer` 每分钟拨测 |
+| 业务/运维事件埋点 | `POST /api/ops/events` 批量上报（复用探针 token） |
+
+路径选择、逐步操作、告警绑定口径（内置规则绑 `host/self`，新对象专属告警需补
+`ALERT_RULE_OBJECT_TARGETS` 映射）与验证清单见 [docs/onboarding.md](./docs/onboarding.md)。
 
 ## 已验证的告警状态机（端到端实测）
+
+worker 内部规则的状态转换与升级链：
+
+```mermaid
+stateDiagram-v2
+    [*] --> healthy: 检查通过
+    healthy --> open: 连续 openAfter 轮失败，开事故并通知
+    open --> escalated: ack 超时自动升级重发（每事故 ≤3 次，确认即止）
+    open --> healthy: 连续 resolveAfter 轮成功，发恢复通知
+    escalated --> healthy: 确认或恢复
+
+    note right of open
+        external 拨测规则不经过此状态机：
+        探针上报 active 即开 critical 事故，恢复上报即 resolved
+    end note
+```
 
 以下闭环在真实环境驱动过一轮（RL 平台探针 + worker 双进程 + shadow 通知）：
 
@@ -304,9 +451,11 @@ d-obs 会把真实客户端地址用 `X-Forwarded-For` / `X-Real-IP` 转发给�
 ```bash
 npm run typecheck            # tsc --noEmit 全闭包类型检查
 npm test                     # 核心回归测试（告警状态机、鉴权、租户、探针上报）
+npm run build                # 编译 dist/，并复制 OTLP protobuf schema
 npm start                    # 工作台 + 全部 JSON API（含模型池探测/路由/替换）
 npm run worker               # 告警评估循环（另开一个进程）
 npm run worker:check-config  # 校验告警配置
+npm run smoke:otlp           # OTLP 写入压测（先按 docs/capacity.md 设置环境变量）
 ```
 
 测试用 Node 内置 test runner（`node --import tsx --test`），零额外测试框架
@@ -367,13 +516,15 @@ POST 到飞书/Webhook——这条通知路径不经过 d-obs**；持续失败�
 
 | 目录 | 内容 |
 | --- | --- |
-| `server/monitoring/` | 工作台页面与页面脚本、路由、告警、投递、自愈、行动环、模型池 |
+| `server/monitoring/` | 工作台页面与页面脚本、路由、告警、对象注册、投递、自愈、行动环、模型池 |
 | `server/observability/` | run locator、trace list store、治理审计 |
 | `server/flywheel/` | 运营指标 / 增长聚合 store |
 | `server/credits/` | 模型池网关 admin client 与凭据管理 |
 | `server/evolution/` | 每日自我进化（候选治理） |
-| `server/public-api/` | 公共可观测 store |
+| `server/public-api/` | 公共可观测 run/trace、反馈和评估 API |
 | `shared/` | 版本化 contract |
+| `portal/` | 项目介绍页及静态资源 |
+| `ops/grafana/` | Grafana 数据源、看板和 provisioning 配置 |
 | `server/main.ts` | 独立入口 |
 
 更多运维细节（API 清单、告警规则语义、行动环流程、故障排查）见
