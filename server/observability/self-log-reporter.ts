@@ -8,7 +8,7 @@
  */
 import { insertLogRecords, type NormalizedLogRecord } from './ai-ecosystem-logs-store.js';
 
-export type SelfLogLevel = 'error' | 'warn';
+export type SelfLogLevel = 'error' | 'warn' | 'info';
 
 export type SelfLogEntry = {
   level: SelfLogLevel;
@@ -28,6 +28,7 @@ const MAX_SUMMARY = 500;
 const SEVERITY: Record<SelfLogLevel, { text: string; number: number }> = {
   error: { text: 'ERROR', number: 17 },
   warn: { text: 'WARN', number: 13 },
+  info: { text: 'INFO', number: 9 },
 };
 
 type InsertFn = typeof insertLogRecords;

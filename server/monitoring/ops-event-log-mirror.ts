@@ -27,6 +27,12 @@ const MIRROR_ENVIRONMENT = 'production';
 const DEFAULT_OWNER = 'service:d-obs';
 const MAX_BODY = 1_000;
 
+function severityFor(outcome: string, hint: string): { text: string; number: number } {
+  if (outcome === 'error' || hint === 'critical') return { text: 'ERROR', number: 17 };
+  if (hint === 'warning') return { text: 'WARN', number: 13 };
+  return { text: 'INFO', number: 9 };
+}
+
 export type MirrorableOpsEventRow = {
   occurred_at: Date | string;
   component: unknown;
@@ -40,14 +46,7 @@ export type MirrorableOpsEventRow = {
 export function eventToLogRecord(row: MirrorableOpsEventRow): NormalizedLogRecord | null {
   const summary = String(row.safe_summary ?? '').trim();
   if (!summary) return null;
-  const hint = String(row.severity_hint ?? 'warning');
-  const outcome = String(row.outcome ?? '');
-  const severity =
-    outcome === 'error' || hint === 'critical'
-      ? { text: 'ERROR', number: 17 }
-      : hint === 'warning'
-        ? { text: 'WARN', number: 13 }
-        : { text: 'INFO', number: 9 };
+  const severity = severityFor(String(row.outcome ?? ''), String(row.severity_hint ?? 'warning'));
   const occurredMs = Date.parse(String(row.occurred_at));
   return {
     service: MIRROR_SERVICE,

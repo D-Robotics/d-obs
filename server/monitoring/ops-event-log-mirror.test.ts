@@ -64,7 +64,7 @@ test('mirror：按游标拉取、写入 owner 取自注册表、游标推进到�
     return records.length;
   });
   assert.equal(result.mirrored, 2);
-  assert.equal(result.nextCursor, '2026-09-24T10:00:02Z');
+  assert.equal(result.nextCursor, '2026-09-24T10:00:02.000Z');
   assert.equal(inserted.length, 1);
   assert.equal(inserted[0]!.owner, 'e2e-owner-rdkstudio');
   assert.equal(inserted[0]!.records.length, 2);
