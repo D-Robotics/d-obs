@@ -1,8 +1,17 @@
-/** d-obs log bridge 解析器回归：docker 行、nginx 行、PG 行内级别。 */
+/** d-obs log bridge 解析器回归：docker 行、nginx 行、PG 行内级别、OTLP body 包装。 */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { parseDockerLogLine, parseNginxLine, pgLinePriority } from '../../tools/d-obs-log-bridge.mjs';
+import { buildOtlpPayload, parseDockerLogLine, parseNginxLine, pgLinePriority } from '../../tools/d-obs-log-bridge.mjs';
+
+test('OTLP 打包：body 必须是 {stringValue} 包装（纯字符串会被 ingest 判空拒绝）', () => {
+  const payload = buildOtlpPayload([
+    { unit: 'postgresql', pid: '-', timeMs: Date.now(), priority: '3', body: 'ERROR: deadlock detected' },
+  ]);
+  const record = payload.resourceLogs[0].scopeLogs[0].logRecords[0];
+  assert.equal(typeof record.body, 'object');
+  assert.equal(record.body.stringValue, 'ERROR: deadlock detected');
+});
 
 test('docker 日志行：时间戳与消息分离，非法行返回 null', () => {
   const parsed = parseDockerLogLine('2026-09-24T11:37:00.066390681Z 2026-09-24 11:37:00.066 UTC [2278309] ERROR: deadlock detected');

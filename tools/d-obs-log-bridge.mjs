@@ -214,7 +214,8 @@ function toLogRecord(record) {
     timeUnixNano: (BigInt(Number.isFinite(timestampMs) ? timestampMs : 0) * 1_000_000n).toString(),
     severityText: severity.text,
     severityNumber: severity.number,
-    body: record.body.slice(0, MAX_BODY),
+    // OTLP 规定 body 是 AnyValue 包装；纯字符串会被 d-obs 侧 logBody 判空拒绝。
+    body: { stringValue: record.body.slice(0, MAX_BODY) },
   };
 }
 
@@ -346,8 +347,9 @@ function pollOnce() {
         writeCursor(cursor);
       }
     });
-    child.on('exit', () => {
+    child.on('close', () => {
       // 尾部无换行的残余不丢：按完整块再解析一次（journalctl 结束前必输出 cursor 行）。
+      // close（而非 exit）：保证 stdout pipe 数据全部冲刷后再落游标。
       if (buffer.trim()) {
         const cursor = parseJournalOutput(buffer, (entry) => enqueue(entry));
         if (cursor) {
@@ -389,42 +391,51 @@ function writeDockerCursor(container, cursorMs) {
   }
 }
 
+function parseDockerStream(stream, source, cursorMs, latest) {
+  let buffer = '';
+  stream.setEncoding('utf8');
+  stream.on('data', (chunk) => {
+    buffer += chunk;
+    let newlineAt = buffer.lastIndexOf('\n');
+    if (newlineAt < 0) return;
+    const complete = buffer.slice(0, newlineAt + 1);
+    buffer = buffer.slice(newlineAt + 1);
+    for (const line of complete.split('\n')) {
+      if (!line.trim()) continue;
+      const parsed = parseDockerLogLine(line);
+      if (!parsed) continue;
+      if (parsed.timeMs <= cursorMs) continue; // --since 边界重放去重
+      const priority = pgLinePriority(parsed.message);
+      const level = { 3: 'ERROR', 4: 'WARNING', 6: 'LOG' }[priority] ?? 'LOG';
+      if (source.levels && !source.levels.has(level)) continue;
+      enqueue({
+        MESSAGE: parsed.message,
+        PRIORITY: priority,
+        __REALTIME_TIMESTAMP: String(BigInt(parsed.timeMs) * 1000n),
+        _SYSTEMD_UNIT: source.service,
+      });
+      if (parsed.timeMs > latest.ms) latest.ms = parsed.timeMs;
+    }
+  });
+}
+
 async function pollDockerSource(source) {
   const container = source.a;
-  const cursorMs = Number(readDockerCursor(container)) || 0;
-  const since = cursorMs ? new Date(cursorMs).toISOString() : BOOTSTRAP_SINCE;
+  const cursorRaw = readDockerCursor(container);
+  const cursorMs = Number(cursorRaw) || 0;
+  // docker --since 不接受 journalctl 风格的 '-15m'（静默返回空），用绝对 ISO。
+  const since = cursorMs ? new Date(cursorMs).toISOString() : new Date(Date.now() - 15 * 60_000).toISOString();
+  // 容器日志可能走 stderr（PG 默认如此），docker logs 按原样分流——两路都要挂解析。
   await new Promise((resolve) => {
     const child = spawn('docker', ['logs', '--timestamps', '--since', since, '--tail', '20000', container], {
-      stdio: ['ignore', 'pipe', 'inherit'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let buffer = '';
-    let latestMs = cursorMs;
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => {
-      buffer += chunk;
-      let newlineAt = buffer.lastIndexOf('\n');
-      if (newlineAt < 0) return;
-      const complete = buffer.slice(0, newlineAt + 1);
-      buffer = buffer.slice(newlineAt + 1);
-      for (const line of complete.split('\n')) {
-        if (!line.trim()) continue;
-        const parsed = parseDockerLogLine(line);
-        if (!parsed) continue;
-        if (parsed.timeMs <= cursorMs) continue; // --since 边界重放去重
-        const priority = pgLinePriority(parsed.message);
-        const level = { 3: 'ERROR', 4: 'WARNING', 6: 'LOG' }[priority] ?? 'LOG';
-        if (source.levels && !source.levels.has(level)) continue;
-        enqueue({
-          MESSAGE: parsed.message,
-          PRIORITY: priority,
-          __REALTIME_TIMESTAMP: String(BigInt(parsed.timeMs) * 1000n),
-          _SYSTEMD_UNIT: source.service,
-        });
-        if (parsed.timeMs > latestMs) latestMs = parsed.timeMs;
-      }
-    });
-    child.on('exit', () => {
-      if (latestMs > cursorMs) writeDockerCursor(container, latestMs);
+    const latest = { ms: cursorMs };
+    parseDockerStream(child.stdout, source, cursorMs, latest);
+    parseDockerStream(child.stderr, source, cursorMs, latest);
+    // close（而非 exit）：保证两个 pipe 的数据都冲刷完再落游标。
+    child.on('close', () => {
+      if (latest.ms > cursorMs) writeDockerCursor(container, latest.ms);
       resolve();
     });
     child.on('error', () => resolve());
@@ -437,13 +448,43 @@ function fileStateKey(filePath) {
   return filePath.replace(/[^A-Za-z0-9_.-]/g, '_');
 }
 
-async function pollFileSource(source) {
-  const key = fileStateKey(source.a);
-  let state = fileStates.get(key);
-  if (!state) {
-    state = { inode: null, offset: 0, remainder: Buffer.alloc(0) };
-    fileStates.set(key, state);
+function fileStatePath(filePath) {
+  return path.join(STATE_DIR, `file-${fileStateKey(filePath)}.json`);
+}
+
+function loadFileState(filePath) {
+  let state = fileStates.get(filePath);
+  if (state) return state;
+  state = { inode: null, committedOffset: 0, remainder: Buffer.alloc(0), readOffset: null };
+  try {
+    if (existsSync(fileStatePath(filePath))) {
+      const saved = JSON.parse(readFileSync(fileStatePath(filePath), 'utf8'));
+      if (saved && typeof saved.inode === 'number' && typeof saved.committedOffset === 'number') {
+        state.inode = saved.inode;
+        state.committedOffset = saved.committedOffset;
+        state.readOffset = saved.committedOffset;
+      }
+    }
+  } catch {
+    // 状态损坏时从文件头重来（一次性重复可接受）。
   }
+  fileStates.set(filePath, state);
+  return state;
+}
+
+function saveFileState(filePath, state) {
+  try {
+    // committedOffset = readOffset - 未换行的残余字节：只记录完整行已消费的位置，
+    // 重启后从该位置续读，不丢不重。
+    state.committedOffset = state.readOffset - state.remainder.length;
+    writeFileSync(fileStatePath(filePath), JSON.stringify({ inode: state.inode, committedOffset: state.committedOffset }));
+  } catch {
+    // 写失败只影响续传起点。
+  }
+}
+
+async function pollFileSource(source) {
+  const state = loadFileState(source.a);
   let stat;
   try {
     stat = statSync(source.a);
@@ -452,20 +493,24 @@ async function pollFileSource(source) {
   }
   if (state.inode !== null && stat.ino !== state.inode) {
     state.inode = null;
-    state.offset = 0;
+    state.readOffset = 0;
     state.remainder = Buffer.alloc(0);
   }
   if (state.inode === null) state.inode = stat.ino;
-  if (stat.size <= state.offset) return;
+  if (state.readOffset === null) state.readOffset = 0;
+  if (stat.size <= state.readOffset) {
+    saveFileState(source.a, state);
+    return;
+  }
   let fd;
   try {
     fd = openSync(source.a, 'r');
-    const length = Math.min(stat.size - state.offset, 4 * 1024 * 1024);
+    const length = Math.min(stat.size - state.readOffset, 4 * 1024 * 1024);
     const buffer = Buffer.alloc(length);
-    const bytesRead = readSync(fd, buffer, 0, length, state.offset);
+    const bytesRead = readSync(fd, buffer, 0, length, state.readOffset);
     closeSync(fd);
-    state.offset += bytesRead;
-    let chunk = Buffer.concat([state.remainder, buffer.subarray(0, bytesRead)]);
+    state.readOffset += bytesRead;
+    const chunk = Buffer.concat([state.remainder, buffer.subarray(0, bytesRead)]);
     let newlineAt = chunk.lastIndexOf(0x0a);
     if (newlineAt < 0) {
       state.remainder = chunk;
@@ -487,6 +532,7 @@ async function pollFileSource(source) {
         _SYSTEMD_UNIT: source.service,
       });
     }
+    saveFileState(source.a, state);
   } catch (error) {
     process.stderr.write(`[d-obs-log-bridge] file poll failed (${source.a}): ${error?.message ?? error}\n`);
     if (fd !== undefined) closeSync(fd);
@@ -547,11 +593,16 @@ if (invokedDirectly) {
   process.stderr.write(`[d-obs-log-bridge] ${sourceSummary} → ${ENDPOINT}\n`);
   scheduleFlush();
   void (async () => {
+    let cycles = 0;
     while (!stopping) {
       const tasks = [pollOnce()];
       for (const source of DOCKER_SOURCES) tasks.push(pollDockerSource(source));
       for (const source of FILE_SOURCES) tasks.push(pollFileSource(source));
       await Promise.all(tasks);
+      cycles += 1;
+      if (process.env.RDK_LOG_BRIDGE_POLL_DEBUG) {
+        process.stderr.write(`[d-obs-log-bridge] cycle ${cycles}: pending=${pending.length}\n`);
+      }
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
   })();
