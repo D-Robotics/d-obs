@@ -1,10 +1,29 @@
 /** 观测查询 / 边缘设备视图样式（配色复用全局 palette token）。 */
 export const OPS_OBSERVABILITY_SIGNALS_STYLE = `
-.signals-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin:0 0 12px}
+.signals-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
 .nav-primary .module-tab{background:transparent}
 .nav-primary .module-tab.active{background:var(--c422)}
-.signals-toolbar label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
-.signals-toolbar input,.signals-toolbar select{min-width:160px}
+.signals-toolbar label{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);white-space:nowrap}
+.signals-toolbar label.grow{flex:1 1 300px}
+.signals-toolbar input,.signals-toolbar select{height:32px;border:1px solid var(--line2);border-radius:7px;background:var(--panel);color:var(--text);padding:0 10px;outline:none;font-size:12px}
+.signals-toolbar input{min-width:170px}
+.signals-toolbar label.grow input{width:100%;min-width:0;flex:1 1 auto}
+.signals-toolbar select{min-width:112px;cursor:pointer}
+.signals-toolbar input:focus,.signals-toolbar select:focus{border-color:var(--green);box-shadow:0 0 0 2px var(--c23)}
+.signals-toolbar input::placeholder{color:var(--muted);opacity:.65}
+.signals-query-card{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:16px;margin:0 0 12px;box-shadow:0 4px 12px var(--c21),0 0 1px var(--c22)}
+.signals-query-card .signals-toolbar{margin:12px 0 0}
+.signals-query-divider{border-top:1px dashed var(--line2);margin:14px -16px 0}
+.nl-hero{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.nl-hero-mark{flex:0 0 auto;width:36px;height:36px;border-radius:8px;background:var(--panel2);color:var(--green);display:grid;place-items:center;font-size:17px}
+.nl-hero input{flex:1 1 auto;min-width:0;height:36px;border:1px solid var(--line2);border-radius:8px;background:var(--panel);color:var(--text);padding:0 12px;font-size:13px;outline:none}
+.nl-hero input:focus{border-color:var(--green);box-shadow:0 0 0 2px var(--c23)}
+.nl-hero input::placeholder{color:var(--muted);opacity:.65}
+.nl-hero .btn{height:36px;border-radius:8px;padding:0 16px}
+.nl-hint{margin:8px 1px 0;font-size:11px;color:var(--muted)}
+#nlQueryResult{margin-top:12px}
+#nlQueryResult:empty{display:none}
+.signals-note{margin:0 0 10px;color:var(--muted);font-size:12px}
 .board-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 8px}
 .board-toolbar-group{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .board-toolbar-group.board-toolbar-actions{padding-left:8px;border-left:1px solid var(--line)}
@@ -17,7 +36,8 @@ export const OPS_OBSERVABILITY_SIGNALS_STYLE = `
 .signals-chart-wrap svg{display:block;width:100%;height:auto}
 .signals-legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:11px;color:var(--muted)}
 .signals-legend .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
-.signals-empty{color:var(--muted);font-size:12px;padding:18px 0;text-align:center}
+.signals-empty{color:var(--muted);font-size:12px;padding:22px 12px;text-align:center}
+.signals-chart-wrap>.signals-empty{padding:40px 12px}
 .signals-log-table{width:100%;border-collapse:collapse;font-size:12px}
 .signals-log-table th,.signals-log-table td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 .signals-log-table th{color:var(--muted);font-weight:500;font-size:11px}

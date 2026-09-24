@@ -179,16 +179,21 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       <div class="view-head"><div><div class="eyebrow">可观测中心 / 观测查询</div><h2 id="signalsHeading">指标、日志与自定义看板</h2><p>查询 OTLP 落库的指标与日志；常用查询可组织为可拖拽排序的看板，并以模板导入导出。深度历史仍可前往 Prometheus 查询。</p></div><div class="right">OTLP 落库 · 管理员只读</div></div>
       <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/promql" aria-selected="false">PromQL 查询<small>深度历史 · 直查 Prometheus</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义看板<small>多看板 · 拖拽排序 · 模板导入导出</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/catalog" aria-selected="false">指标字典<small>有哪些指标、都是啥意思</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/tokens" aria-selected="false">接入凭据<small>按人/服务/租户签发上报凭据</small></button></div>
       <div class="view-module is-active" data-view-module="signals/metrics" role="tabpanel" aria-label="指标查询">
-        <div class="signals-toolbar">
-          <label>自然语言查询<input id="nlQueryInput" type="text" autocomplete="off" spellcheck="false" placeholder="例如：最近1小时有多少 span 被拒绝 / checkout-api 最近的请求量" /></label>
-          <button id="nlQueryBtn" class="btn primary" type="button">智能查询</button>
-        </div>
-        <div id="nlQueryResult" aria-live="polite"><div class="signals-empty">用一句中文描述你想看什么；也会在指标字典里帮你定位指标</div></div>
-        <div class="signals-toolbar">
-          <label>指标名<input id="signalMetricInput" list="signalMetricList" type="text" autocomplete="off" spellcheck="false" placeholder="如 rdk_ai_otlp_spans_received_total" /><datalist id="signalMetricList"></datalist></label>
-          <label>时间窗口<select id="signalMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option></select></label>
-          <button id="signalQueryBtn" class="btn primary" type="button">查询</button>
-          <button id="signalSavePanelBtn" class="btn" type="button">存入看板</button>
+        <div class="signals-query-card">
+          <div class="nl-hero">
+            <span class="nl-hero-mark" aria-hidden="true">⌕</span>
+            <input id="nlQueryInput" type="text" autocomplete="off" spellcheck="false" aria-label="自然语言查询" placeholder="用一句中文描述你想看什么，如：最近1小时有多少 span 被拒绝 / checkout-api 最近的请求量" />
+            <button id="nlQueryBtn" class="btn primary" type="button">智能查询</button>
+          </div>
+          <p class="nl-hint">服务端把问题映射到指标字典里的指标并自动出图；识别不了时换个说法，或到「指标字典」直接选。</p>
+          <div id="nlQueryResult" aria-live="polite"></div>
+          <div class="signals-query-divider" role="presentation"></div>
+          <div class="signals-toolbar">
+            <label class="grow">指标名<input id="signalMetricInput" list="signalMetricList" type="text" autocomplete="off" spellcheck="false" placeholder="如 rdk_ai_otlp_spans_received_total" /><datalist id="signalMetricList"></datalist></label>
+            <label>时间窗口<select id="signalMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option></select></label>
+            <button id="signalQueryBtn" class="btn primary" type="button">查询</button>
+            <button id="signalSavePanelBtn" class="btn" type="button">存入看板</button>
+          </div>
         </div>
         <div id="signalsMetricChart" class="signals-chart-wrap" aria-live="polite"><div class="signals-empty">输入指标名并点击查询</div></div>
         <details id="signals-anomalies" class="detail-sections"><summary class="detail-summary"><strong>统计异常检测</strong><span>对落库序列做 z-score 粗筛（最新值偏离基线 ≥3.5 个标准差），命中后请下钻确认</span></summary>
@@ -200,21 +205,25 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
         </details>
       </div>
       <div class="view-module" data-view-module="signals/logs" role="tabpanel" aria-label="日志查询" hidden>
-        <div class="signals-toolbar">
-          <label>服务<input id="signalLogService" type="text" autocomplete="off" spellcheck="false" placeholder="service.name，可留空" /></label>
-          <label>最低级别<select id="signalLogSeverity"><option value="1">全部</option><option value="9" selected>INFO+</option><option value="13">WARN+</option><option value="17">ERROR+</option></select></label>
-          <label>时间窗口<select id="signalLogMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option></select></label>
-          <button id="signalLogQueryBtn" class="btn primary" type="button">查询</button>
+        <div class="signals-query-card">
+          <div class="signals-toolbar">
+            <label class="grow">服务<input id="signalLogService" type="text" autocomplete="off" spellcheck="false" placeholder="service.name，可留空" /></label>
+            <label>最低级别<select id="signalLogSeverity"><option value="1">全部</option><option value="9" selected>INFO+</option><option value="13">WARN+</option><option value="17">ERROR+</option></select></label>
+            <label>时间窗口<select id="signalLogMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option></select></label>
+            <button id="signalLogQueryBtn" class="btn primary" type="button">查询</button>
+          </div>
         </div>
         <div id="signalsLogTable" aria-live="polite"><div class="signals-empty">设置条件并点击查询</div></div>
       </div>
       <div class="view-module" data-view-module="signals/promql" role="tabpanel" aria-label="PromQL 查询" hidden>
-        <p class="domain-note">PromQL 直查 Prometheus 深度历史（服务端代理、表达式经校验）；平台内 OTLP 落库序列请用「指标查询」。</p>
-        <div class="signals-toolbar">
-          <label>PromQL<input id="promqlInput" type="text" autocomplete="off" spellcheck="false" placeholder="如 sum(rate(http_requests_total[5m])) by (service)" /></label>
-          <label>时间窗口<select id="promqlMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option></select></label>
-          <button id="promqlRunBtn" class="btn primary" type="button">执行查询</button>
-          <a class="btn" href="/dobs/prometheus/graph" target="_blank" rel="noopener noreferrer">原生界面打开</a>
+        <p class="signals-note">PromQL 直查 Prometheus 深度历史（服务端代理、表达式经校验）；平台内 OTLP 落库序列请用「指标查询」。</p>
+        <div class="signals-query-card">
+          <div class="signals-toolbar">
+            <label class="grow">PromQL<input id="promqlInput" type="text" autocomplete="off" spellcheck="false" placeholder="如 sum(rate(http_requests_total[5m])) by (service)" /></label>
+            <label>时间窗口<select id="promqlMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option></select></label>
+            <button id="promqlRunBtn" class="btn primary" type="button">执行查询</button>
+            <a class="btn" href="/dobs/prometheus/graph" target="_blank" rel="noopener noreferrer">原生界面打开</a>
+          </div>
         </div>
         <div id="promqlResult" class="signals-chart-wrap" aria-live="polite"><div class="signals-empty">输入 PromQL 并点击「执行查询」；超过 14 天的深度历史请到原生界面</div></div>
       </div>
