@@ -292,6 +292,7 @@ function setup(): Harness {
       "renderMaintenancePanel:typeof renderMaintenancePanel!=='undefined'?renderMaintenancePanel:null," +
       "setView:typeof setView!=='undefined'?setView:null," +
       "consumePendingAlertDetail:typeof consumePendingAlertDetail!=='undefined'?consumePendingAlertDetail:null," +
+      "renderLearningModules:typeof renderLearningModules!=='undefined'?renderLearningModules:null," +
       "resolveViewRequest:typeof resolveViewRequest!=='undefined'?resolveViewRequest:null," +
       "renderSettings:typeof renderSettings!=='undefined'?renderSettings:null," +
       "renderModelPool:typeof renderModelPool!=='undefined'?renderModelPool:null," +
@@ -455,6 +456,76 @@ test('告警深链 #alert=<key>：定位告警视图并打开详情抽屉，未�
   assert.equal(state().view, 'alerts');
   assert.equal(state().pendingAlertDetail, null);
   assert.ok(!drawer!.classList.contains('open'), '未知键不得打开详情抽屉');
+  assert.equal(h.innerHTMLWrites.length, 0);
+});
+
+test('Skill 闭环明细：拓扑下渲染待审候选与已发布 Skill 两张真实条目表', () => {
+  const h = setup();
+  const obs = h.obs;
+  assert.equal(
+    typeof obs.renderLearningModules, 'function', '应能取到 renderLearningModules');
+  const flywheel = {
+    skillHitRate: 0.747,
+    reviewPending: 429,
+    storePublished: 6,
+    storeInstalls: 4,
+    runsWithRetry: 440,
+    lifecycle: {
+      candidateWritten: 62,
+      shadowStarted: 1,
+      canaryStarted: 0,
+      canaryPassed: 0,
+      personalPromoted: 0,
+      publicApproved: 0,
+    },
+    reviewQueueRecent: [
+      {
+        name: '已验证：修复电源监测页面没有BPU电压的问题',
+        category: 'auto_distilled',
+        source: 'auto_distilled',
+        aiScore: 40,
+        submittedAt: '2026-09-24T06:09:55Z',
+      },
+    ],
+    storeRecent: [
+      {
+        name: 'MagicBox 情感陪伴 demo 儿童展示提示词设计',
+        category: 'MagicBox',
+        authorName: null,
+        installs: 0,
+        publishedAt: '2026-08-05T23:15:33Z',
+      },
+    ],
+  };
+  const payload = (flywheelPatch: Record<string, unknown>) => ({
+    learning: {
+      generatedAt: '2026-09-24T08:10:13Z',
+      skill: {
+        status: 'ok',
+        overview: { windowDays: 30, flywheel: { ...flywheel, ...flywheelPatch }, dataHealth: {} },
+      },
+    },
+  });
+  (obs.setObsState as (p: Record<string, unknown>) => unknown)({ learning: payload({}) });
+  (obs.renderLearningModules as () => void)();
+  const root = h.byIdNode('skillLoopContent');
+  assert.ok(root, 'skillLoopContent 容器应已渲染');
+  const text = h.text(root);
+  assert.ok(text.includes('闭环明细'), '应存在闭环明细区');
+  assert.ok(text.includes('待人工审核候选 · 最近 1 条'), '待审明细表应带条数');
+  assert.ok(text.includes('修复电源监测页面没有BPU电压的问题'), '待审候选名应渲染');
+  assert.ok(text.includes('已发布 Skill · 最近 1 条'), '商店明细表应带条数');
+  assert.ok(text.includes('MagicBox 情感陪伴 demo 儿童展示提示词设计'), '已发布名称应渲染');
+  assert.ok(text.includes('40'), 'AI 分应渲染');
+
+  // 台账表缺失（null）：如实显示暂不可用，不冒充空队列。
+  (obs.setObsState as (p: Record<string, unknown>) => unknown)({
+    learning: payload({ reviewQueueRecent: null, storeRecent: null }),
+  });
+  (obs.renderLearningModules as () => void)();
+  const degraded = h.text(root);
+  assert.ok(degraded.includes('待审明细暂不可用'), '待审明细缺失应有明确降级文案');
+  assert.ok(degraded.includes('商店明细暂不可用'), '商店明细缺失应有明确降级文案');
   assert.equal(h.innerHTMLWrites.length, 0);
 });
 

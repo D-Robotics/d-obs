@@ -36,6 +36,24 @@ export interface FlywheelSkillOverview {
   storeInstalls: number | null;
   runsWithRetry: number | null;
   lifecycle: FlywheelSkillLifecycle;
+  /**
+   * 闭环明细：只读、低敏感、限 Top-N 的台账条目，供看板下钻到具体数据；
+   * 对应表未建时为 null（区别于空数组=真实没有行）。
+   */
+  reviewQueueRecent: Array<{
+    name: string;
+    category: string;
+    source: string;
+    aiScore: number | null;
+    submittedAt: string;
+  }> | null;
+  storeRecent: Array<{
+    name: string;
+    category: string;
+    authorName: string | null;
+    installs: number;
+    publishedAt: string;
+  }> | null;
 }
 
 export interface FlywheelOverview {

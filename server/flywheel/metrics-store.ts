@@ -6,6 +6,7 @@ import {
 import type {
   FlywheelOverview,
   FlywheelSkillLifecycle,
+  FlywheelSkillOverview,
 } from './flywheel-metrics-types.js';
 import { readConversationAggregate, readDailyActiveUsers } from './conversation-aggregate-store.js';
 export type { FlywheelDailyPoint, FlywheelOverview } from './flywheel-metrics-types.js';
@@ -496,6 +497,8 @@ export async function getFlywheelOverview(daysInput = 30): Promise<FlywheelOverv
   let storePublished: number | null = null;
   let storeInstalls: number | null = null;
   let storeLastAt: string | null = null;
+  let reviewQueueRecent: FlywheelSkillOverview['reviewQueueRecent'] = null;
+  let storeRecent: FlywheelSkillOverview['storeRecent'] = null;
   try {
     const queue = await p.query(
       `select count(*) filter (where human_verdict is null)::int pending,
@@ -523,6 +526,44 @@ export async function getFlywheelOverview(daysInput = 30): Promise<FlywheelOverv
     storeLastAt = shortScalar(store.rows[0]?.last_at, 64);
   } catch {
     // skill_store 未建表。
+  }
+  // 明细下钻：与计数同源但独立 try，任一失败只降级对应明细，不影响计数。
+  try {
+    const queueItems = await p.query(
+      `select name, category, source, ai_score, submitted_at::text submitted_at
+       from public.skill_review_queue
+       where human_verdict is null
+       order by submitted_at desc
+       limit 8`,
+    );
+    skillLedgerConfigured = true;
+    reviewQueueRecent = queueItems.rows.map((row) => ({
+      name: shortScalar(row.name, 96) ?? '',
+      category: shortScalar(row.category, 32) ?? '',
+      source: shortScalar(row.source, 32) ?? '',
+      aiScore: row.ai_score == null ? null : num(row.ai_score),
+      submittedAt: String(row.submitted_at ?? ''),
+    }));
+  } catch {
+    // skill_review_queue 未建表 → 待审明细保持 null。
+  }
+  try {
+    const storeItems = await p.query(
+      `select name, category, author_name, install_count, published_at::text published_at
+       from public.skill_store
+       order by published_at desc
+       limit 8`,
+    );
+    skillLedgerConfigured = true;
+    storeRecent = storeItems.rows.map((row) => ({
+      name: shortScalar(row.name, 96) ?? '',
+      category: shortScalar(row.category, 32) ?? '',
+      authorName: shortScalar(row.author_name, 48),
+      installs: num(row.install_count),
+      publishedAt: String(row.published_at ?? ''),
+    }));
+  } catch {
+    // skill_store 未建表 → 商店明细保持 null。
   }
   const skillLedgerSamples = reviewQueueSamples + (storePublished ?? 0);
   const skillLedgerLastAt =
@@ -807,6 +848,8 @@ export async function getFlywheelOverview(daysInput = 30): Promise<FlywheelOverv
       storeInstalls,
       runsWithRetry,
       lifecycle,
+      reviewQueueRecent,
+      storeRecent,
     },
     dataHealth,
   };
