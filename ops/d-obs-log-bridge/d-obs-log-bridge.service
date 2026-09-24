@@ -1,0 +1,23 @@
+[Unit]
+Description=d-obs log bridge: rdstudio journald -> OTLP logs
+After=network-online.target d-obs.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/d-obs-log-bridge
+EnvironmentFile=/etc/d-obs-log-bridge.env
+ExecStart=/opt/node-v22.19.0-linux-x64/bin/node /opt/d-obs-log-bridge/d-obs-log-bridge.mjs
+Restart=always
+RestartSec=5s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+StateDirectory=d-obs-log-bridge
+StateDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
