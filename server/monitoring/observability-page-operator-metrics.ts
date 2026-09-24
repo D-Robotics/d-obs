@@ -12,12 +12,17 @@ export const OPS_OBSERVABILITY_OPERATOR_METRICS_STYLE = `
     .operator-metrics-kpi.token .value{color:var(--c3)}.operator-metrics-kpi.user .value{color:var(--c336)}.operator-metrics-kpi.conversation .value{color:var(--c337)}.operator-metrics-kpi.run .value{color:var(--c338)}
     .operator-metrics-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(300px,.65fr);gap:12px;margin-bottom:12px}
     .operator-metrics-chart{min-width:0;padding:15px 16px}.operator-metrics-chart h2{margin:0;font-size:13px}.operator-metrics-chart .hint{margin-top:3px}
-    .operator-metrics-bars{display:grid;gap:7px;margin-top:14px}
-    .operator-metrics-bar-row{display:grid;grid-template-columns:68px minmax(0,1fr) 78px;align-items:center;gap:8px;font-size:10px}
-    .operator-metrics-bar-label{color:var(--muted);font-variant-numeric:tabular-nums}
-    .operator-metrics-bar-track{height:11px;border-radius:3px;background:var(--c339);overflow:hidden}
-    .operator-metrics-bar-fill{height:100%;min-width:2px;border-radius:3px;background:linear-gradient(90deg,var(--c340),var(--c341))}
-    .operator-metrics-bar-value{color:var(--text);text-align:right;font-variant-numeric:tabular-nums}
+    .omc-series{display:inline-flex;gap:4px;flex-wrap:wrap;margin:12px 0 2px}
+    .omc-series button{min-height:26px;padding:4px 9px;border:1px solid var(--line);border-radius:6px;background:var(--c2);color:var(--muted);font-size:10px;cursor:pointer}
+    .omc-series button.active{border-color:var(--c79);background:var(--c12);color:var(--green);font-weight:650}
+    .omc-series button:focus-visible{outline:2px solid var(--c11);outline-offset:1px}
+    .omc-chart-svg{width:100%;height:auto;display:block;margin-top:10px}
+    .omc-grid{stroke:var(--line);stroke-width:1}
+    .omc-axis{font-size:9.5px;fill:var(--muted);font-variant-numeric:tabular-nums}
+    .omc-line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+    .omc-dot{stroke:var(--c2);stroke-width:1.5}
+    .omc-color-token{stroke:var(--c340)}.omc-color-user{stroke:var(--c336)}.omc-color-dau{stroke:var(--c3)}.omc-color-conv{stroke:var(--c337)}.omc-color-run{stroke:var(--c338)}
+    .omc-fill-token{stop-color:var(--c340)}.omc-fill-user{stop-color:var(--c336)}.omc-fill-dau{stop-color:var(--c3)}.omc-fill-conv{stop-color:var(--c337)}.omc-fill-run{stop-color:var(--c338)}
     .operator-metrics-side{display:grid;gap:10px;align-content:start}
     .operator-metrics-side .source-card{padding:13px 14px;border:1px solid var(--line);border-radius:8px;background:var(--c113)}
     .operator-metrics-side h3{margin:0;font-size:11px}.operator-metrics-side p{margin:5px 0 0;color:var(--muted);font-size:10px;line-height:1.5}
@@ -38,7 +43,7 @@ export const OPS_OBSERVABILITY_OPERATOR_METRICS_STYLE = `
     .operator-model-token-detail{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
     @media(max-width:1200px){.operator-metrics-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.operator-metrics-grid{grid-template-columns:1fr}}
     @media(max-width:1200px){.operator-dispatch-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
-    @media(max-width:620px){.operator-metrics-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.operator-dispatch-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.operator-metrics-bar-row{grid-template-columns:56px minmax(0,1fr) 66px}.operator-metrics-kpi .value{font-size:20px}}
+    @media(max-width:620px){.operator-metrics-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.operator-dispatch-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.operator-metrics-kpi .value{font-size:20px}}
 `;
 
 export const OPS_OBSERVABILITY_SCRIPT_OPERATOR_METRICS = `
@@ -47,6 +52,17 @@ export const OPS_OBSERVABILITY_SCRIPT_OPERATOR_METRICS = `
       function operatorMetricPercent(value){const parsed=Number(value);return Number.isFinite(parsed)?(parsed*100).toFixed(1)+'%':'—'}
       function operatorMetricDay(value){const text=String(value||'');return text.length>=10?text.slice(5):text||'—'}
       function operatorMetricRows(metrics){return Array.isArray(metrics&&metrics.daily)?metrics.daily.slice().sort((a,b)=>String(a.day).localeCompare(String(b.day))):[]}
+      // Grafana 风格日序列折线：坐标轴用紧凑中文数量级（万/亿），悬停数据点看当日精确值。
+      let operatorChartField='totalTokens';
+      const OPERATOR_SERIES=[['totalTokens','token 消耗','token'],['newAccounts','新增用户','user'],['activeUsers','日活 DAU','dau'],['conversations','对话次数','conv'],['runs','Agent Run','run']];
+      function operatorSeriesDef(field){return OPERATOR_SERIES.find(item=>item[0]===field)||OPERATOR_SERIES[0]}
+      function operatorSeriesColor(key){return ({token:'var(--c340)',user:'var(--c336)',dau:'var(--c3)',conv:'var(--c337)',run:'var(--c338)'})[key]||'var(--c340)'}
+      function operatorCompact(value){const v=operatorMetricNumber(value);const abs=Math.abs(v);if(abs>=1e8)return (v/1e8).toFixed(abs>=1e9?0:1)+'亿';if(abs>=1e4)return (v/1e4).toFixed(abs>=1e5?0:1)+'万';return operatorMetricFmt(v)}
+      function operatorLineChart(rows,field){const NS='http://www.w3.org/2000/svg';const def=operatorSeriesDef(field);const W=920,H=232,L=58,R=14,T=14,B=26;const innerW=W-L-R,innerH=H-T-B;const values=rows.map(row=>operatorMetricNumber(row[field]));const max=Math.max.apply(null,values.concat([1]))*1.08;const n=rows.length;const xAt=i=>L+(n<2?innerW/2:innerW*i/(n-1));const yAt=v=>T+innerH*(1-v/max);const svg=document.createElementNS(NS,'svg');svg.setAttribute('class','omc-chart-svg');svg.setAttribute('viewBox','0 0 '+W+' '+H);svg.setAttribute('preserveAspectRatio','xMidYMid meet');svg.setAttribute('role','img');svg.setAttribute('aria-label','每日 '+def[1]+'趋势折线图');const defs=document.createElementNS(NS,'defs');const grad=document.createElementNS(NS,'linearGradient');grad.setAttribute('id','omc-area-'+def[2]);grad.setAttribute('x1','0');grad.setAttribute('y1','0');grad.setAttribute('x2','0');grad.setAttribute('y2','1');[[0,'0.28'],[1,'0.02']].forEach(pair=>{const stop=document.createElementNS(NS,'stop');stop.setAttribute('offset',String(pair[0]));stop.setAttribute('class','omc-fill-'+def[2]);stop.setAttribute('stop-opacity',String(pair[1]));grad.appendChild(stop)});defs.appendChild(grad);svg.appendChild(defs);
+        for(let i=0;i<=4;i++){const value=max*i/4;const y=yAt(value);const grid=document.createElementNS(NS,'line');grid.setAttribute('class','omc-grid');grid.setAttribute('x1',String(L));grid.setAttribute('y1',String(y));grid.setAttribute('x2',String(W-R));grid.setAttribute('y2',String(y));svg.appendChild(grid);const tick=document.createElementNS(NS,'text');tick.setAttribute('class','omc-axis');tick.setAttribute('x',String(L-8));tick.setAttribute('y',String(y+3));tick.setAttribute('text-anchor','end');tick.textContent=operatorCompact(value);svg.appendChild(tick)}
+        const step=Math.max(1,Math.ceil(n/8));const lastIdx=n-1;rows.forEach((row,i)=>{const isLast=i===lastIdx;if(i%step!==0&&i!==lastIdx)return;if(isLast&&lastIdx%step===0&&lastIdx!==0)return;const label=document.createElementNS(NS,'text');label.setAttribute('class','omc-axis');label.setAttribute('x',String(xAt(i)));label.setAttribute('y',String(H-8));label.setAttribute('text-anchor','middle');label.textContent=operatorMetricDay(row.day);svg.appendChild(label)});
+        if(n){let area='M '+xAt(0)+' '+yAt(values[0]);let line='';rows.forEach((row,i)=>{const x=xAt(i);const y=yAt(values[i]);line+=(i?' L ':'M ')+x+' '+y;if(i)area+=' L '+x+' '+y});area+=' L '+xAt(n-1)+' '+(T+innerH)+' L '+xAt(0)+' '+(T+innerH)+' Z';const fill=document.createElementNS(NS,'path');fill.setAttribute('d',area);fill.setAttribute('fill','url(#omc-area-'+def[2]+')');svg.appendChild(fill);const path=document.createElementNS(NS,'path');path.setAttribute('class','omc-line omc-color-'+def[2]);path.setAttribute('d',line);svg.appendChild(path);rows.forEach((row,i)=>{const dot=document.createElementNS(NS,'circle');dot.setAttribute('class','omc-dot omc-color-'+def[2]);dot.setAttribute('cx',String(xAt(i)));dot.setAttribute('cy',String(yAt(values[i])));dot.setAttribute('r','3');dot.setAttribute('fill',operatorSeriesColor(def[2]));const tip=document.createElementNS(NS,'title');tip.textContent=String(row.day)+' · '+operatorMetricFmt(row[field]);dot.appendChild(tip);svg.appendChild(dot)})}
+        return svg}
       function renderOperatorMetrics(root){
         if(!root)return;
         root.replaceChildren();
@@ -76,9 +92,9 @@ export const OPS_OBSERVABILITY_SCRIPT_OPERATOR_METRICS = `
         ];
         cards.forEach(item=>{const card=make('section','operator-metrics-kpi '+item[0]);add(card,'div','label',item[1]);add(card,'div','value',item[2]);add(card,'div','detail',item[3]);kpis.appendChild(card)});root.appendChild(kpis);
         const grid=make('div','operator-metrics-grid');
-        const chart=make('section','panel operator-metrics-chart');add(chart,'h2','', '每日 token 消耗');add(chart,'div','hint','以 token 总量展示趋势，右侧为当日精确值。');
-        const bars=make('div','operator-metrics-bars');const chartRows=rows.slice(-14);const maxTokens=Math.max(...chartRows.map(row=>operatorMetricNumber(row.totalTokens)),1);
-        chartRows.forEach(row=>{const line=make('div','operator-metrics-bar-row');add(line,'span','operator-metrics-bar-label',operatorMetricDay(row.day));const track=make('div','operator-metrics-bar-track');const fill=make('div','operator-metrics-bar-fill');fill.style.width=Math.max(2,Math.round(operatorMetricNumber(row.totalTokens)/maxTokens*100))+'%';fill.title=operatorMetricFmt(row.totalTokens)+' tokens';track.appendChild(fill);line.appendChild(track);add(line,'span','operator-metrics-bar-value',operatorMetricFmt(row.totalTokens));bars.appendChild(line)});chart.appendChild(bars);grid.appendChild(chart);
+        const chart=make('section','panel operator-metrics-chart');const chartDef=operatorSeriesDef(operatorChartField);add(chart,'h2','', '每日 '+chartDef[1]+'趋势');add(chart,'div','hint','按天折线（Grafana 风格），悬停数据点查看当日精确值；全量精确数值见下方「每日运营明细」。');
+        const seriesBar=make('div','omc-series');OPERATOR_SERIES.forEach(item=>{const button=add(seriesBar,'button',item[0]===operatorChartField?'active':'',item[1]);button.type='button';button.addEventListener('click',()=>{operatorChartField=item[0];renderOperatorMetrics(root)})});chart.appendChild(seriesBar);
+        chart.appendChild(operatorLineChart(rows,operatorChartField));grid.appendChild(chart);
         const sources=metrics.sources||{};const side=make('div','operator-metrics-side');[['指标口径',(sources.tokens||'token 来自 agent_run_records')+'；'+(sources.activity||'对话来自 conversation_turns')+'；'+(sources.accounts||'新增来自 credit_account')],['调度口径',sources.dispatch||'agent_dispatch_plan 规范化 receipt，仅聚合标签、结果与耗时'],['数据窗口','当前返回近 '+operatorMetricNumber(metrics.windowDays)+' 天；可切换 7 / 30 / 90 天。'],['数据新鲜度','页面刷新时重新读取中心库，不缓存用户身份或对话正文。']].forEach(item=>{const card=make('section','source-card');add(card,'h3','',item[0]);add(card,'p','',item[1]);side.appendChild(card)});grid.appendChild(side);root.appendChild(grid);
         const table=buildTable('每日运营明细',['日期','新增用户','DAU','对话次数','Agent Run','Prompt token','Completion token','总 token'],rows.slice().reverse().map(row=>[operatorMetricDay(row.day),operatorMetricFmt(row.newAccounts),operatorMetricFmt(row.activeUsers),operatorMetricFmt(row.conversations),operatorMetricFmt(row.runs),operatorMetricFmt(row.promptTokens),operatorMetricFmt(row.completionTokens),operatorMetricFmt(row.totalTokens)]),'当前没有每日样本');table.classList.add('operator-metrics-table');root.appendChild(table);
         const modelTokens=metrics.modelTokens;

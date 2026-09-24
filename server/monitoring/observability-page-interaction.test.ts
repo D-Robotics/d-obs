@@ -293,6 +293,7 @@ function setup(): Harness {
       "setView:typeof setView!=='undefined'?setView:null," +
       "consumePendingAlertDetail:typeof consumePendingAlertDetail!=='undefined'?consumePendingAlertDetail:null," +
       "renderLearningModules:typeof renderLearningModules!=='undefined'?renderLearningModules:null," +
+      "renderOperatorMetrics:typeof renderOperatorMetrics!=='undefined'?renderOperatorMetrics:null," +
       "resolveViewRequest:typeof resolveViewRequest!=='undefined'?resolveViewRequest:null," +
       "renderSettings:typeof renderSettings!=='undefined'?renderSettings:null," +
       "renderModelPool:typeof renderModelPool!=='undefined'?renderModelPool:null," +
@@ -526,6 +527,64 @@ test('Skill 闭环明细：拓扑下渲染待审候选与已发布 Skill 两张�
   const degraded = h.text(root);
   assert.ok(degraded.includes('待审明细暂不可用'), '待审明细缺失应有明确降级文案');
   assert.ok(degraded.includes('商店明细暂不可用'), '商店明细缺失应有明确降级文案');
+  assert.equal(h.innerHTMLWrites.length, 0);
+});
+
+test('运营指标折线图：日序列渲染 SVG 折线与数据点，系列切换复用同一图表', async () => {
+  const h = setup();
+  const obs = h.obs;
+  const render = obs.renderOperatorMetrics as (root: StubNode) => void;
+  assert.equal(typeof render, 'function', '应能取到 renderOperatorMetrics');
+  const daily = Array.from({ length: 7 }, (_, i) => ({
+    day: '2026-09-' + String(18 + i).padStart(2, '0'),
+    newAccounts: 40 + i,
+    activeUsers: 1000 + i * 10,
+    conversations: 300 + i,
+    runs: 260 + i,
+    promptTokens: 1_000_000 * (i + 1),
+    completionTokens: 50_000,
+    totalTokens: 1_050_000 * (i + 1),
+  }));
+  const metricsFixture = {
+    ok: true,
+    metrics: {
+      windowDays: 7,
+      totals: {
+        totalTokens: daily.reduce((s, r) => s + r.totalTokens, 0),
+        promptTokens: daily.reduce((s, r) => s + r.promptTokens, 0),
+        completionTokens: daily.reduce((s, r) => s + r.completionTokens, 0),
+        newAccounts: 280,
+        conversations: 2100,
+        runs: 1820,
+        activeUsersPeak: 1060,
+      },
+      sources: {},
+      daily,
+    },
+  };
+  h.setJsonResponse(metricsFixture);
+  (obs.setView as (r: string, u?: boolean) => unknown)('operator-metrics', false);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const root = h.byIdNode('operatorMetricsContent');
+  assert.ok(root, 'operatorMetricsContent 容器应存在');
+  render(root!);
+  const text = h.text(root);
+  assert.ok(text.includes('每日 token 消耗趋势'), '默认系列应为 token 消耗');
+  const chart = h.all(root).find((n) => String(n.attrs?.['class'] ?? '').includes('omc-chart-svg'));
+  assert.ok(chart, '应渲染折线图 SVG');
+  const dots = h.all(chart).filter((n) => n.tagName.toUpperCase() === 'CIRCLE');
+  assert.equal(dots.length, 7, '7 天应渲染 7 个数据点');
+  assert.ok(dots[0].children.some((c) => (c as { textContent?: string }).textContent?.includes('2026-09-18')), '数据点悬停应含完整日期');
+  assert.ok(text.includes('万'), '坐标轴应使用紧凑数量级');
+  const lastTip = dots[6].children.find((c) => (c as { textContent?: string }).textContent?.includes('7,350,000'));
+  assert.ok(lastTip, '末位数据点悬停应含当日精确 token 值');
+
+  // 切换系列：同一 SVG 容器改画新增用户，标题与点位同步。
+  const userButton = h.all(root).find((n) => n.tagName === 'BUTTON' && n.textContent === '新增用户');
+  assert.ok(userButton, '应存在系列切换按钮');
+  await (userButton as StubNode).dispatch('click');
+  const textAfter = h.text(root);
+  assert.ok(textAfter.includes('每日 新增用户趋势'), '切换后标题应为新增用户');
   assert.equal(h.innerHTMLWrites.length, 0);
 });
 
