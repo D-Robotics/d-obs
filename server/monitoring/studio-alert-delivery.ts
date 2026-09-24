@@ -656,8 +656,28 @@ export async function deliverTransition(
       error: 'rule_notification_disabled',
     };
   }
+  // 分级路由（借鉴参考平台 senderRule）：critical/warning 可各自覆盖渠道；
+  // 'none' 表示该级别不发送，'' 表示继承规则设置。
+  const levelChannel =
+    transition.severity === 'critical'
+      ? config.notification.criticalChannel
+      : transition.severity === 'warning'
+        ? config.notification.warningChannel
+        : '';
+  if (!options?.forceTest && levelChannel === 'none') {
+    return {
+      delivered: false,
+      channel: 'suppressed',
+      attempts: 0,
+      error: 'level_notification_disabled',
+    };
+  }
+  const levelOverride =
+    levelChannel && levelChannel !== 'none' && levelChannel !== 'default' ? levelChannel : '';
   const rawChannel =
-    options?.channel ?? (ruleChannel === 'default' ? config.notification.channel : ruleChannel);
+    options?.channel ??
+    (levelOverride ||
+      (ruleChannel === 'default' ? config.notification.channel : ruleChannel));
   if (!isAlertDeliveryChannel(rawChannel)) {
     return {
       delivered: false,

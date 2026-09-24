@@ -102,3 +102,41 @@ test('deliverTransition：钉钉投递走 markdown 消息体（不触发真实�
   assert.notEqual(result.error, 'rule_notification_disabled');
   assert.notEqual(result.error, 'notification_channel_not_selected');
 });
+
+test('分级路由：critical 级别覆盖渠道，warning 继承；级别选 none 则静默', async () => {
+  const transition = (severity: 'warning' | 'critical'): AlertTransition => ({
+    kind: 'opened',
+    key: 'public-health',
+    title: '测试',
+    severity,
+    summary: '测试摘要',
+    at: new Date().toISOString(),
+  });
+  // 严重级 → telegram；告警级留空 → 继承规则/默认渠道
+  const config = mergeAndValidateAlertConfig(DEFAULT_ALERT_CONFIG, {
+    notification: {
+      enabled: true,
+      shadowMode: false,
+      channel: 'dingtalk',
+      criticalChannel: 'telegram',
+      dingtalkWebhookUrl: 'https://oapi.dingtalk.com/robot/send?access_token=abc',
+      telegramWebhookUrl: 'https://api.telegram.org/bot123:token/sendMessage',
+    },
+  });
+  const critical = await deliverTransition(transition('critical'), config);
+  assert.equal(critical.channel, 'telegram', '严重级必须走覆盖渠道');
+  const warning = await deliverTransition(transition('warning'), config);
+  assert.equal(warning.channel, 'dingtalk', '告警级未配置覆盖时继承默认');
+  // 告警级选「不发送」→ 该级别静默
+  const muted = mergeAndValidateAlertConfig(DEFAULT_ALERT_CONFIG, {
+    notification: { enabled: true, shadowMode: false, channel: 'dingtalk', warningChannel: 'none' },
+  });
+  const suppressed = await deliverTransition(transition('warning'), muted);
+  assert.equal(suppressed.error, 'level_notification_disabled');
+  // 非法值在 schema 处被拒绝
+  assert.throws(() =>
+    mergeAndValidateAlertConfig(DEFAULT_ALERT_CONFIG, {
+      notification: { criticalChannel: 'pagerduty' },
+    }),
+  );
+});

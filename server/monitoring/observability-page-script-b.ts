@@ -33,7 +33,8 @@ export const OPS_OBSERVABILITY_SCRIPT_B = `      function openEditor(key){const 
         const fields=make('div','fields');
         const enabledBox=make('div','field');switchField(enabledBox,'notifyEnabled','启用真实通知',c.notification.enabled);fields.appendChild(enabledBox);
         const shadowBox=make('div','field');switchField(shadowBox,'notifyShadow','影子模式（只记录不外发）',c.notification.shadowMode);fields.appendChild(shadowBox);
-        selectField(fields,'defaultChannel','默认渠道',c.notification.channel,channels.map(item=>[item.channel,item.label]));selectField(fields,'minSeverity','最低通知级别',c.notification.minSeverity,[['warning','警告及严重'],['critical','仅严重']]);
+        const lv=document.createElement('div');lv.className='level-routing';lv.style.gridColumn='1/-1';const mk=(id,label,val)=>{const l=document.createElement('label');l.style.display='flex';l.style.flexDirection='column';l.style.gap='4px';l.style.fontSize='11px';l.style.color='var(--muted)';const s=document.createElement('select');s.id=id;['','default','feishu','dingtalk','wecom','slack','telegram','webhook','none'].forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v===''?'继承规则设置':v==='default'?'默认渠道':v==='none'?'不发送':v;s.appendChild(o)});s.value=val||'';l.appendChild(s);l.appendChild(document.createTextNode(label));return l};lv.appendChild(mk('criticalChannel','严重级渠道（覆盖）',c.notification.criticalChannel));lv.appendChild(mk('warningChannel','告警级渠道（覆盖）',c.notification.warningChannel));fields.appendChild(lv);
+selectField(fields,'defaultChannel','默认渠道',c.notification.channel,channels.map(item=>[item.channel,item.label]));selectField(fields,'minSeverity','最低通知级别',c.notification.minSeverity,[['warning','警告及严重'],['critical','仅严重']]);
         const reminders=make('div','field');switchField(reminders,'policyReminders','持续故障发送提醒',c.global.remindersEnabled);fields.appendChild(reminders);
         const recovery=make('div','field');switchField(recovery,'policyRecovery','恢复时通知',c.global.notifyOnRecovery);fields.appendChild(recovery);
         field(fields,'policyCooldown','提醒冷却（分钟）',c.global.cooldownMinutes,'number');field(fields,'policyBudget','每小时通知上限',c.global.maxNotificationsPerHour,'number');
@@ -77,6 +78,8 @@ export const OPS_OBSERVABILITY_SCRIPT_B = `      function openEditor(key){const 
               enabled:$('notifyEnabled').checked,
               shadowMode:$('notifyShadow').checked,
               channel:$('defaultChannel').value,
+              criticalChannel:$('criticalChannel')?$('criticalChannel').value:'',
+              warningChannel:$('warningChannel')?$('warningChannel').value:'',
               minSeverity:$('minSeverity').value,
               titlePrefix:$('templateTitlePrefix').value.trim(),
               messageTemplate:$('templateMessage').value,

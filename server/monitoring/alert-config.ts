@@ -403,6 +403,8 @@ export interface AlertConfig {
     enabled: boolean;
     shadowMode: boolean;
     channel: AlertDeliveryChannel;
+    criticalChannel: string;
+    warningChannel: string;
     minSeverity: 'warning' | 'critical';
     titlePrefix: string;
     messageTemplate: string;
@@ -471,6 +473,8 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
     messageTemplate: DEFAULT_ALERT_MESSAGE_TEMPLATE,
     actionGuide: '查看可观测看板、服务日志、中心遥测和依赖健康状态。',
     dashboardUrl: 'http://127.0.0.1:47110/ops-observability#alerts',
+      criticalChannel: '',
+      warningChannel: '',
     dingtalkWebhookUrl: '',
     wecomWebhookUrl: '',
     slackWebhookUrl: '',
@@ -750,6 +754,12 @@ const alertConfigSchema = z
         messageTemplate: z.string().trim().min(1).max(2_000),
         actionGuide: z.string().trim().min(1).max(500),
         dashboardUrl: z.string().trim().url().max(2_048),
+        criticalChannel: z
+          .union([z.literal(''), z.enum(['default', ...ALERT_DELIVERY_CHANNEL_VALUES, 'none'])])
+          .default(''),
+        warningChannel: z
+          .union([z.literal(''), z.enum(['default', ...ALERT_DELIVERY_CHANNEL_VALUES, 'none'])])
+          .default(''),
         feishuWebhookUrl: z.string().max(2_048),
         webhookUrl: z.string().max(2_048),
         bearerSecret: z.string().max(512),
