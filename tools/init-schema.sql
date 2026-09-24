@@ -175,3 +175,45 @@ alter table public.studio_observability_actions
 
 -- 扩展信号面：OTLP logs、metrics 持久化、边缘设备、模型单价、自定义面板。
 \ir observability-signals-schema.sql
+
+-- 自定义告警策略（P2 策略引擎）：策略:规则行一对多 + 评估状态表。
+-- 与 alert-strategy-store.ts 的运行时幂等建表同源，双向同步。
+create table if not exists public.studio_alert_strategies (
+  id text primary key,
+  tenant_id text not null default 'platform',
+  name text not null,
+  description text not null default '',
+  enabled boolean not null default true,
+  notification_channel text not null default 'default',
+  created_by text not null default '',
+  created_at timestamptz not null default now(),
+  updated_by text not null default '',
+  updated_at timestamptz not null default now()
+);
+create index if not exists studio_alert_strategies_tenant_idx
+  on public.studio_alert_strategies (tenant_id);
+create table if not exists public.studio_alert_strategy_rules (
+  id text primary key,
+  strategy_id text not null references public.studio_alert_strategies(id) on delete cascade,
+  position int not null default 0,
+  query text not null,
+  duration_seconds int not null default 120,
+  comparator text not null default 'gt',
+  threshold double precision not null default 0,
+  severity text not null default 'warning',
+  send_interval_minutes int not null default 0,
+  no_data_alert boolean not null default false
+);
+create index if not exists studio_alert_strategy_rules_strategy_idx
+  on public.studio_alert_strategy_rules (strategy_id, position);
+create table if not exists public.studio_alert_strategy_states (
+  strategy_id text not null,
+  rule_id text not null,
+  series_key text not null,
+  series_labels jsonb not null default '{}'::jsonb,
+  first_hit_at timestamptz not null,
+  last_hit_at timestamptz not null,
+  last_value double precision,
+  last_notify_at timestamptz,
+  primary key (strategy_id, rule_id, series_key)
+);

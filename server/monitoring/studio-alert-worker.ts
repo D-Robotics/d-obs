@@ -26,6 +26,7 @@ import {
 } from './synthetic-probes.js';
 import { collectServiceLevelBurnObservation } from './studio-alert-slo.js';
 import { scanRecentMetricAnomalies } from '../observability/metric-anomalies.js';
+import { evaluateStrategies } from './alert-strategy-engine.js';
 import { flushSelfLogs, installSelfProcessGuards, recordSelfLog } from '../observability/self-log-reporter.js';
 import { installNodeConsoleErrorTelemetry } from './node-console-error-telemetry.js';
 import {
@@ -46,6 +47,7 @@ import {
   type GatewayTargetHealthSnapshot,
 } from './gateway-target-health.js';
 import {
+  deliverTransition,
   ensureAlertHistorySchema,
   recordCheckSnapshots,
   recordIncident,
@@ -1425,6 +1427,55 @@ async function runWorker(): Promise<void> {
           ],
         )
         .catch(() => {});
+    }
+  }
+
+  // 自定义策略引擎（P2）：租户/平台自定义 PromQL 阈值策略。Prometheus 查询
+  // 通道未配置时整体跳过；转换复用既有投递与事故管线（渠道按策略覆盖解析），
+  // 事故租户归属由键命名空间推导（recordIncident）。
+  if (p && String(process.env.RDK_PROMETHEUS_QUERY_URL ?? '').trim()) {
+    const strategyEntries = await evaluateStrategies(p, checkedAt).catch((error) => {
+      console.warn(
+        '[alert-worker] strategy evaluation failed:',
+        sanitizeOpsSummary(error, 240),
+      );
+      return [];
+    });
+    for (const entry of strategyEntries) {
+      const suppression = maintenanceSuppression(entry.transition.key, maintenanceKeys);
+      const delivery = suppression
+        ? { delivered: false, channel: 'suppressed', attempts: 0, error: suppression.reason }
+        : entry.channel === 'none'
+          ? {
+              delivered: false,
+              channel: 'suppressed',
+              attempts: 0,
+              error: 'strategy_notification_disabled',
+            }
+          : await deliverTransition(
+              entry.transition,
+              config,
+              entry.channel ? { channel: entry.channel } : undefined,
+            );
+      if (p) {
+        await recordIncident(p, entry.transition, delivery.delivered).catch(() => {});
+        await p
+          .query(
+            `insert into public.studio_alert_notifications
+             (alert_key, transition, severity, delivered, channel, error, attempt_count)
+           values ($1, $2, $3, $4, $5, $6, $7)`,
+            [
+              entry.transition.key,
+              entry.transition.kind,
+              entry.transition.severity,
+              delivery.delivered,
+              delivery.channel,
+              delivery.error ?? null,
+              delivery.attempts ?? 0,
+            ],
+          )
+          .catch(() => {});
+      }
     }
   }
 

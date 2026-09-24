@@ -149,6 +149,7 @@ import {
   tenantScopeGate,
 } from './observability-route-kit.js';
 import { registerSignalsRoutes } from './observability-signals-routes.js';
+import { registerStrategyRoutes } from './alert-strategy-routes.js';
 import { registerDatabaseRoutes } from './observability-database-routes.js';
 import { registerInsightRoutes } from './observability-insight-routes.js';
 import { registerTraceRoutes } from './observability-trace-routes.js';
@@ -341,6 +342,7 @@ export function createOpsObservabilityRouter(): Router {
   });
 
   registerSignalsRoutes(router);
+  registerStrategyRoutes(router);
 
 
   // DSH-native evidence/approval/action endpoints share this authenticated

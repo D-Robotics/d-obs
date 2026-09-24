@@ -65,3 +65,6 @@ studio_public_observability_feedback
 studio_public_observability_scores
 studio_obs_object_registry
 studio_obs_object_bindings
+studio_alert_strategies
+studio_alert_strategy_rules
+studio_alert_strategy_states
