@@ -655,6 +655,8 @@ export type OpsIncidentListQuery = {
   state?: 'active' | 'closed' | 'all';
   severity?: 'critical' | 'warning';
   target?: string;
+  /** 非空时只返回该租户的事故（组员作用域 / 管理员视角）；缺省不限。 */
+  tenantScope?: string | null;
   days?: number;
   limit?: number;
   offset?: number;
@@ -679,12 +681,18 @@ export async function listOpsIncidents(query: OpsIncidentListQuery = {}): Promis
   if (query.target) {
     conditions.push(`object_id = ${push(query.target)}`);
   }
+  if (query.tenantScope) {
+    conditions.push(`coalesce(tenant_id, 'platform') = ${push(query.tenantScope)}`);
+  }
   if (query.state === 'active') conditions.push(`status in ('open','acknowledged','silenced')`);
   else if (query.state === 'closed') conditions.push(`status = 'resolved'`);
   const days = Math.max(1, Math.min(90, Math.floor(Number(query.days) || 30)));
   conditions.push(`first_seen_at >= now() - make_interval(days => ${push(days)}::int)`);
   if (query.scope === 'mine' && query.actor) {
-    const actor = push(query.actor);
+    // 写侧（acknowledged_by/assignee）经 sanitizeOpsSummary 落库，SSO 邮箱被
+    // 打码为 '[REDACTED]'；查询侧对 actor 做同款确定性脱敏后再等值比较，
+    // 否则 SSO 身份的「我的」过滤永远匹配不上（2026-09-24 组员 E2E 发现）。
+    const actor = push(sanitizeOpsSummary(query.actor, 160));
     conditions.push(`(acknowledged_by = ${actor} or assignee = ${actor})`);
   }
   const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
@@ -710,7 +718,10 @@ export async function listOpsIncidents(query: OpsIncidentListQuery = {}): Promis
 }
 
 /** 大盘统计：待认领/处理中/已关闭、级别分布、今日新增、MTTA/MTTR（分钟）。 */
-export async function getOpsIncidentSummary(days = 7): Promise<{
+export async function getOpsIncidentSummary(
+  days = 7,
+  tenantScope: string | null = null,
+): Promise<{
   pending: number;
   processing: number;
   closed: number;
@@ -725,6 +736,8 @@ export async function getOpsIncidentSummary(days = 7): Promise<{
   const p = await pool();
   await ensureIncidentOperationsSchema(p);
   const windowDays = Math.max(1, Math.min(90, Math.floor(Number(days) || 7)));
+  // $1 在 select 列表（先于 FROM 出现），租户条件按文本序编为 $2。
+  const tenantWhere = tenantScope ? ` where coalesce(tenant_id, 'platform') = $2::text` : '';
   const result = await p.query(
     `select
        count(*) filter (where status = 'open')::int pending_count,
@@ -737,16 +750,18 @@ export async function getOpsIncidentSummary(days = 7): Promise<{
          filter (where acknowledged_at is not null and first_seen_at >= now() - make_interval(days => $1::int))::double precision avg_ack_seconds,
        avg(extract(epoch from (resolved_at - first_seen_at)))
          filter (where resolved_at is not null and first_seen_at >= now() - make_interval(days => $1::int))::double precision avg_resolve_seconds
-     from public.studio_alert_incidents`,
-    [windowDays],
+     from public.studio_alert_incidents${tenantWhere}`,
+    tenantScope ? [windowDays, tenantScope] : [windowDays],
   );
   const dailyResult = await p
     .query(
       `select to_char(date_trunc('day', first_seen_at), 'MM-DD') as day, count(*)::int count
        from public.studio_alert_incidents
-       where first_seen_at >= now() - make_interval(days => $1::int)
+       where first_seen_at >= now() - make_interval(days => $1::int)${
+         tenantScope ? ` and coalesce(tenant_id, 'platform') = $2::text` : ''
+       }
        group by 1 order by 1`,
-      [windowDays],
+      tenantScope ? [windowDays, tenantScope] : [windowDays],
     )
     .catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
   const row = (result.rows[0] ?? {}) as Record<string, unknown>;

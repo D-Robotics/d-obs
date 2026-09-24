@@ -22,6 +22,19 @@ export const OPS_OBSERVABILITY_SCRIPT_C = `      async function runChecks(){cons
         const logout=make('button','btn obs-logout-btn',opsAdminToken?'退出令牌':'退出');logout.type='button';logout.title='退出账号登录';logout.addEventListener('click',()=>obsLogout());
         bar.appendChild(logout);
       }
+      // 组员导航裁剪：组员可见面 = 运营总览 / 告警中心（本租户处置）/ 租户。
+      // 其余侧栏入口属于平台运营域，直接隐藏（而不是点击后弹回总览）；
+      // 裁剪后没有可见项的分组一并隐藏，避免留空壳分组头。
+      function pruneMemberNav(){
+        const allowed=new Set(['overview','tenants','alerts/center']);
+        document.querySelectorAll('.module-tab[data-view]').forEach(node=>{
+          if(!allowed.has(String(node.dataset.view||''))){node.hidden=true;node.classList.add('hidden')}
+        });
+        document.querySelectorAll('.nav-group').forEach(group=>{
+          const items=group.querySelectorAll('.module-tab[data-view]');
+          if(items.length&&!Array.from(items).some(item=>!item.hidden)){group.hidden=true;group.classList.add('hidden')}
+        });
+      }
       function renderObsNoTenantScreen(user){
         document.body.classList.add('auth-gate');
         document.querySelectorAll('.view').forEach(node=>node.classList.add('hidden'));
@@ -83,6 +96,10 @@ export const OPS_OBSERVABILITY_SCRIPT_C = `      async function runChecks(){cons
           location.reload();return
         }
         applyAuthMode(me);
+        if(opsMemberMode&&typeof pruneMemberNav==='function')pruneMemberNav();
+        // 免登通道下 setView 早于身份解析执行过（当时按管理员判定放行）；
+        // 组员身份到手后按裁剪后的可见面复核当前视图，越权深链回落总览。
+        if(opsMemberMode&&!(state.view==='overview'||state.view==='tenants'||(state.view==='alerts'&&state.viewChild==='center')))setView('overview',false);
         // #tenants 深链/刷新时 setView 早于本次 /auth/me 解析执行过，组员面板会按
         // 「未登录」渲染成只读名单；身份到手后重渲染一次，owner 才有管理操作。
         if(opsMemberMode&&state.view==='tenants'&&typeof renderObsMemberTenantsView==='function')renderObsMemberTenantsView();

@@ -137,6 +137,7 @@ import {
   requireObservabilityAccessTenantAware,
   requireOpsMutationGuard,
   resolveObservabilityAccess,
+  resolveAdminTenantScope,
   resolveOpsActor,
   tenantScopeGate,
 } from './observability-route-kit.js';
@@ -399,17 +400,8 @@ export function createOpsObservabilityRouter(): Router {
         // 租户身份：SLO / trace 面板属于平台业务数据，不进入租户视图。
         // 管理员可用 ?tenant= 切换到某租户视角（复用同一过滤链路）。
         let tenantScope = tenantAccess ? tenantAccess.tenantId : null;
-        if (!tenantScope && isOpsAdminRequest(req)) {
-          const requestedTenant = queryText(query, 'tenant', 40);
-          if (requestedTenant && requestedTenant !== 'platform') {
-            const { listTenants } = await import('./tenant-store.js');
-            const tenants = await listTenants().catch(
-              () => [] as Array<{ tenantId: string; status: string }>,
-            );
-            if (tenants.some((tenant) => tenant.tenantId === requestedTenant)) {
-              tenantScope = requestedTenant;
-            }
-          }
+        if (!tenantScope) {
+          tenantScope = await resolveAdminTenantScope(req);
         }
         const [overview, serviceLevels] = await Promise.all([
           getOpsObservabilityOverview(hours, tenantScope),
@@ -633,11 +625,16 @@ export function createOpsObservabilityRouter(): Router {
 
   router.get(
     '/api/ops/observability/incidents/summary',
-    requireObservabilityAccess,
+    tenantScopeGate,
+    requireObservabilityAccessTenantAware,
     async (req: Request, res: Response) => {
       try {
         const days = queryInteger(req.query as Record<string, unknown>, 'days', 7, 1, 90);
-        res.json({ ok: true, summary: await getOpsIncidentSummary(days) });
+        // 租户身份（组员头/租户 token）自动限定本租户；管理员可用 ?tenant= 切视角。
+        const tenantScope = req.opsTenantAccess
+          ? req.opsTenantAccess.tenantId
+          : await resolveAdminTenantScope(req);
+        res.json({ ok: true, summary: await getOpsIncidentSummary(days, tenantScope) });
       } catch (error) {
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'incident_summary_unavailable') });
       }
@@ -646,7 +643,8 @@ export function createOpsObservabilityRouter(): Router {
 
   router.get(
     '/api/ops/observability/incidents',
-    requireObservabilityAccess,
+    tenantScopeGate,
+    requireObservabilityAccessTenantAware,
     async (req: Request, res: Response) => {
       try {
         const query = req.query as Record<string, unknown>;
@@ -658,12 +656,16 @@ export function createOpsObservabilityRouter(): Router {
           ? (query.severity as 'critical' | 'warning')
           : undefined;
         const target = queryText(query, 'target', 200) || undefined;
+        const tenantScope = req.opsTenantAccess
+          ? req.opsTenantAccess.tenantId
+          : await resolveAdminTenantScope(req);
         const result = await listOpsIncidents({
           scope,
           actor: scope === 'mine' ? resolveOpsActor(req) : undefined,
           state,
           severity,
           target,
+          tenantScope,
           days: queryInteger(query, 'days', 30, 1, 90),
           limit: queryInteger(query, 'limit', 50, 1, 200),
           offset: queryInteger(query, 'offset', 0, 0, 100000),
@@ -704,19 +706,29 @@ export function createOpsObservabilityRouter(): Router {
         res.status(400).json({ ok: false, error: 'invalid_incident_action' });
         return;
       }
-      // 租户只读视图不允许变更事故；只有管理员/SSO 操作者可执行。
+      // 租户处置边界：SSO 组员可处置本租户事故（归属由 updateOpsIncident 的
+      // 租户 WHERE 约束兜底，跨租户键按 incident_not_found 拒绝，不泄露存在性）；
+      // 租户探针 token 是机器凭证，保持只读。
+      let tenantScope: string | null = null;
       if (req.opsTenantAccess) {
-        res.status(403).json({ ok: false, error: 'tenant_read_only' });
-        return;
+        if (req.opsTenantAccess.source !== 'member') {
+          res.status(403).json({ ok: false, error: 'tenant_read_only' });
+          return;
+        }
+        tenantScope = req.opsTenantAccess.tenantId;
       }
       try {
-        await updateOpsIncident(incidentKey, {
-          action: action as 'acknowledge' | 'assign' | 'silence' | 'reopen' | 'close',
-          actor: resolveOpsActor(req),
-          assignee: req.body?.assignee,
-          minutes: Number(req.body?.minutes),
-          reason: req.body?.reason,
-        });
+        await updateOpsIncident(
+          incidentKey,
+          {
+            action: action as 'acknowledge' | 'assign' | 'silence' | 'reopen' | 'close',
+            actor: resolveOpsActor(req),
+            assignee: req.body?.assignee,
+            minutes: Number(req.body?.minutes),
+            reason: req.body?.reason,
+          },
+          tenantScope,
+        );
         res.json({ ok: true });
       } catch (error) {
         res.status(400).json({

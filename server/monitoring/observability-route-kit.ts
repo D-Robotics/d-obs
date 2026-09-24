@@ -211,6 +211,21 @@ export const tenantScopeGate: RequestHandler = async (req, res, next) => {
   next();
 };
 
+/**
+ * 管理员视角租户解析：管理员请求可用 `?tenant=` 指定某个租户的数据视角
+ * （工作台切换器写入）；租户 id 必须真实存在，`platform`/缺省 = 平台全局。
+ * 非管理员请求恒返回 null，不带视角语义。与 overview 既有行为同源，供
+ * 告警中心等需要同款视角切换的读面复用。
+ */
+export async function resolveAdminTenantScope(req: Request): Promise<string | null> {
+  if (!isOpsAdminRequest(req)) return null;
+  const requested = queryText(req.query as Record<string, unknown>, 'tenant', 40);
+  if (!requested || requested === 'platform') return null;
+  const { listTenants } = await import('./tenant-store.js');
+  const tenants = await listTenants().catch(() => []);
+  return tenants.some((tenant) => tenant.tenantId === requested) ? requested : null;
+}
+
 export const requireOpsMutationGuard: RequestHandler = (req, res, next) => {
   if (req.header('x-rdk-ops-action') !== 'observability') {
     res.status(400).json({ ok: false, error: 'missing_ops_action_guard' });
