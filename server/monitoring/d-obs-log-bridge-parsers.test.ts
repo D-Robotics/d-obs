@@ -15,6 +15,7 @@ test('OTLP 打包：body 必须是 {stringValue} 包装（纯字符串会被 ing
 
 test('docker 日志行：时间戳与消息分离，非法行返回 null', () => {
   const parsed = parseDockerLogLine('2026-09-24T11:37:00.066390681Z 2026-09-24 11:37:00.066 UTC [2278309] ERROR: deadlock detected');
+  assert.ok(parsed);
   assert.equal(parsed.timeMs, Date.parse('2026-09-24T11:37:00.066390681Z'));
   assert.match(parsed.message, /^2026-09-24 11:37:00\.066 UTC/);
   assert.equal(parseDockerLogLine('no-timestamp-line'), null);
@@ -40,10 +41,13 @@ test('nginx error.log 行：时间（本地时区）、级别、消息三分', (
     assert.equal(parsed.timeMs, epoch);
   }
   const warn = parseNginxLine('2026/09/24 19:34:06 [warn] 1#1: *2 upstream server temporarily disabled');
+  assert.ok(warn);
   assert.equal(warn.priority, '4');
   const crit = parseNginxLine('2026/09/24 19:34:06 [crit] 1#1: *2 open() failed');
+  assert.ok(crit);
   assert.equal(crit.priority, '3');
   const debug = parseNginxLine('2026/09/24 19:34:06 [debug] 1#1: *2 http wait request handler');
+  assert.ok(debug);
   assert.equal(debug.priority, '7');
   assert.equal(parseNginxLine('not an nginx line'), null);
 });
