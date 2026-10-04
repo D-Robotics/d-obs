@@ -63,7 +63,9 @@ export const OPS_OBSERVABILITY_MOBILE_TOUR_STYLE = `
 export const OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR = `
       (function(){
         // ---- 移动端底部 tab：标记前 5 个高频模块，≤520px 时搬进主行 ----
-        const MOBILE_PRIMARY=['overview','operator-metrics','signals/panels','investigate','alerts','traces','service-levels','devices'];
+        // Keep the bottom bar to five task-first destinations. Growth, SLO,
+        // device and setup views remain one tap away in “更多”.
+        const MOBILE_PRIMARY=['overview','investigate','alerts/center','traces','signals/panels'];
         try{
           document.querySelectorAll('.module-tab').forEach(tab=>{if(MOBILE_PRIMARY.includes(tab.dataset.view))tab.classList.add('mobile-primary')});
           const tabs=document.querySelector('.module-tabs');

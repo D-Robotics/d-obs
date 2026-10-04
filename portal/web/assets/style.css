@@ -61,8 +61,10 @@ img { max-width: 100%; }
 :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 6px; }
 
 /* 入场动效 */
-.reveal { opacity: 0; transform: translateY(16px); transition: opacity 0.55s ease, transform 0.55s ease; }
-.reveal.in { opacity: 1; transform: none; }
+.reveal { opacity: 1; transform: none; transition: opacity 0.55s ease, transform 0.55s ease; }
+/* JavaScript opts into the entrance animation. Without JS the content stays readable. */
+.reveal-ready .reveal { opacity: 0; transform: translateY(16px); }
+.reveal-ready .reveal.in { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .reveal { opacity: 1; transform: none; transition: none; }
@@ -235,6 +237,14 @@ img { max-width: 100%; }
   transition: background 0.15s, color 0.15s;
 }
 .product-card:hover .product-card-caps i { background: var(--acc-soft); color: var(--acc); }
+.product-card-cta {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin-top: 20px;
+  color: var(--acc); font-size: 13px; font-weight: 700;
+  transition: gap 0.18s ease, color 0.18s ease;
+}
+.product-card-cta span { font-size: 17px; line-height: 1; }
+.product-card:hover .product-card-cta { gap: 11px; color: var(--acc); }
 
 /* ---------- 产品详情区 ---------- */
 .detail-section { padding: 84px 0; }
@@ -396,7 +406,7 @@ img { max-width: 100%; }
 }
 .catalog-close:hover { background: #f0f0ee; color: var(--ink); }
 
-.catalog-body { min-height: 420px; padding: 8px 22px 26px; }
+.catalog-body { min-height: 0; padding: 8px 22px 26px; }
 
 .catalog-cols {
   display: grid; grid-template-columns: repeat(3, 1fr);

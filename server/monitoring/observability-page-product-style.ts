@@ -114,5 +114,35 @@ export const OPS_OBSERVABILITY_PRODUCT_STYLE = `
     @media(min-width:521px) and (max-width:900px){.app-shell{grid-template-columns:184px minmax(0,1fr)}.side-nav{position:sticky;top:60px;height:calc(100vh - 60px);padding:12px 8px}.nav-group-items{display:grid}.nav-toggle-label,.nav-group-alert{display:initial}.nav-section-toggle{font-size:12px;justify-content:flex-start}.module-tab{height:auto;min-height:38px;justify-content:flex-start;font-size:12px}.tab-count{display:inline-flex}.nav-group-items{padding-left:4px}.brand{min-width:148px}.brand-copy small{display:none}header{gap:8px}header .global-search-trigger{min-width:100px}header .global-search-trigger kbd{display:none}}
     @media(max-width:720px){header{height:60px;padding:0 12px;gap:8px}.brand{min-width:0}.brand-copy{font-size:12px}.brand-mark{width:28px;height:28px}header .domain-tab{padding:5px 8px}header .global-search-trigger{min-width:32px;flex:0 0 32px;padding:4px;margin-left:auto;justify-content:center}header .global-search-copy,header .global-search-trigger kbd{display:none}.page-head{flex-direction:column;align-items:flex-start;gap:12px}.page-head-actions{margin-left:0;align-self:flex-start;width:auto;overflow:visible}.page-head h1{font-size:24px}main{padding:20px 16px 36px}.workspace-toolbar{gap:8px}.scope-bar{flex-direction:row;align-items:center;flex-wrap:wrap;gap:8px}.scope-copy{flex:0 0 auto}.scope-control{margin-left:0}.scope-copy small{display:none}.global-command-bar{margin-left:0}.workspace-facts{display:flex;flex-wrap:wrap;white-space:normal}.workspace-fact{font-size:11px}#globalFreshnessFact{display:none}.module-switcher{gap:20px}.module-switch-tab{flex:0 0 auto}.page-head #fresh{font-size:10px}}
     @media(prefers-reduced-motion:reduce){button{transition:none}.detail-summary:after{transition:none}}
+
+    /* Quiet the shell and make the first scan path explicit: context → scope → action. */
+    @media(min-width:1241px){main{width:100%;max-width:1480px;margin:0 auto;padding:28px 36px 56px}}
+    .page-head{margin-bottom:20px}.page-head h1{font-size:28px}.page-head .page-intro{max-width:820px}
+    .workspace-toolbar{margin-bottom:20px;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:var(--c113)}
+    .workspace-fact{display:inline-flex;align-items:center;min-height:28px;padding:4px 9px;border:1px solid var(--line);border-radius:999px;background:var(--c2);font-size:11px}
+    .workspace-fact strong{font-size:11px}.workspace-fact.bad{border-color:var(--c498);background:var(--c470)}.workspace-fact.warn{border-color:var(--c497);background:var(--c468)}
+    .scope-bar{min-height:34px}.scope-copy strong{font-weight:720}.scope-control select{background:var(--c2);font-weight:600}
+    .side-nav{padding-top:18px}.nav-primary .module-tab{min-height:42px}.nav-group{margin-top:10px}.nav-section-toggle{min-height:40px}
+    .panel{box-shadow:var(--shadow-soft)}
+    /* The incident center renders seven KPI cards followed by one visual block. Keep
+       the visual block on its own row so its height cannot stretch the KPI row. */
+    #incidentSummary{grid-template-columns:repeat(4,minmax(0,1fr));align-items:stretch}
+    #incidentSummary .ic-viz{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(180px,1fr)) minmax(260px,1.4fr);align-items:center;gap:20px;margin-top:2px;padding:16px 4px 4px}
+    #incidentSummary .ic-trend{min-width:0}
+    @media(max-width:900px){#incidentSummary{grid-template-columns:repeat(2,minmax(0,1fr))}#incidentSummary .ic-viz{grid-template-columns:1fr 1fr}.workspace-toolbar{border-radius:10px}}
+    @media(max-width:520px){.page-head{margin-bottom:14px}.page-head h1{font-size:24px}.workspace-toolbar{padding:9px 10px}.workspace-fact{min-height:26px;padding:3px 8px}#incidentSummary .ic-viz{grid-template-columns:1fr;gap:12px}}
     }
+    /* The dark palette uses --c2 for the panel surface, so header content needs
+       explicit on-shell colors instead of inheriting the panel token. These
+       selectors live outside the scoped block so the html theme attribute can
+       participate in the match. */
+    html[data-theme="dark"] body.ops-observability header{color:var(--c381)}
+    html[data-theme="dark"] body.ops-observability .brand-copy{color:var(--c381)}
+    html[data-theme="dark"] body.ops-observability .brand-copy small{color:var(--c401)}
+    html[data-theme="dark"] body.ops-observability header .domain-switcher{background:var(--c391);border-color:var(--c397)}
+    html[data-theme="dark"] body.ops-observability header .domain-tab{color:var(--c401)}
+    html[data-theme="dark"] body.ops-observability header .global-search-trigger{border-color:var(--c397);background:var(--c391);color:var(--c401)}
+    html[data-theme="dark"] body.ops-observability header .global-search-trigger:before{color:var(--c401)}
+    html[data-theme="dark"] body.ops-observability header .global-search-trigger kbd{background:var(--c391);border-color:var(--c397);color:var(--c401)}
+    html[data-theme="dark"] body.ops-observability header .theme-toggle{color:var(--c381);border-color:var(--c397)}
 `;

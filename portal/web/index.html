@@ -68,6 +68,7 @@
           <span class="product-card-name">RDK Studio <i class="badge badge-hot">HOT</i></span>
           <span class="product-card-desc">一体化 AI 原生工作台，开发、运行与调试 RDK 机器人的完整闭环。</span>
           <span class="product-card-caps"><i>AI Agent 协作</i><i>设备连接与烧录</i><i>终端 · 文件 · 桌面 · IDE</i><i>自动化工作流</i></span>
+          <span class="product-card-cta">查看产品详情 <span aria-hidden="true">→</span></span>
         </a>
 
         <a class="product-card tone-train reveal" href="#learning">
@@ -77,6 +78,7 @@
           <span class="product-card-name">RDK 训练平台 <i class="badge badge-new">NEW</i></span>
           <span class="product-card-desc">机器人学习工作台，从浏览器仿真到 RDK-X5 真机受控部署。</span>
           <span class="product-card-caps"><i>仿真与录制</i><i>策略训练</i><i>Sim2Real 评测</i><i>受控部署</i></span>
+          <span class="product-card-cta">查看产品详情 <span aria-hidden="true">→</span></span>
         </a>
 
         <a class="product-card tone-ops reveal" href="#observability">
@@ -86,6 +88,7 @@
           <span class="product-card-name">RDK 可观测平台</span>
           <span class="product-card-desc">独立可观测平台，一个进程提供运营工作台、告警、追踪与边缘设备观测。</span>
           <span class="product-card-caps"><i>运营工作台与 SLO</i><i>告警与自愈</i><i>链路追踪</i><i>边缘设备观测</i><i>观测查询</i><i>生态接入</i></span>
+          <span class="product-card-cta">查看产品详情 <span aria-hidden="true">→</span></span>
         </a>
       </div>
     </div>
@@ -183,9 +186,9 @@
 <!-- ============ 全部产品目录浮层 ============ -->
 <div class="catalog-overlay" id="catalog-overlay" hidden>
   <div class="overlay-backdrop" data-close></div>
-  <div class="catalog-panel" role="dialog" aria-modal="true" aria-label="全部产品目录">
+  <div class="catalog-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-title">
     <div class="catalog-head">
-      <h2 class="catalog-title">全部产品</h2>
+      <h2 class="catalog-title" id="catalog-title">全部产品</h2>
       <div class="catalog-search">
         <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z"/></svg>
         <input id="catalog-search-input" type="search" placeholder="搜索产品或产品能力" aria-label="搜索产品或产品能力" />
