@@ -25,6 +25,8 @@ export type MetricSeriesSummary = {
 export type MetricSeriesQuery = {
   owner?: string;
   metric?: string;
+  /** 按账号标签过滤（labels->>'sso_user_id'；摄入白名单已放行该标签）。 */
+  ssoUserId?: string;
   limit?: number;
 };
 
@@ -289,6 +291,10 @@ export async function queryMetricSeries(options: MetricSeriesQuery = {}): Promis
     params.push(options.metric);
     conditions.push(`s.metric = $${params.length}`);
   }
+  if (options.ssoUserId) {
+    params.push(options.ssoUserId);
+    conditions.push(`s.labels->>'sso_user_id' = $${params.length}`);
+  }
   params.push(Math.max(1, Math.min(500, Math.floor(options.limit ?? 200))));
   const where = conditions.length ? `where ${conditions.join(' and ')}` : '';
   const result = await p.query(
@@ -331,6 +337,10 @@ export async function queryMetricRanges(options: MetricRangeQuery): Promise<Metr
   if (options.metric) {
     params.push(options.metric);
     conditions.push(`s.metric = $${params.length}`);
+  }
+  if (options.ssoUserId) {
+    params.push(options.ssoUserId);
+    conditions.push(`s.labels->>'sso_user_id' = $${params.length}`);
   }
   const result = await p.query(
     `select s.series_id, s.metric, s.labels,

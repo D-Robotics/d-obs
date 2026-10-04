@@ -108,6 +108,7 @@ export function registerSignalsRoutes(router: Router): void {
         const query = req.query as Record<string, unknown>;
         const series = await queryMetricSeries({
           metric: queryText(query, 'metric', 96),
+          ssoUserId: queryText(query, 'ssoUserId', 120),
           limit: queryInteger(query, 'limit', 200, 1, 500),
         });
         res.json({ ok: true, series });
@@ -134,6 +135,7 @@ export function registerSignalsRoutes(router: Router): void {
         }
         const ranges = await queryMetricRanges({
           metric: queryText(query, 'metric', 96),
+          ssoUserId: queryText(query, 'ssoUserId', 120),
           fromMs: from,
           toMs: to,
           maxPoints: queryInteger(query, 'points', 240, 20, 500),

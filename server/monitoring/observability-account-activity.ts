@@ -79,6 +79,24 @@ async function safeQuery(
   }
 }
 
+/** 解析账号 id 集合：输入 id 恒在内；用户名经 conversation_turns 反查合并。 */
+async function resolveAccountIds(p: Pool, identifier: string): Promise<string[]> {
+  const resolved = new Set<string>([identifier]);
+  const nameMatch = await safeQuery(
+    p,
+    `select distinct nullif(trim(sso_user_id), '') as sso_user_id
+       from public.conversation_turns
+      where sso_user_name = $1::text and sso_user_id is not null
+      limit 5`,
+    [identifier],
+  );
+  for (const row of nameMatch?.rows ?? []) {
+    const id = String(row.sso_user_id ?? '').trim();
+    if (id) resolved.add(id);
+  }
+  return [...resolved];
+}
+
 /**
  * 聚合某账号（或用户名）在时间窗内的行为足迹。hours ∈ [1, 8760]。
  * 每源 limit 收敛，避免单账号超大历史拖垮响应。
@@ -244,4 +262,70 @@ export async function getAccountActivity(
   report.opsEvents = opsEvents?.rows ?? [];
   void sanitizeOpsSummary;
   return report;
+}
+
+export interface AccountEventLog {
+  identifier: string;
+  resolvedIds: string[];
+  /** 窗口内该账号出现过的事件类型（供前端筛选下拉）。 */
+  codes: Array<{ eventCode: string; total: number }>;
+  events: Array<Record<string, unknown>>;
+}
+
+/**
+ * 事件日志明细下钻：相对概览的 15 条收口放开到 ≤200 条，可按事件类型筛选。
+ * 与 getAccountActivity 同一套标识解析与 fail-soft 语义。
+ */
+export async function getAccountEventLog(
+  p: Pool,
+  identifierRaw: string,
+  hoursInput = 168,
+  options: { limit?: number; eventCode?: string } = {},
+): Promise<AccountEventLog> {
+  const identifier = String(identifierRaw ?? '').trim().slice(0, 120);
+  if (!identifier) throw new Error('account_identifier_required');
+  const hours = Math.max(1, Math.min(8_760, Math.floor(Number(hoursInput) || 168)));
+  const limit = Math.max(1, Math.min(200, Math.floor(Number(options.limit) || 200)));
+  const eventCode = String(options.eventCode ?? '').trim().slice(0, 80);
+  const ids = await resolveAccountIds(p, identifier);
+  const codesResult = await safeQuery(
+    p,
+    `select event_code, count(*)::int total
+       from public.studio_ops_events
+      where occurred_at >= now() - make_interval(hours => $2::int)
+        and (metadata->>'sso_user_id' = any($1::text[])
+          or correlation->>'sso_user_id' = any($1::text[]))
+      group by event_code
+      order by total desc, event_code
+      limit 30`,
+    [ids, hours],
+  );
+  const conditions = [
+    'occurred_at >= now() - make_interval(hours => $2::int)',
+    "(metadata->>'sso_user_id' = any($1::text[]) or correlation->>'sso_user_id' = any($1::text[]))",
+  ];
+  const params: unknown[] = [ids, hours];
+  if (eventCode) {
+    params.push(eventCode);
+    conditions.push(`event_code = $${params.length}`);
+  }
+  params.push(limit);
+  const eventsResult = await safeQuery(
+    p,
+    `select occurred_at, component, event_code, outcome, safe_summary
+       from public.studio_ops_events
+      where ${conditions.join(' and ')}
+      order by occurred_at desc
+      limit $${params.length}`,
+    params,
+  );
+  return {
+    identifier,
+    resolvedIds: ids,
+    codes: (codesResult?.rows ?? []).map((row) => ({
+      eventCode: String(row.event_code ?? ''),
+      total: Number(row.total ?? 0),
+    })),
+    events: eventsResult?.rows ?? [],
+  };
 }

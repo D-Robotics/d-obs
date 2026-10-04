@@ -71,6 +71,11 @@ const LABEL_ALIASES: Record<string, string> = {
   'model.version': 'model_version',
   'rdk.model.version': 'model_version',
   'gen_ai.response.model.version': 'model_version',
+  // 账号维度（观测查询按用户过滤的落点；低基数，账号量级安全）
+  'sso_user_id': 'sso_user_id',
+  'enduser.id': 'sso_user_id',
+  'user.id': 'sso_user_id',
+  'sso_user_name': 'sso_user_name',
 };
 
 export function increment(name: string, value = 1): void {

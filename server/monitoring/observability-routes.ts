@@ -346,6 +346,33 @@ export function createOpsObservabilityRouter(): Router {
 
   // 账号行为视角（只读聚合，平台管理员专用：跨账号行为数据属运营审计面，
   // 租户组员/探针 token 不开放——requireObservabilityAccess 的管理员闸门收敛）。
+  // 事件日志明细下钻（账号行为视角的展开面，同一管理员闸门）。
+  router.get(
+    '/api/ops/observability/account-activity/events',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const identifier = String(req.query.identifier ?? '').trim();
+        if (!identifier) {
+          res.status(400).json({ ok: false, error: 'account_identifier_required' });
+          return;
+        }
+        const hours = queryInteger(req.query as Record<string, unknown>, 'hours', 168, 1, 8_760);
+        const { getAccountEventLog } = await import('./observability-account-activity.js');
+        const { getOpsObservabilityPool } = await import('./observability-store.js');
+        const log = await getAccountEventLog(await getOpsObservabilityPool(), identifier, hours, {
+          limit: queryInteger(req.query as Record<string, unknown>, 'limit', 200, 1, 200),
+          eventCode: queryText(req.query as Record<string, unknown>, 'eventCode', 80),
+        });
+        res.json({ ok: true, log });
+      } catch (error) {
+        res
+          .status(503)
+          .json({ ok: false, error: clientErrorCode(error, 'account_activity_unavailable') });
+      }
+    },
+  );
+
   router.get(
     '/api/ops/observability/account-activity',
     requireObservabilityAccess,

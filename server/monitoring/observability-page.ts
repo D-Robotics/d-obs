@@ -194,6 +194,7 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <div class="signals-toolbar">
             <label class="grow">指标名<input id="signalMetricInput" list="signalMetricList" type="text" autocomplete="off" spellcheck="false" placeholder="如 rdk_ai_otlp_spans_received_total" /><datalist id="signalMetricList"></datalist></label>
             <label>时间窗口<select id="signalMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option></select></label>
+            <label>按账号过滤（sso_user_id 标签，留空=全部）<input id="signalSsoUser" type="text" autocomplete="off" spellcheck="false" placeholder="如 10001987" /></label>
             <button id="signalQueryBtn" class="btn primary" type="button">查询</button>
             <button id="signalSavePanelBtn" class="btn" type="button">存入看板</button>
           </div>
