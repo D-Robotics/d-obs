@@ -38,6 +38,8 @@ export interface AccountActivityReport {
   };
   usage: { activeDays: number; firstDay: string | null; lastDay: string | null };
   configAudit: Array<Record<string, unknown>>;
+  /** 登录/退出记录（与配置变更同表但语义不同，拆开呈现）。 */
+  loginAudit: Array<Record<string, unknown>>;
   incidentActivity: Array<Record<string, unknown>>;
   opsEvents: Array<Record<string, unknown>>;
 }
@@ -52,6 +54,7 @@ function emptyReport(identifier: string, resolvedIds: string[]): AccountActivity
     turns: { total: 0, errors: 0, lastRecordedAt: null, recent: [] },
     usage: { activeDays: 0, firstDay: null, lastDay: null },
     configAudit: [],
+    loginAudit: [],
     incidentActivity: [],
     opsEvents: [],
   };
@@ -190,17 +193,31 @@ export async function getAccountActivity(
   report.usage.firstDay = usage?.rows[0]?.first_day ? String(usage.rows[0].first_day) : null;
   report.usage.lastDay = usage?.rows[0]?.last_day ? String(usage.rows[0].last_day) : null;
 
-  // 配置审计 + 事故处置流水：actor 是邮箱/姓名/账本文本（写侧已脱敏）。
+  // 配置审计（剔除登录噪音）+ 登录记录 + 事故处置流水：actor 是邮箱/姓名/
+  // 账本文本（写侧已脱敏）。sso_login/sso_logout 是会话事件不是配置变更，
+  // 混在一起会淹没真实变更（生产实测 lx199710 首行即登录）。
   const actorMatch = await safeQuery(
     p,
     `select occurred_at, action, summary
        from public.studio_alert_configuration_audit
       where actor = any($1::text[])
+        and action not in ('sso_login', 'sso_logout')
       order by occurred_at desc
       limit 20`,
     [ids],
   );
   report.configAudit = actorMatch?.rows ?? [];
+  const loginAudit = await safeQuery(
+    p,
+    `select occurred_at, action
+       from public.studio_alert_configuration_audit
+      where actor = any($1::text[])
+        and action in ('sso_login', 'sso_logout')
+      order by occurred_at desc
+      limit 10`,
+    [ids],
+  );
+  report.loginAudit = loginAudit?.rows ?? [];
   const incidentActivity = await safeQuery(
     p,
     `select occurred_at, alert_key, action, summary
