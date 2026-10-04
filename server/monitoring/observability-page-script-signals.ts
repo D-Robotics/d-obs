@@ -55,6 +55,9 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           if(!series.length){target.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}
           renderSignalsChart(target,series,minutes)}
         catch{target.replaceChildren();target.appendChild(make('div','signals-empty','Prometheus 查询失败，请检查网络'))}}
+      // 原生界面深链：把当前表达式与时间范围带进 Prometheus graph，消除「超过 14 天」边界的上下文断裂。
+      function updatePromqlNativeLink(){const link=$('promqlNativeLink');if(!link)return;const query=String(($('promqlInput')||{}).value||'').trim();const minutes=Number(($('promqlMinutes')||{}).value||240);const base=String(link.getAttribute('href')||'/dobs/prometheus/graph').split('?')[0];if(!query){link.setAttribute('href',base);return}
+        const range={60:'1h',240:'4h',1440:'24h',10080:'7d'}[minutes]||'4h';link.setAttribute('href',base+'?g0.expr='+encodeURIComponent(query)+'&g0.range_input='+encodeURIComponent(range)+'&g0.tab=0')}
       async function loadLogFacets(){const serviceSelect=$('signalLogService');const ownerSelect=$('signalLogOwner');if(!serviceSelect||!ownerSelect)return;
         try{const response=await fetch(base+'/api/ops/observability/logs/facets',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);if(!response.ok||!data||!data.ok||!Array.isArray(data.facets))return;
         const facets=data.facets;const serviceValue=serviceSelect.value;const ownerValue=ownerSelect.value;
@@ -353,6 +356,9 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         bind('signalLogOwner','change',runSignalsLogQuery);
         bind('promqlRunBtn','click',runPromqlQuery);
         bind('promqlInput','keydown',event=>{if(event.key==='Enter')runPromqlQuery()});
+        bind('promqlInput','input',updatePromqlNativeLink);
+        bind('promqlMinutes','change',updatePromqlNativeLink);
+        updatePromqlNativeLink();
         bind('anomalyDetectBtn','click',loadMetricAnomalies);
         bind('boardSelect','change',event=>{setCurrentBoard(String(event.target.value||''));renderBoard()});
         bind('boardWindow','change',event=>{const board=currentBoard();if(!board)return;if(event.target.value==='custom'){renderBoard();return}board.spec.range=null;board.spec.windowMinutes=Number(event.target.value)||240;persistBoardSpec();renderBoard()});

@@ -228,10 +228,10 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
             <label class="grow">PromQL<input id="promqlInput" type="text" autocomplete="off" spellcheck="false" placeholder="如 sum(rate(http_requests_total[5m])) by (service)" /></label>
             <label>时间窗口<select id="promqlMinutes"><option value="60">最近 1 小时</option><option value="240" selected>最近 4 小时</option><option value="1440">最近 24 小时</option><option value="10080">最近 7 天</option></select></label>
             <button id="promqlRunBtn" class="btn primary" type="button">执行查询</button>
-            <a class="btn" href="/dobs/prometheus/graph" target="_blank" rel="noopener noreferrer">原生界面打开</a>
+            <a id="promqlNativeLink" class="btn" href="/dobs/prometheus/graph" target="_blank" rel="noopener noreferrer">原生界面打开</a>
           </div>
         </div>
-        <div id="promqlResult" class="signals-chart-wrap" aria-live="polite"><div class="signals-empty">输入 PromQL 并点击「执行查询」；超过 14 天的深度历史请到原生界面</div></div>
+        <div id="promqlResult" class="signals-chart-wrap" aria-live="polite"><div class="signals-empty">输入 PromQL 并点击「执行查询」；超过 14 天的深度历史，可到原生界面按当前表达式与时间范围继续查询</div></div>
       </div>
       <div class="view-module" data-view-module="signals/panels" role="tabpanel" aria-label="自定义看板" hidden>
         <div class="board-toolbar">
