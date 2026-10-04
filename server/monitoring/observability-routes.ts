@@ -344,6 +344,31 @@ export function createOpsObservabilityRouter(): Router {
   registerSignalsRoutes(router);
   registerStrategyRoutes(router);
 
+  // 账号行为视角（只读聚合，平台管理员专用：跨账号行为数据属运营审计面，
+  // 租户组员/探针 token 不开放——requireObservabilityAccess 的管理员闸门收敛）。
+  router.get(
+    '/api/ops/observability/account-activity',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const identifier = String(req.query.identifier ?? '').trim();
+        if (!identifier) {
+          res.status(400).json({ ok: false, error: 'account_identifier_required' });
+          return;
+        }
+        const hours = queryInteger(req.query as Record<string, unknown>, 'hours', 168, 1, 8_760);
+        const { getAccountActivity } = await import('./observability-account-activity.js');
+        const { getOpsObservabilityPool } = await import('./observability-store.js');
+        const report = await getAccountActivity(await getOpsObservabilityPool(), identifier, hours);
+        res.json({ ok: true, report });
+      } catch (error) {
+        res
+          .status(503)
+          .json({ ok: false, error: clientErrorCode(error, 'account_activity_unavailable') });
+      }
+    },
+  );
+
 
   // DSH-native evidence/approval/action endpoints share this authenticated
   // operations namespace but do not depend on the removed Moss runtime.
@@ -363,6 +388,9 @@ export function createOpsObservabilityRouter(): Router {
   // HTML 壳本身不含任何运维数据，允许直接打开；真实数据 API 仍由下面的运营权限门控保护。
   // 这样无会话浏览器会看到明确登录引导，而不是裸露的 not_authorized JSON。
   router.get('/ops-observability', (_req: Request, res: Response) => {
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader(
       'Cache-Control',
       'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
