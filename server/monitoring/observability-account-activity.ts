@@ -73,8 +73,16 @@ async function safeQuery(
   try {
     return await p.query(sql, params);
   } catch (error) {
-    // 表不存在（独立部署/全新库）等场景按「该源无数据」收敛，不拖垮整体。
-    void error;
+    // 表不存在（独立部署/全新库）按「该源无数据」收敛；其余 SQL 失败必须留痕——
+    // 否则查询缺陷会被 fail-soft 吞成“无数据”（session 桥接曾因此整体失效无任何报错）。
+    const code = (error as { code?: string } | null)?.code;
+    if (code !== "42P01") {
+      console.warn(
+        "[account-activity] 数据源查询失败，该源按空处理:",
+        code ?? "",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     return null;
   }
 }
