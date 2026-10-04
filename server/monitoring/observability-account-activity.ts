@@ -274,7 +274,10 @@ export interface AccountEventLog {
 
 /**
  * 事件日志明细下钻：相对概览的 15 条收口放开到 ≤200 条，可按事件类型筛选。
- * 与 getAccountActivity 同一套标识解析与 fail-soft 语义。
+ * 归账双通道：①事件直接携带 sso_user_id；②事件带 session_id 时经
+ * agent_run_records / conversation_turns 反查归属（生产事件上报方目前不打
+ * sso_user_id 标签，session 桥接是主要出数通道）。与 getAccountActivity
+ * 同一套标识解析与 fail-soft 语义。
  */
 export async function getAccountEventLog(
   p: Pool,
@@ -288,23 +291,45 @@ export async function getAccountEventLog(
   const limit = Math.max(1, Math.min(200, Math.floor(Number(options.limit) || 200)));
   const eventCode = String(options.eventCode ?? '').trim().slice(0, 80);
   const ids = await resolveAccountIds(p, identifier);
+  // session 桥接：该账号近 30 天的会话 id（run/turn 两表），供事件归账。
+  const sessionMatch = await safeQuery(
+    p,
+    `select session_id, max(at) as last_at from (
+       select nullif(trim(session_id), '') as session_id, started_at as at
+         from public.agent_run_records
+        where nullif(trim(sso_user_id), '') = any($1::text[]) and session_id is not null
+       union all
+       select nullif(trim(session_id), ''), recorded_at
+         from public.conversation_turns
+        where nullif(trim(sso_user_id), '') = any($1::text[]) and session_id is not null
+     ) t group by session_id order by last_at desc limit 50`,
+    [ids],
+  );
+  const sessionIds = (sessionMatch?.rows ?? [])
+    .map((row) => String(row.session_id ?? '').trim())
+    .filter(Boolean);
   const codesResult = await safeQuery(
     p,
     `select event_code, count(*)::int total
        from public.studio_ops_events
       where occurred_at >= now() - make_interval(hours => $2::int)
         and (metadata->>'sso_user_id' = any($1::text[])
-          or correlation->>'sso_user_id' = any($1::text[]))
+          or correlation->>'sso_user_id' = any($1::text[])
+          ${sessionIds.length ? `or metadata->>'session_id' = any($3::text[])
+          or correlation->>'session_id' = any($3::text[])` : ''})
       group by event_code
       order by total desc, event_code
       limit 30`,
-    [ids, hours],
+    sessionIds.length ? [ids, hours, sessionIds] : [ids, hours],
   );
   const conditions = [
     'occurred_at >= now() - make_interval(hours => $2::int)',
-    "(metadata->>'sso_user_id' = any($1::text[]) or correlation->>'sso_user_id' = any($1::text[]))",
+    "(metadata->>'sso_user_id' = any($1::text[]) or correlation->>'sso_user_id' = any($1::text[])" +
+      (sessionIds.length
+        ? ` or metadata->>'session_id' = any($3::text[]) or correlation->>'session_id' = any($3::text[]))`
+        : ')'),
   ];
-  const params: unknown[] = [ids, hours];
+  const params: unknown[] = sessionIds.length ? [ids, hours, sessionIds] : [ids, hours];
   if (eventCode) {
     params.push(eventCode);
     conditions.push(`event_code = $${params.length}`);
