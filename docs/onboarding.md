@@ -75,10 +75,16 @@ HTTP JSON、HTTP protobuf 两种编码。Phoenix、Langfuse 以及一切 OTLP �
 SDK 最小配置：
 
 ```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT='http://<d-obs-host>:47110'
+export OTEL_EXPORTER_OTLP_ENDPOINT='https://rdkstudio.d-robotics.cc/dobs'
 export OTEL_EXPORTER_OTLP_PROTOCOL='http/protobuf'
 export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>'
 ```
+
+生产公网入口经 nginx（`/dobs` 前缀），三信号 `/v1/*` 均已暴露（2026-10-05 实测：
+无凭据 401、带凭据 200）。自托管未走反向代理时，端点为 `http://<d-obs-host>:<PORT>`
+（`PORT` 默认 47110）；gRPC 通道面向同机/内网，公网接入统一使用 HTTP。
+凭据的端到端验证命令（curl 直发 OTLP/HTTP JSON 并查回落库）见工作台
+「观测查询 → 接入凭据 → 验证本凭据」。
 
 要点：
 
@@ -142,7 +148,7 @@ token 查找缓存窗口。完整流程、隔离语义与运维要点见
 ## 验证
 
 ```bash
-curl http://<d-obs-host>:47110/api/v1/ecosystem/capabilities   # 能力自描述，无需鉴权
+curl https://rdkstudio.d-robotics.cc/dobs/api/v1/ecosystem/capabilities   # 能力自描述，无需鉴权（自托管时用 http://<host>:<PORT>/api/v1/ecosystem/capabilities）
 ```
 
 - 工作台「告警中心 → 告警对象」确认新对象已出现；或直接查库：

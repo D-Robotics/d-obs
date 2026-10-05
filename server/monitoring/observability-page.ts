@@ -282,6 +282,21 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           <button id="selftestMetricBtn" class="btn" type="button">发送测试指标</button>
           <button id="selftestLogBtn" class="btn" type="button">发送测试日志</button>
         </div>
+        <details class="detail-sections"><summary class="detail-summary"><strong>验证本凭据</strong><span>从你自己的机器发送真实 OTLP 报文并查回落库，一步确认凭据、网络与数据面（以下命令已验证，可直接复制）</span></summary>
+          <pre style="margin:8px 0 4px;padding:12px;border:1px solid rgba(148,163,184,.25);border-radius:8px;overflow-x:auto;font-size:12px;line-height:1.55">NOW_NS="$(date +%s)000000000"
+curl -s -X POST 'https://rdkstudio.d-robotics.cc/dobs/v1/metrics' \
+  -H 'content-type: application/json' \
+  -H 'Authorization: Bearer 替换为你的凭据' \
+  -d "{\"resourceMetrics\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"my-app\"}}]},\"scopeMetrics\":[{\"scope\":{\"name\":\"d-obs-onboarding\"},\"metrics\":[{\"name\":\"demo.ping.gauge\",\"gauge\":{\"dataPoints\":[{\"asDouble\":1,\"timeUnixNano\":\"$NOW_NS\"}]}}]}]}]}"
+# 期望 {"partialSuccess":{"rejectedDataPoints":0}}；随后在「观测查询 → 指标查询」输入 demo.ping.gauge、窗口最近 1 小时，应看到 1 个数据点</pre>
+          <pre style="margin:4px 0 8px;padding:12px;border:1px solid rgba(148,163,184,.25);border-radius:8px;overflow-x:auto;font-size:12px;line-height:1.55">NOW_NS="$(date +%s)000000000"
+curl -s -X POST 'https://rdkstudio.d-robotics.cc/dobs/v1/logs' \
+  -H 'content-type: application/json' \
+  -H 'Authorization: Bearer 替换为你的凭据' \
+  -d "{\"resourceLogs\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"my-app\"}}]},\"scopeLogs\":[{\"scope\":{\"name\":\"d-obs-onboarding\"},\"logRecords\":[{\"timeUnixNano\":\"$NOW_NS\",\"observedTimeUnixNano\":\"$NOW_NS\",\"severityText\":\"INFO\",\"severityNumber\":9,\"body\":{\"stringValue\":\"d-obs 接入验证\"}}]}]}]}"
+# 期望 {"partialSuccess":{"rejectedLogRecords":0}}；随后在「观测查询 → 日志查询」按应用 my-app 过滤可见</pre>
+          <p class="domain-note">内置「发送测试指标 / 测试日志」按钮使用平台内部身份（selftest 隔离 owner），验证的是采集链路；上面两条命令使用你的凭据，验证的是「你的凭据 + 你的网络 + 数据面」整条链路。</p>
+        </details>
         <div id="selftestMetricHint" class="domain-note hidden" aria-live="polite"></div>
         <div id="ingestTokenSecretHint" class="domain-note hidden" aria-live="polite"></div>
         <div id="ingestTokensContent" aria-live="polite"><div class="signals-empty">正在读取凭据清单…</div></div>
