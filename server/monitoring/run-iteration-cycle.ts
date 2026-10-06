@@ -6,8 +6,10 @@
  *
  * 口径边界（诚实标注，随响应返回）：
  * - 运行记录无任务级键，按 sso_user_id 的时间线配对——是研发迭代周期的近似，不是精确任务闭环；
- * - 上游 outcome 为自由文本，成功口径 = outcome ∈ {success, succeeded, ok}（大小写/空白不敏感），
- *   其余取值一律按失败计；响应携带 outcome 分布供交叉核对；
+ * - 上游 outcome 为自由文本。成功词表 = {completed, success, succeeded, ok}；失败词表 =
+ *   {error, failed, cancelled, canceled, timeout, aborted}；两表都不命中的取值（如
+ *   completed_partial）计为「中性」，不参与迭代配对——响应携带 outcome 分布供交叉核对
+ *   （2026-10-05 生产实测词表：completed/completed_partial/error/cancelled）；
  * - 配对窗口 72 小时，避免把数天后的无关运行算进同一次迭代；
  * - 数据源 RDK_CHAT_CREDITS_DB_URL，未配置或查询失败时抛错，由路由按 503 降级，不拖垮其余视图。
  */
@@ -17,7 +19,8 @@ type Pool = {
   query: (text: string, params?: unknown[]) => Promise<PgQueryResult>;
 };
 
-const SUCCESS_OUTCOME_WORDS = ['success', 'succeeded', 'ok'];
+const SUCCESS_OUTCOME_WORDS = ['completed', 'success', 'succeeded', 'ok'];
+const FAILURE_OUTCOME_WORDS = ['error', 'failed', 'cancelled', 'canceled', 'timeout', 'aborted'];
 const PAIRING_WINDOW_HOURS = 72;
 
 export function isSuccessOutcome(outcome: unknown): boolean {
@@ -25,6 +28,13 @@ export function isSuccessOutcome(outcome: unknown): boolean {
     .trim()
     .toLowerCase();
   return SUCCESS_OUTCOME_WORDS.includes(value);
+}
+
+export function isFailureOutcome(outcome: unknown): boolean {
+  const value = String(outcome ?? '')
+    .trim()
+    .toLowerCase();
+  return FAILURE_OUTCOME_WORDS.includes(value);
 }
 
 function num(value: unknown): number | null {
@@ -48,7 +58,9 @@ export interface IterationGapStats {
 export interface RunIterationCycleSummary {
   days: number;
   runsTotal: number;
-  failedRuns: number;
+  successRuns: number;
+  failureRuns: number;
+  neutralRuns: number;
   successRate: number | null;
   outcomeBreakdown: Array<{ outcome: string; count: number }>;
   retry: IterationGapStats;
@@ -64,7 +76,8 @@ export function mapIterationRow(
   days: number,
 ): RunIterationCycleSummary {
   const runsTotal = num(row.runs_total) ?? 0;
-  const failedRuns = num(row.failed_total) ?? 0;
+  const successRuns = num(row.success_total) ?? 0;
+  const failureRuns = num(row.failed_total) ?? 0;
   const retry: IterationGapStats = {
     paired: num(row.retry_paired) ?? 0,
     within1hRate: num(row.retry_within_1h),
@@ -82,14 +95,16 @@ export function mapIterationRow(
   return {
     days,
     runsTotal,
-    failedRuns,
-    successRate: runsTotal > 0 ? round1((runsTotal - failedRuns) / runsTotal) : null,
+    successRuns,
+    failureRuns,
+    neutralRuns: Math.max(0, runsTotal - successRuns - failureRuns),
+    successRate: runsTotal > 0 ? round1(successRuns / runsTotal) : null,
     outcomeBreakdown,
     retry,
     recovery,
     pairingWindowHours: PAIRING_WINDOW_HOURS,
     caveat:
-      '按用户运行时间线配对（运行记录无任务级键）；成功口径 = outcome ∈ success/succeeded/ok，其余按失败计',
+      '按用户运行时间线配对（运行记录无任务级键）；成功词表 completed/success/succeeded/ok，失败词表 error/failed/cancelled/canceled/timeout/aborted，两表皆不命中（如 completed_partial）计为中性、不参与配对',
   };
 }
 
@@ -106,7 +121,6 @@ seq as (
   select sso_user_id,
          outcome,
          started_at,
-         (outcome = any($2::text[])) as is_success,
          lead(started_at) over (partition by sso_user_id order by started_at) as next_started,
          min(case when outcome = any($2::text[]) then started_at end)
            over (partition by sso_user_id order by started_at rows between current row and unbounded following)
@@ -114,7 +128,7 @@ seq as (
     from runs
 ),
 failed as (
-  select * from seq where not is_success
+  select * from seq where outcome = any($4::text[])
 ),
 retry_pairs as (
   select extract(epoch from (next_started - started_at)) / 60 as gap_minutes
@@ -130,6 +144,7 @@ recovery_pairs as (
 )
 select
   (select count(*) from runs) as runs_total,
+  (select count(*) from runs where outcome = any($2::text[])) as success_total,
   (select count(*) from failed) as failed_total,
   (select count(*) from retry_pairs) as retry_paired,
   (select percentile_cont(0.5) within group (order by gap_minutes) from retry_pairs) as retry_p50,
@@ -171,7 +186,7 @@ async function pool(): Promise<Pool> {
 
 export async function loadRunIterationCycle(days: number): Promise<RunIterationCycleSummary> {
   const p = await pool();
-  const params = [days, SUCCESS_OUTCOME_WORDS, PAIRING_WINDOW_HOURS];
+  const params = [days, SUCCESS_OUTCOME_WORDS, PAIRING_WINDOW_HOURS, FAILURE_OUTCOME_WORDS];
   const [aggregate, breakdown] = await Promise.all([
     p.query(AGGREGATE_SQL, params),
     p.query(BREAKDOWN_SQL, [days]),

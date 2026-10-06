@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isSuccessOutcome, mapIterationRow } from './run-iteration-cycle.js';
+import { isFailureOutcome, isSuccessOutcome, mapIterationRow } from './run-iteration-cycle.js';
 
-test('成功词表判定：大小写与空白不敏感，未知取值按失败计', () => {
-  assert.equal(isSuccessOutcome('success'), true);
+test('成功/失败词表判定：大小写与空白不敏感，生产词表已收编', () => {
+  assert.equal(isSuccessOutcome('completed'), true);
   assert.equal(isSuccessOutcome(' OK '), true);
   assert.equal(isSuccessOutcome('Succeeded'), true);
-  assert.equal(isSuccessOutcome('error'), false);
-  assert.equal(isSuccessOutcome('timeout'), false);
+  assert.equal(isFailureOutcome('error'), true);
+  assert.equal(isFailureOutcome('Cancelled'), true);
+  assert.equal(isFailureOutcome('timeout'), true);
+  assert.equal(isFailureOutcome('completed'), false);
+  assert.equal(isFailureOutcome('completed_partial'), false); // 中性：两表皆不命中
+  assert.equal(isSuccessOutcome('completed_partial'), false);
   assert.equal(isSuccessOutcome(''), false);
   assert.equal(isSuccessOutcome(null), false);
 });
@@ -16,6 +20,7 @@ test('聚合行映射：字符串数值安全转数字并按口径取整', () =>
   const summary = mapIterationRow(
     {
       runs_total: '100',
+      success_total: 80,
       failed_total: 20,
       retry_paired: 12,
       retry_p50: '3.42',
@@ -27,13 +32,15 @@ test('聚合行映射：字符串数值安全转数字并按口径取整', () =>
       recovery_p80: 120,
     },
     [
-      { outcome: 'success', count: 80 },
+      { outcome: 'completed', count: 80 },
       { outcome: 'error', count: 20 },
     ],
     30,
   );
   assert.equal(summary.runsTotal, 100);
-  assert.equal(summary.failedRuns, 20);
+  assert.equal(summary.successRuns, 80);
+  assert.equal(summary.failureRuns, 20);
+  assert.equal(summary.neutralRuns, 0);
   assert.equal(summary.successRate, 0.8);
   assert.equal(summary.retry.paired, 12);
   assert.equal(summary.retry.medianMinutes, 3.4);
@@ -44,15 +51,27 @@ test('聚合行映射：字符串数值安全转数字并按口径取整', () =>
   assert.equal(summary.recovery.medianMinutes, null);
   assert.equal(summary.recovery.p80Minutes, 120);
   assert.equal(summary.pairingWindowHours, 72);
-  assert.ok(summary.caveat.includes('任务级键'));
+  assert.ok(summary.caveat.includes('中性'));
+});
+
+test('聚合行映射：中性运行 = 总数 − 成功 − 失败', () => {
+  const summary = mapIterationRow(
+    { runs_total: 100, success_total: 80, failed_total: 15 },
+    [],
+    7,
+  );
+  assert.equal(summary.neutralRuns, 5);
+  assert.equal(summary.retry.paired, 0);
 });
 
 test('聚合行映射：空行全缺口不抛错', () => {
   const summary = mapIterationRow({}, [], 7);
   assert.equal(summary.runsTotal, 0);
-  assert.equal(summary.failedRuns, 0);
+  assert.equal(summary.successRuns, 0);
+  assert.equal(summary.failureRuns, 0);
   assert.equal(summary.successRate, null);
   assert.equal(summary.retry.paired, 0);
   assert.equal(summary.retry.medianMinutes, null);
   assert.equal(summary.outcomeBreakdown.length, 0);
 });
+
