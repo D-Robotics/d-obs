@@ -55,6 +55,14 @@ export interface IterationGapStats {
   p80Minutes: number | null;
 }
 
+export interface IterationCategoryStats {
+  category: string;
+  failed: number;
+  recoveryPaired: number;
+  medianMinutes: number | null;
+  p80Minutes: number | null;
+}
+
 export interface RunIterationCycleSummary {
   days: number;
   runsTotal: number;
@@ -63,6 +71,7 @@ export interface RunIterationCycleSummary {
   neutralRuns: number;
   successRate: number | null;
   outcomeBreakdown: Array<{ outcome: string; count: number }>;
+  byCategory: IterationCategoryStats[];
   retry: IterationGapStats;
   recovery: IterationGapStats;
   pairingWindowHours: number;
@@ -73,6 +82,7 @@ export interface RunIterationCycleSummary {
 export function mapIterationRow(
   row: Record<string, unknown>,
   outcomeBreakdown: Array<{ outcome: string; count: number }>,
+  byCategory: IterationCategoryStats[],
   days: number,
 ): RunIterationCycleSummary {
   const runsTotal = num(row.runs_total) ?? 0;
@@ -100,6 +110,7 @@ export function mapIterationRow(
     neutralRuns: Math.max(0, runsTotal - successRuns - failureRuns),
     successRate: runsTotal > 0 ? round1(successRuns / runsTotal) : null,
     outcomeBreakdown,
+    byCategory,
     retry,
     recovery,
     pairingWindowHours: PAIRING_WINDOW_HOURS,
@@ -156,6 +167,55 @@ select
   (select percentile_cont(0.8) within group (order by gap_minutes) from recovery_pairs) as recovery_p80
 `;
 
+/** 失败类别桶映射：error_category 为空的行归「未分类」。null 安全，中位/p80 缺样本时为 null。 */
+export function mapCategoryRows(rows: Array<Record<string, unknown>>): IterationCategoryStats[] {
+  return rows.map((row) => ({
+    category: String(row.category ?? '').trim() || '未分类',
+    failed: num(row.failed) ?? 0,
+    recoveryPaired: num(row.recovery_paired) ?? 0,
+    medianMinutes: num(row.recovery_p50) === null ? null : round1(num(row.recovery_p50) as number),
+    p80Minutes: num(row.recovery_p80) === null ? null : round1(num(row.recovery_p80) as number),
+  }));
+}
+
+const CATEGORY_SQL = `
+with runs as (
+  select sso_user_id,
+         lower(btrim(outcome)) as outcome,
+         started_at
+    from public.agent_run_records
+   where started_at >= now() - make_interval(days => $1::int)
+     and coalesce(btrim(sso_user_id), '') <> ''
+),
+seq as (
+  select sso_user_id,
+         outcome,
+         error_category,
+         started_at,
+         min(case when outcome = any($2::text[]) then started_at end)
+           over (partition by sso_user_id order by started_at rows between current row and unbounded following)
+           as next_success_at
+    from runs
+),
+failed as (
+  select coalesce(nullif(btrim(error_category), ''), '未分类') as category,
+         extract(epoch from (next_success_at - started_at)) / 60 as recovery_gap_minutes
+    from seq
+   where outcome = any($4::text[])
+)
+select category,
+       count(*) as failed,
+       count(*) filter (where recovery_gap_minutes is not null and recovery_gap_minutes <= $3::int * 60) as recovery_paired,
+       percentile_cont(0.5) within group (order by recovery_gap_minutes)
+         filter (where recovery_gap_minutes <= $3::int * 60) as recovery_p50,
+       percentile_cont(0.8) within group (order by recovery_gap_minutes)
+         filter (where recovery_gap_minutes <= $3::int * 60) as recovery_p80
+  from failed
+  group by 1
+  order by failed desc
+  limit 8
+`;
+
 const BREAKDOWN_SQL = `
 select lower(btrim(outcome)) as outcome, count(*) as count
   from public.agent_run_records
@@ -187,12 +247,18 @@ async function pool(): Promise<Pool> {
 export async function loadRunIterationCycle(days: number): Promise<RunIterationCycleSummary> {
   const p = await pool();
   const params = [days, SUCCESS_OUTCOME_WORDS, PAIRING_WINDOW_HOURS, FAILURE_OUTCOME_WORDS];
-  const [aggregate, breakdown] = await Promise.all([
+  const [aggregate, breakdown, categories] = await Promise.all([
     p.query(AGGREGATE_SQL, params),
     p.query(BREAKDOWN_SQL, [days]),
+    p.query(CATEGORY_SQL, params),
   ]);
   const outcomeBreakdown = breakdown.rows
     .map((row) => ({ outcome: String(row.outcome ?? '(空)'), count: num(row.count) ?? 0 }))
     .filter((item) => item.count > 0);
-  return mapIterationRow(aggregate.rows[0] ?? {}, outcomeBreakdown, days);
+  return mapIterationRow(
+    aggregate.rows[0] ?? {},
+    outcomeBreakdown,
+    mapCategoryRows(categories.rows),
+    days,
+  );
 }

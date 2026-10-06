@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isFailureOutcome, isSuccessOutcome, mapIterationRow } from './run-iteration-cycle.js';
+import {
+  isFailureOutcome,
+  isSuccessOutcome,
+  mapCategoryRows,
+  mapIterationRow,
+} from './run-iteration-cycle.js';
 
 test('成功/失败词表判定：大小写与空白不敏感，生产词表已收编', () => {
   assert.equal(isSuccessOutcome('completed'), true);
@@ -35,6 +40,9 @@ test('聚合行映射：字符串数值安全转数字并按口径取整', () =>
       { outcome: 'completed', count: 80 },
       { outcome: 'error', count: 20 },
     ],
+    [
+      { category: 'tool_error', failed: 20, recoveryPaired: 9, medianMinutes: 10, p80Minutes: 120 },
+    ],
     30,
   );
   assert.equal(summary.runsTotal, 100);
@@ -54,9 +62,28 @@ test('聚合行映射：字符串数值安全转数字并按口径取整', () =>
   assert.ok(summary.caveat.includes('中性'));
 });
 
+test('失败类别桶映射：空类别归未分类，数值字符串安全转换', () => {
+  const rows = mapCategoryRows([
+    { category: ' tool_error ', failed: '30', recovery_paired: 25, recovery_p50: '12.34', recovery_p80: 90 },
+    { category: null, failed: 8, recovery_paired: 0, recovery_p50: null, recovery_p80: null },
+  ]);
+  assert.equal(rows[0].category, 'tool_error');
+  assert.equal(rows[0].failed, 30);
+  assert.equal(rows[0].recoveryPaired, 25);
+  assert.equal(rows[0].medianMinutes, 12.3);
+  assert.equal(rows[0].p80Minutes, 90);
+  assert.equal(rows[1].category, '未分类');
+  assert.equal(rows[1].medianMinutes, null);
+  assert.deepEqual(
+    mapCategoryRows([]),
+    [],
+  );
+});
+
 test('聚合行映射：中性运行 = 总数 − 成功 − 失败', () => {
   const summary = mapIterationRow(
     { runs_total: 100, success_total: 80, failed_total: 15 },
+    [],
     [],
     7,
   );
@@ -65,7 +92,7 @@ test('聚合行映射：中性运行 = 总数 − 成功 − 失败', () => {
 });
 
 test('聚合行映射：空行全缺口不抛错', () => {
-  const summary = mapIterationRow({}, [], 7);
+  const summary = mapIterationRow({}, [], [], 7);
   assert.equal(summary.runsTotal, 0);
   assert.equal(summary.successRuns, 0);
   assert.equal(summary.failureRuns, 0);
