@@ -72,6 +72,8 @@ export interface RunIterationCycleSummary {
   successRate: number | null;
   outcomeBreakdown: Array<{ outcome: string; count: number }>;
   byCategory: IterationCategoryStats[];
+  /** true = error_category 列在生产库尚不存在（写侧 ensureSchema 未跑新版本），分桶降级为空 */
+  categoryUnavailable: boolean;
   retry: IterationGapStats;
   recovery: IterationGapStats;
   pairingWindowHours: number;
@@ -83,6 +85,7 @@ export function mapIterationRow(
   row: Record<string, unknown>,
   outcomeBreakdown: Array<{ outcome: string; count: number }>,
   byCategory: IterationCategoryStats[],
+  categoryUnavailable: boolean,
   days: number,
 ): RunIterationCycleSummary {
   const runsTotal = num(row.runs_total) ?? 0;
@@ -111,6 +114,7 @@ export function mapIterationRow(
     successRate: runsTotal > 0 ? round1(successRuns / runsTotal) : null,
     outcomeBreakdown,
     byCategory,
+    categoryUnavailable,
     retry,
     recovery,
     pairingWindowHours: PAIRING_WINDOW_HOURS,
@@ -250,15 +254,28 @@ export async function loadRunIterationCycle(days: number): Promise<RunIterationC
   const [aggregate, breakdown, categories] = await Promise.all([
     p.query(AGGREGATE_SQL, params),
     p.query(BREAKDOWN_SQL, [days]),
-    p.query(CATEGORY_SQL, params),
+    // 分桶是增量区块：error_category 列未就绪（42703）时按空降级，不拖垮主摘要；其余异常留痕。
+    p.query(CATEGORY_SQL, params).catch((err: unknown) => {
+      const code = (err as { code?: string } | null)?.code;
+      if (code !== '42703') {
+        console.warn(
+          '[run-iteration-cycle] 类别分桶查询失败，该区块按空处理:',
+          code ?? '',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      return { rows: [] as Array<Record<string, unknown>> };
+    }),
   ]);
   const outcomeBreakdown = breakdown.rows
     .map((row) => ({ outcome: String(row.outcome ?? '(空)'), count: num(row.count) ?? 0 }))
     .filter((item) => item.count > 0);
+  const categoryRows = categories.rows;
   return mapIterationRow(
     aggregate.rows[0] ?? {},
     outcomeBreakdown,
-    mapCategoryRows(categories.rows),
+    mapCategoryRows(categoryRows),
+    categoryRows.length === 0,
     days,
   );
 }
