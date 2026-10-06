@@ -101,6 +101,12 @@ async function resolvePrincipal(req: Request): Promise<PublicPrincipal | null> {
   // 注册表凭据（人/服务/租户）与 OTLP 入口同一套 owner 推导，两个入口行为一致。
   if (await resolveIngestToken(token)) return digestPrincipal(token);
   if (configured) return null;
+  // Dynamic bearer identities are a development-only compatibility mode. A
+  // missing fixed token must fail closed in production; otherwise any caller
+  // can mint an isolated owner simply by choosing a bearer string.
+  const production = String(process.env.NODE_ENV ?? '').trim().toLowerCase() === 'production';
+  const allowDynamic = String(process.env.RDK_ALLOW_DYNAMIC_OBSERVABILITY_TOKENS ?? '').trim();
+  if (production && allowDynamic !== '1' && allowDynamic.toLowerCase() !== 'true') return null;
   return digestPrincipal(token);
 }
 

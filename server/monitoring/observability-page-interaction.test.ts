@@ -289,6 +289,7 @@ function setup(): Harness {
     const hook =
       ";globalThis.__obs={" +
       "renderActionCenter:typeof renderActionCenter!=='undefined'?renderActionCenter:null," +
+      "readOverviewPayload:typeof readOverviewPayload!=='undefined'?readOverviewPayload:null," +
       "renderMaintenancePanel:typeof renderMaintenancePanel!=='undefined'?renderMaintenancePanel:null," +
       "setView:typeof setView!=='undefined'?setView:null," +
       "consumePendingAlertDetail:typeof consumePendingAlertDetail!=='undefined'?consumePendingAlertDetail:null," +
@@ -374,6 +375,16 @@ test('页面脚本在 DOM 桩中完整求值：render 函数成为可调用全�
   assert.equal(typeof h.obs.renderActionCenter, 'function');
   assert.equal(typeof h.obs.renderMaintenancePanel, 'function');
   assert.equal(h.innerHTMLWrites.length, 0, '求值阶段不得写 innerHTML');
+});
+
+
+test('总览响应缺失时返回可处理的错误，而不是读取 null.alerting', () => {
+  const h = setup();
+  const readOverview = h.obs.readOverviewPayload as (value: unknown) => unknown;
+  assert.equal(typeof readOverview, 'function');
+  assert.throws(() => readOverview({ overview: null }), /overview_unavailable/);
+  const overview = { alerting: { status: 'healthy' } };
+  assert.equal(readOverview({ overview }), overview);
 });
 
 test('两级路由：旧 hash 别名规范化为 视图/子模块，未知视图回落总览', () => {

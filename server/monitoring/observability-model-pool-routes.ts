@@ -18,6 +18,31 @@ import {
 } from '../credits/gateway-admin-client.js';
 import { getLatestOpsConfigurationAuditDetails, recordOpsConfigurationAudit } from './observability-store.js';
 import { resolveStudioGatewayPublicModel } from '../agent/studio-agent-env.js';
+
+/**
+ * The gateway admin response is an internal credential-bearing payload. The
+ * workbench only needs routing metadata; never send upstream credentials to a
+ * browser, even when the upstream happens to include them in /admin/config.
+ */
+export function sanitizeGatewayConfigSummary(
+  config: Awaited<ReturnType<typeof getGatewayConfigSummary>>,
+): Record<string, unknown> {
+  const modelMapping: Record<string, Record<string, unknown>> = {};
+  for (const [frontendModel, item] of Object.entries(config.modelMapping ?? {})) {
+    modelMapping[frontendModel] = {
+      baseUrl: item.baseUrl,
+      model: item.model,
+      ...(item.label ? { label: item.label } : {}),
+      ...(item.fallbacks ? { fallbacks: item.fallbacks } : {}),
+      ...(item.weight === undefined ? {} : { weight: item.weight }),
+    };
+  }
+  return {
+    modelMapping,
+    ...(config.fallbackPolicy === undefined ? {} : { fallbackPolicy: config.fallbackPolicy }),
+  };
+}
+
 export function registerModelPoolRoutes(router: Router): void {
   router.get(
     '/api/ops/observability/model-pool',
@@ -32,7 +57,7 @@ export function registerModelPoolRoutes(router: Router): void {
         res.json({
           ok: true,
           health,
-          config,
+          config: sanitizeGatewayConfigSummary(config),
           protectedFrontendModel: resolveStudioGatewayPublicModel(),
         });
       } catch (error) {

@@ -613,6 +613,8 @@ async function runWorkbenchScript(options: {
   hash?: string;
   /** 让非身份类请求失败（测试轮询退避）。 */
   failData?: boolean;
+  /** 给轮询成功路径一个结构完整的总览响应。 */
+  overviewData?: unknown;
   /** 指定路径返回 403 + 错误码（测试 403 分级处理）。 */
   forbidden?: Record<string, string>;
 }): Promise<{
@@ -779,7 +781,7 @@ async function runWorkbenchScript(options: {
           json: () => Promise.resolve({ ok: false, error: 'test_data_failure' }),
         });
       }
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(options.overviewData ?? { ok: true }) });
     },
   };
   sandboxGlobals.window = sandboxGlobals;
@@ -1056,6 +1058,18 @@ test('工作台轮询节流：后台标签页不发请求，回到前台过期�
 
 test('工作台轮询节流：数据刚加载过时，回到前台不重复拉取（只恢复节奏）', async () => {
   const result = await runWorkbenchScript({
+    overviewData: {
+      ok: true,
+      overview: {
+        alerting: { lastCheckedAt: '2026-10-06T15:00:00Z', status: 'healthy' },
+        summary: { disabledChecks: 0, openIncidents: 0, healthyChecks: 1, totalChecks: 1 },
+        incidents: [],
+        checks: [],
+        ai: { successRate: 1, total: 0, errors: 0 },
+        signals: { toolFailures: 0, clientErrors: 0, api5xx: 0, processErrors: 0, loginInfrastructureErrors: 0 },
+        windowHours: 24,
+      },
+    },
     storage: [['d_obs_active_tenant', 'team-a']],
     me: {
       ok: true,
