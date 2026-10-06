@@ -111,3 +111,39 @@ test('buildObservabilityMcpTools：query_metric 的 minutes/from-to 参数走不
 
   await assert.rejects(() => byName('query_metric')!.handler({ metric: '' }), /metric is required/);
 });
+
+test('buildObservabilityMcpTools：注入 runIterationCycle 时注册 get_run_iteration_cycle，未注入不出现', async () => {
+  const without = buildObservabilityMcpTools({
+    listSeries: async () => [],
+    queryRanges: async () => [],
+    queryLogs: async () => [],
+    metricCatalog: () => [],
+    listDevices: async () => [],
+    nlQuery: async () => ({}),
+  });
+  assert.equal(without.some((tool) => tool.name === 'get_run_iteration_cycle'), false);
+
+  let capturedDays = 0;
+  const withDep = buildObservabilityMcpTools({
+    listSeries: async () => [],
+    queryRanges: async () => [],
+    queryLogs: async () => [],
+    metricCatalog: () => [],
+    listDevices: async () => [],
+    nlQuery: async () => ({}),
+    runIterationCycle: async (days) => {
+      capturedDays = days;
+      return { days, runsTotal: 10, caveat: 'ok' };
+    },
+  });
+  const tool = withDep.find((item) => item.name === 'get_run_iteration_cycle');
+  assert.ok(tool, 'get_run_iteration_cycle should be registered');
+  const result = (await tool.handler({ days: 7 })) as { days: number };
+  assert.equal(capturedDays, 7);
+  assert.equal(result.days, 7);
+  // 缺省 days=30，且越界被收敛
+  await tool.handler({});
+  assert.equal(capturedDays, 30);
+  await tool.handler({ days: 999 });
+  assert.equal(capturedDays, 90);
+});

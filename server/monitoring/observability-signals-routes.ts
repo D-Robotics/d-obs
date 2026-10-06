@@ -97,6 +97,7 @@ export function registerSignalsRoutes(router: Router): void {
     listDevices: () => listDevices(),
     nlQuery: async (question) => nlQuery(question, buildSeriesIndex(await queryMetricSeries({ limit: 300 }))),
     incidentCorrelate: (alertKey) => correlateIncidentByKey(alertKey),
+    runIterationCycle: (days) => loadRunIterationCycle(days),
   });
 
   // ---- 平台内指标查询（OTLP metrics 落库后的一等查询面，管理员只读） ----

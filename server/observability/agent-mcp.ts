@@ -139,6 +139,8 @@ type MetricsQueryDeps = {
   nlQuery: (question: string) => Promise<unknown>;
   /** 可选：跨信号事故关联（给定时注册 correlate_incident 工具） */
   incidentCorrelate?: (alertKey: string) => Promise<unknown>;
+  /** 可选：失败后迭代周期聚合（给定时注册 get_run_iteration_cycle 工具） */
+  runIterationCycle?: (days: number) => Promise<unknown>;
 };
 
 /** 组装只读工具集；io 依赖由路由层注入。 */
@@ -253,6 +255,24 @@ export function buildObservabilityMcpTools(io: MetricsQueryDeps, now: () => numb
               const result = await io.incidentCorrelate!(alertKey);
               if (!result) throw new Error('incident_not_found');
               return result;
+            },
+          } satisfies McpTool,
+        ]
+      : []),
+    ...(io.runIterationCycle
+      ? [
+          {
+            name: 'get_run_iteration_cycle',
+            description:
+              '失败后迭代周期（研发反馈周期）：按用户运行时间线配对「失败→下一次运行（重试）」与「失败→下一次成功（修复）」的间隔分布。反馈周期越短，迭代收敛越快。口径：成功=outcome ∈ completed/success/succeeded/ok，失败=error/failed/cancelled 等，completed_partial 等中性运行不参与配对。',
+            inputSchema: {
+              type: 'object',
+              properties: { days: { type: 'integer', description: '回看天数（1-90，默认 30，可选）' } },
+              additionalProperties: false,
+            },
+            handler: async (args: Record<string, unknown>) => {
+              const days = integerArg(args, 'days', 30, 1, 90);
+              return io.runIterationCycle!(days);
             },
           } satisfies McpTool,
         ]
