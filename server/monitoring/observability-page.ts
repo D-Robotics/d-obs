@@ -267,6 +267,10 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
       </div>
       <div class="view-module" data-view-module="signals/quality" role="tabpanel" aria-label="质量与反馈" hidden>
         <div id="signalsQualityContent" aria-live="polite"><div class="signals-empty">正在读取质量趋势…</div></div>
+        <details class="detail-sections"><summary class="detail-summary"><strong>失败后迭代周期</strong><span>失败运行到下一次运行 / 下一次成功的间隔分布——研发反馈周期的直接度量</span></summary>
+          <div id="runIterationContent" aria-live="polite"><div class="signals-empty">正在读取迭代周期…</div></div>
+          <p class="domain-note">口径：按用户运行时间线配对（运行记录无任务级键，为近似度量）；成功 = outcome ∈ success/succeeded/ok，其余按失败计；配对窗口 72 小时。反馈周期越短，同一问题的迭代收敛越快。</p>
+        </details>
       </div>
       <div class="view-module" data-view-module="signals/catalog" role="tabpanel" aria-label="指标字典" hidden>
         <p class="domain-note">不确定指标名？先在这里找：每个指标都有中文说明和标签；点指标名可自动填入指标查询。<strong>应用指标</strong>类走平台内查询（保留 14 天），<strong>其余</strong>走 Prometheus 深度历史。</p>

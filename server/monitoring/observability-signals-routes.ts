@@ -47,6 +47,7 @@ import { deleteLibraryPanel, listLibraryPanels, saveLibraryPanel } from './dashb
 import { buildObservabilityMcpTools, handleMcpJsonRpc } from '../observability/agent-mcp.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
 import { loadQualityTrend } from '../public-api/public-observability-quality-trend.js';
+import { loadRunIterationCycle } from './run-iteration-cycle.js';
 export function registerSignalsRoutes(router: Router): void {
   // 平台内落库序列索引（metric + service），NL 查询与 MCP 工具共用。
   function buildSeriesIndex(series: Array<{ metric: string; labels: unknown }>): Array<{ metric: string; service: string }> {
@@ -241,6 +242,23 @@ export function registerSignalsRoutes(router: Router): void {
         res.json({ ok: true, trend });
       } catch (error) {
         res.status(503).json({ ok: false, error: clientErrorCode(error, 'quality_summary_unavailable') });
+      }
+    },
+  );
+
+  // ---- 失败后迭代周期（研发反馈周期：借鉴 RSI 论文 Hinton et al. 2026 的核心变量） ----
+
+  router.get(
+    '/api/ops/observability/runs/iteration-cycle',
+    requireObservabilityAccess,
+    async (req: Request, res: Response) => {
+      try {
+        const days = queryInteger(req.query as Record<string, unknown>, 'days', 30, 1, 90);
+        const summary = await loadRunIterationCycle(days);
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ ok: true, summary });
+      } catch (error) {
+        res.status(503).json({ ok: false, error: clientErrorCode(error, 'run_iteration_unavailable') });
       }
     },
   );
