@@ -160,6 +160,7 @@ import { registerInsightRoutes } from './observability-insight-routes.js';
 import { registerTraceRoutes } from './observability-trace-routes.js';
 import { registerTenantRoutes } from './observability-tenant-routes.js';
 import { registerModelPoolRoutes } from './observability-model-pool-routes.js';
+import { registerSearchRoutes } from './observability-search-routes.js';
 export { isOpsAdminRequest } from './observability-access.js';
 export { isProtectedAgentFrontendModel } from './observability-route-kit.js';
 let configWriteQueue: Promise<void> = Promise.resolve();
@@ -379,6 +380,7 @@ export function createOpsObservabilityRouter(): Router {
 
   registerSignalsRoutes(router);
   registerStrategyRoutes(router);
+  registerSearchRoutes(router);
 
   // 账号行为视角（只读聚合，平台管理员专用：跨账号行为数据属运营审计面，
   // 租户组员/探针 token 不开放——requireObservabilityAccess 的管理员闸门收敛）。

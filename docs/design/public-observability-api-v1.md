@@ -8,6 +8,9 @@ run/trace API. The machine-readable capability document is available at
 The API is intentionally separate from the OTLP receiver. OTLP clients should
 use `/v1/traces`, `/v1/metrics`, or `/v1/logs`; application code that needs a
 run lifecycle, scores, evaluations, or feedback can use the endpoints below.
+The machine-readable contract is available at
+`GET /api/v1/ecosystem/openapi.json` (OpenAPI 3.1.0). The capabilities response
+links to that document through `contract.schemaUrl` and `contract.openapiUrl`.
 
 ## Authentication and scope
 
@@ -64,6 +67,14 @@ The current limits are also exposed in the capabilities response:
 - trace reads: 256 spans;
 - run list reads: 200 records;
 - log body: 1,000 characters.
+
+The capabilities response also reports the persistence boundary. The current
+deployment uses a bounded `process-memory-cache` for run/object metadata and
+indexes, while traces and quality records are projected to their durable stores.
+The cache exposes `exportSnapshot()`/`importSnapshot()` for a controlled rolling
+handoff and reports `degraded: true` while a shared multi-instance repository is
+not enabled. A deployment must not treat the cache as the authoritative source
+for cross-instance reads until the capability reports a shared repository.
 
 The cumulative run limit is enforced by the store. Replaying a span with the
 same `traceId:spanId` does not consume another slot. A batch that would add
@@ -131,3 +142,15 @@ Breaking changes require a new path or schema version and a corresponding
 capabilities entry. The capabilities endpoint is the source of truth for
 which optional signals, evaluations, health endpoints, protocols, and limits
 are enabled by a deployment.
+
+## Panel and entity integration
+
+`panelRegistry` in the capabilities document describes the versioned
+`rdk.observability.panel-registry.v1` contract. It is designed for dashboard
+plugins and connectors: a client can select a renderer and data source before
+emitting a panel, and a future or unknown panel type is normalized to a safe
+`stat` fallback. The operations workbench also exposes a protected entity
+search route, `GET /api/ops/observability/search?q=...&limit=...`, for its
+command palette. It returns only stable object/incident identity, status and a
+workbench deep link, and applies the same tenant scope gate as the incident and
+object views.

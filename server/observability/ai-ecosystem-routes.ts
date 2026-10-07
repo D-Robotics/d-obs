@@ -28,6 +28,8 @@ import { resolveIngestToken } from './ingest-token-store.js';
 import { decodeLogsProtobuf, decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
 import { renderDevicePrometheusMetrics } from '../monitoring/device-prometheus.js';
 import { registerObjectsFromOtlp } from '../monitoring/observability-object-registry.js';
+import { getPanelRegistrySummary } from '../monitoring/observability-panel-registry.js';
+import { PUBLIC_OBSERVABILITY_OPENAPI } from './public-observability-openapi.js';
 
 export type Principal = { owner: string; keyId: string };
 type JsonObject = Record<string, unknown>;
@@ -715,8 +717,10 @@ export function createAiEcosystemRouter(): Router {
       data: {
         schema: 'rdk.ai.observability.capabilities.v2',
         apiVersion: OBSERVABILITY_API_VERSION,
+        panelRegistry: getPanelRegistrySummary(),
         contract: {
-          schemaUrl: '/api/v1/ecosystem/capabilities',
+          schemaUrl: '/api/v1/ecosystem/openapi.json',
+          openapiUrl: '/api/v1/ecosystem/openapi.json',
           error: OBSERVABILITY_ERROR_CONTRACT,
           errorShape: {
             ok: false,
@@ -760,6 +764,7 @@ export function createAiEcosystemRouter(): Router {
           maxLogBodyCharacters: MAX_LOG_BODY,
           maxRequestsPerMinute: Number.parseInt(String(process.env.RDK_OTLP_MAX_REQUESTS_PER_MINUTE ?? '600'), 10) || 600,
         },
+        persistence: store.getPersistenceStatus(),
         authentication: {
           ingestTokenEnv: 'RDK_PUBLIC_OBSERVABILITY_API_TOKEN',
           dynamicTokens: 'development_only',
@@ -779,6 +784,9 @@ export function createAiEcosystemRouter(): Router {
         payloadPolicy: 'low-sensitivity; prompts, completions, tool arguments/results and credentials are not retained',
       },
     });
+  });
+  router.get('/api/v1/ecosystem/openapi.json', (_req, res) => {
+    res.json(PUBLIC_OBSERVABILITY_OPENAPI);
   });
   return router;
 }

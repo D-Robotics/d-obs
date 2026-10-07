@@ -55,6 +55,19 @@ add('otlp-auth', publicToken || (!production && dynamicTokens), publicToken ? 'f
 const metricsToken = hasSecret('RDK_OBSERVABILITY_METRICS_TOKEN');
 add('metrics-auth', metricsToken || (!production && !enabled(process.env.RDK_OBSERVABILITY_REQUIRE_METRICS_TOKEN)), metricsToken ? 'metrics token configured' : 'configure RDK_OBSERVABILITY_METRICS_TOKEN', production ? 'error' : 'warning');
 
+// Public observability metadata is a bounded process cache today. Trace and
+// quality payloads are projected to their durable stores; snapshot export/import
+// provides a safe handoff during restarts until a shared repository is enabled.
+const persistenceMode = String(process.env.RDK_PUBLIC_OBSERVABILITY_PERSISTENCE_MODE ?? 'process-memory-cache').trim();
+add(
+  'public-observability-persistence',
+  persistenceMode === 'process-memory-cache',
+  persistenceMode === 'process-memory-cache'
+    ? 'process-memory-cache; bounded with snapshot export/import; durable trace and quality projections'
+    : `unsupported persistence mode: ${persistenceMode}`,
+  production ? 'error' : 'warning',
+);
+
 const grpcPort = String(process.env.RDK_OTLP_GRPC_PORT ?? '').trim();
 if (grpcPort) {
   const host = String(process.env.RDK_OTLP_GRPC_HOST ?? '127.0.0.1').trim();

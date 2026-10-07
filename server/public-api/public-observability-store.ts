@@ -22,6 +22,16 @@ import {
   persistPublicObservabilityEvaluation,
   persistPublicObservabilityScore,
 } from './public-observability-quality-store.js';
+import {
+  PUBLIC_OBSERVABILITY_PERSISTENCE_MODE,
+  PUBLIC_OBSERVABILITY_SNAPSHOT_SCHEMA,
+  type PublicObservabilityPersistenceLimits,
+  type PublicObservabilityPersistenceStatus,
+  type PublicObservabilityRepository,
+  type PublicObservabilitySnapshot,
+  type PublicObservabilitySnapshotImportResult,
+  type PublicObservabilitySnapshotRun,
+} from './public-observability-repository.js';
 
 export const PUBLIC_OBSERVABILITY_SPAN_SCHEMA = 'rdk.public.observability.span.v1' as const;
 
@@ -277,6 +287,7 @@ export interface PublicObservabilityObjectListFilter extends PublicObservability
 }
 
 const MAX_RUNS = 2_000;
+const MAX_OBJECT_PROFILES = 5_000;
 const MAX_SPANS_PER_RUN = 256;
 const MAX_SCORES_PER_RUN = 100;
 const MAX_FEEDBACK_PER_RUN = 100;
@@ -485,12 +496,240 @@ function pickRunStatus(current: PublicObservabilityRunStatus, next?: PublicObser
   return current;
 }
 
-class PublicObservabilityStore {
+class PublicObservabilityStore implements PublicObservabilityRepository {
   private readonly runs = new Map<string, StoredRun>();
   private readonly idempotency = new Map<string, string>();
   private readonly objectProfiles = new Map<string, StoredObjectProfile>();
   private readonly governanceTombstones: TelemetryDeletionTombstone[] = [];
   private quarantineAllTelemetry = false;
+
+  /**
+   * Persistence boundary: this object is a bounded process cache. Trace and
+   * quality payloads are projected to durable stores on write, but metadata
+   * and indexes are intentionally local for compatibility with the existing
+   * deployment. Callers that need restart/replica continuity can export a
+   * snapshot and import it into the next process during a rolling handoff.
+   */
+  getPersistenceStatus(): PublicObservabilityPersistenceStatus {
+    return {
+      mode: PUBLIC_OBSERVABILITY_PERSISTENCE_MODE,
+      authoritative: 'process-cache',
+      durableProjections: ['studio-trace-store', 'public-observability-quality-store'],
+      degraded: true,
+      cache: {
+        runs: this.runs.size,
+        objectProfiles: this.objectProfiles.size,
+        governanceTombstones: this.governanceTombstones.length,
+        quarantineAllTelemetry: this.quarantineAllTelemetry,
+      },
+      limits: this.persistenceLimits(),
+      generatedAt: Date.now(),
+    };
+  }
+
+  private persistenceLimits(): PublicObservabilityPersistenceLimits {
+    return {
+      maxRuns: MAX_RUNS,
+      maxObjectProfiles: MAX_OBJECT_PROFILES,
+      maxSpansPerRun: MAX_SPANS_PER_RUN,
+      maxScoresPerRun: MAX_SCORES_PER_RUN,
+      maxFeedbackPerRun: MAX_FEEDBACK_PER_RUN,
+      maxEvaluationsPerRun: MAX_EVALUATIONS_PER_RUN,
+      retentionMs: LOW_SENSITIVITY_RETENTION_MS,
+    };
+  }
+
+  exportSnapshot(): PublicObservabilitySnapshot {
+    this.pruneExpiredRuns();
+    const runs: PublicObservabilitySnapshotRun[] = [...this.runs.values()].map((run) => ({
+      run: this.publicRun(run),
+      spans: [...run.spans.values()].map((span) => ({ ...span, attributes: { ...span.attributes } })),
+      scores: run.scores.map((score) => ({ ...score, ...(score.metadata ? { metadata: { ...score.metadata } } : {}) })),
+      feedback: run.feedback.map((feedback) => ({ ...feedback })),
+      evaluations: run.evaluations.map((evaluation) => ({ ...evaluation, metadata: { ...evaluation.metadata } })),
+    }));
+    return {
+      schema: PUBLIC_OBSERVABILITY_SNAPSHOT_SCHEMA,
+      generatedAt: Date.now(),
+      persistenceMode: PUBLIC_OBSERVABILITY_PERSISTENCE_MODE,
+      runs,
+      objectProfiles: [...this.objectProfiles.values()].map((profile) => ({
+        ...profile,
+        labels: [...profile.labels],
+      })),
+      tombstones: this.governanceTombstones.map((tombstone) => ({ ...tombstone })),
+      quarantineAllTelemetry: this.quarantineAllTelemetry,
+    };
+  }
+
+  importSnapshot(snapshot: unknown, options: { replace?: boolean } = {}): PublicObservabilitySnapshotImportResult {
+    const value = snapshot && typeof snapshot === 'object' ? snapshot as Partial<PublicObservabilitySnapshot> : {};
+    if (value.schema !== PUBLIC_OBSERVABILITY_SNAPSHOT_SCHEMA || value.persistenceMode !== PUBLIC_OBSERVABILITY_PERSISTENCE_MODE) {
+      throw new Error('invalid public observability snapshot schema');
+    }
+    if (!Array.isArray(value.runs) || !Array.isArray(value.objectProfiles)) {
+      throw new Error('invalid public observability snapshot payload');
+    }
+    if (options.replace) {
+      this.runs.clear();
+      this.idempotency.clear();
+      this.objectProfiles.clear();
+    }
+    // Governance state is monotonic. Merge selectors before restoring rows so
+    // a stale snapshot cannot resurrect data deleted after it was exported.
+    if (Array.isArray(value.tombstones)) {
+      for (const tombstone of value.tombstones.slice(0, MAX_GOVERNANCE_TOMBSTONES)) {
+        if (tombstone && typeof tombstone === 'object') {
+          this.rememberGovernanceTombstone(tombstone as TelemetryDeletionTombstone);
+        }
+      }
+    }
+    this.quarantineAllTelemetry = this.quarantineAllTelemetry || value.quarantineAllTelemetry === true;
+    let importedRuns = 0;
+    let skippedRuns = 0;
+    for (const candidate of value.runs.slice(0, MAX_RUNS)) {
+      const row = candidate as Partial<PublicObservabilitySnapshotRun>;
+      const source = row.run;
+      if (!source || typeof source !== 'object') {
+        skippedRuns += 1;
+        continue;
+      }
+      const runId = cleanText(source.runId, 200);
+      const owner = cleanText(source.owner, 256);
+      const keyId = cleanText(source.keyId, 96);
+      if (!runId || !owner || !keyId || this.runs.has(runId)) {
+        skippedRuns += 1;
+        continue;
+      }
+      const run: StoredRun = {
+        runId,
+        traceId: isTraceId(source.traceId) ? source.traceId : randomTraceId(),
+        owner,
+        keyId,
+        ...(cleanText(source.team, 120) ? { team: cleanText(source.team, 120) } : {}),
+        ...(cleanText(source.objectType, 120) ? { objectType: cleanText(source.objectType, 120) } : {}),
+        ...(cleanText(source.objectId, 200) ? { objectId: cleanText(source.objectId, 200) } : {}),
+        ...(cleanText(source.objectName, 160) ? { objectName: cleanText(source.objectName, 160) } : {}),
+        ...(cleanText(source.objectVersion, 120) ? { objectVersion: cleanText(source.objectVersion, 120) } : {}),
+        projectId: cleanText(source.projectId, 160) || 'unknown',
+        environment: cleanText(source.environment, 120) || 'unknown',
+        service: cleanText(source.service, 160) || 'unknown',
+        ...(cleanText(source.release, 120) ? { release: cleanText(source.release, 120) } : {}),
+        ...(cleanText(source.name, 120) ? { name: cleanText(source.name, 120) } : {}),
+        ...(cleanText(source.sessionRef, 200) ? { sessionRef: cleanText(source.sessionRef, 200) } : {}),
+        metadata: normalizeScalarMap(source.metadata, PUBLIC_OBSERVABILITY_RUN_METADATA_KEYS),
+        status: normalizeStatus(source.status),
+        createdAt: Number.isFinite(source.createdAt) ? Number(source.createdAt) : Date.now(),
+        updatedAt: Number.isFinite(source.updatedAt) ? Number(source.updatedAt) : Date.now(),
+        ...(Number.isFinite(source.completedAt) ? { completedAt: Number(source.completedAt) } : {}),
+        ...(Number.isFinite(source.firstSpanAt) ? { firstSpanAt: Number(source.firstSpanAt) } : {}),
+        ...(Number.isFinite(source.lastSpanAt) ? { lastSpanAt: Number(source.lastSpanAt) } : {}),
+        spanCount: 0,
+        errorSpanCount: 0,
+        scoreCount: 0,
+        feedbackCount: 0,
+        evaluationCount: 0,
+        ...(cleanText(source.idempotencyKey, 256) ? { idempotencyKey: cleanText(source.idempotencyKey, 256) } : {}),
+        spans: new Map(),
+        scores: [],
+        feedback: [],
+        evaluations: [],
+      };
+      if (this.quarantineAllTelemetry || this.governanceTombstones.some((tombstone) => this.tombstoneMatchesRun(tombstone, run))) {
+        skippedRuns += 1;
+        continue;
+      }
+      const spans = Array.isArray(row.spans) ? row.spans.slice(0, MAX_SPANS_PER_RUN) : [];
+      for (const raw of spans) {
+        if (!raw || typeof raw !== 'object') continue;
+        const span = raw as Partial<PublicObservabilitySpanRecord>;
+        const spanId = cleanText(span.spanId, 16);
+        const traceId = isTraceId(span.traceId) ? span.traceId : run.traceId;
+        const startTime = Number(span.startTime);
+        const endTime = Number(span.endTime);
+        if (!spanId || !isSpanId(spanId) || !Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime < startTime) continue;
+        const normalized: PublicObservabilitySpanRecord = {
+          schema: PUBLIC_OBSERVABILITY_SPAN_SCHEMA,
+          runId,
+          traceId,
+          spanId,
+          ...(cleanText(span.parentSpanId, 16) ? { parentSpanId: cleanText(span.parentSpanId, 16) } : {}),
+          source: normalizeSource(span.source),
+          kind: normalizeKind(span.kind),
+          name: cleanText(span.name, 80) || 'observability.span',
+          startTime: Math.trunc(startTime),
+          endTime: Math.trunc(endTime),
+          status: span.status === 'error' ? 'error' : 'ok',
+          ...(cleanText(span.statusMessage, 160) ? { statusMessage: cleanText(span.statusMessage, 160) } : {}),
+          attributes: normalizeScalarMap(span.attributes),
+        };
+        run.spans.set(`${traceId}:${spanId}`, normalized);
+      }
+      const scores = Array.isArray(row.scores) ? row.scores.slice(-MAX_SCORES_PER_RUN) : [];
+      run.scores = scores.filter((item): item is PublicObservabilityScoreRecord => Boolean(item && typeof item === 'object')).map((item) => ({
+        ...item,
+        runId,
+        owner,
+        metadata: item.metadata ? { ...item.metadata } : undefined,
+      }));
+      const feedback = Array.isArray(row.feedback) ? row.feedback.slice(-MAX_FEEDBACK_PER_RUN) : [];
+      run.feedback = feedback.filter((item): item is PublicObservabilityFeedbackRecord => Boolean(item && typeof item === 'object')).map((item) => ({ ...item, runId, owner }));
+      const evaluations = Array.isArray(row.evaluations) ? row.evaluations.slice(-MAX_EVALUATIONS_PER_RUN) : [];
+      run.evaluations = evaluations.filter((item): item is PublicObservabilityEvaluationRecord => Boolean(item && typeof item === 'object')).map((item) => ({ ...item, runId, owner, metadata: { ...item.metadata } }));
+      this.updateRunStats(run);
+      run.scoreCount = run.scores.length;
+      run.feedbackCount = run.feedback.length;
+      run.evaluationCount = run.evaluations.length;
+      this.upsertStoredRun(run);
+      if (run.idempotencyKey) this.idempotency.set(`${run.keyId}:${run.idempotencyKey}`, run.runId);
+      importedRuns += 1;
+    }
+    let importedObjectProfiles = 0;
+    let skippedObjectProfiles = 0;
+    for (const candidate of value.objectProfiles.slice(0, MAX_OBJECT_PROFILES)) {
+      if (!candidate || typeof candidate !== 'object') {
+        skippedObjectProfiles += 1;
+        continue;
+      }
+      const profile = candidate as Partial<StoredObjectProfile>;
+      const owner = cleanText(profile.owner, 256);
+      const team = cleanText(profile.team, 120);
+      const objectType = cleanText(profile.objectType, 120);
+      const objectId = cleanText(profile.objectId, 200);
+      if (!owner || !team || !objectType || !objectId) {
+        skippedObjectProfiles += 1;
+        continue;
+      }
+      const normalized: StoredObjectProfile = {
+        owner,
+        team,
+        objectType,
+        objectId,
+        ...(cleanText(profile.displayName, 160) ? { displayName: cleanText(profile.displayName, 160) } : {}),
+        ...(cleanText(profile.ownerTeam, 120) ? { ownerTeam: cleanText(profile.ownerTeam, 120) } : {}),
+        ...(cleanText(profile.description, 2_000) ? { description: cleanText(profile.description, 2_000) } : {}),
+        labels: normalizeLabelList(profile.labels),
+        archived: Boolean(profile.archived),
+        createdAt: Number.isFinite(profile.createdAt) ? Number(profile.createdAt) : Date.now(),
+        updatedAt: Number.isFinite(profile.updatedAt) ? Number(profile.updatedAt) : Date.now(),
+        updatedBy: cleanText(profile.updatedBy, 256) || owner,
+      };
+      if (this.quarantineAllTelemetry || this.governanceTombstones.some((tombstone) =>
+        tombstone.accountScopeId === owner &&
+        !tombstone.runId &&
+        !tombstone.traceId &&
+        !tombstone.sessionId &&
+        !tombstone.grantId
+      )) {
+        skippedObjectProfiles += 1;
+        continue;
+      }
+      this.objectProfiles.set(objectProfileKey(owner, team, objectType, objectId), normalized);
+      importedObjectProfiles += 1;
+    }
+    this.trimObjectProfiles();
+    return { importedRuns, importedObjectProfiles, skippedRuns, skippedObjectProfiles, replaced: Boolean(options.replace) };
+  }
 
   private deleteCachedRun(runId: string): boolean {
     const removed = this.runs.delete(runId);
@@ -589,6 +828,14 @@ class PublicObservabilityStore {
       .sort((a, b) => a.updatedAt - b.updatedAt)
       .slice(0, this.runs.size - MAX_RUNS);
     for (const item of overflow) this.deleteCachedRun(item.runId);
+  }
+
+  private trimObjectProfiles(): void {
+    if (this.objectProfiles.size <= MAX_OBJECT_PROFILES) return;
+    const overflow = [...this.objectProfiles.entries()]
+      .sort(([, a], [, b]) => a.updatedAt - b.updatedAt)
+      .slice(0, this.objectProfiles.size - MAX_OBJECT_PROFILES);
+    for (const [key] of overflow) this.objectProfiles.delete(key);
   }
 
   private upsertStoredRun(record: StoredRun): StoredRun {
@@ -1203,6 +1450,7 @@ class PublicObservabilityStore {
       next.archived = Boolean(input.archived);
     }
     this.objectProfiles.set(key, next);
+    this.trimObjectProfiles();
     const aggregate = this.collectObjectAggregates(normalizedOwner, { team, objectType, objectId: normalizedObjectId }, true);
     const selected = this.pickAggregateByObjectId(aggregate, normalizedObjectId, { team, objectType });
     if (!selected) {

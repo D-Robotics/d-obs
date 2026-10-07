@@ -150,6 +150,14 @@ test('accepts Phoenix/Langfuse-compatible OTLP aliases and exposes Prometheus me
       evaluationEndpoints?: { record: string; list: string };
       apiVersion?: string;
       contract?: { error?: string; errorShape?: { retryable?: boolean; requestId?: string } };
+      persistence?: { mode?: string; authoritative?: string; degraded?: boolean; limits?: { maxRuns?: number } };
+      panelRegistry?: {
+        schema?: string;
+        version?: string;
+        specVersion?: string;
+        renderers?: Array<{ id: string; kind: string; version: string }>;
+        dataSources?: Array<{ id: string; version: string; signals: string[] }>;
+      };
     };
   };
   assert.deepEqual(capabilities.data.protocols, ['otlp/http-json', 'otlp/http-protobuf', 'otlp/grpc', 'prometheus exposition']);
@@ -162,6 +170,26 @@ test('accepts Phoenix/Langfuse-compatible OTLP aliases and exposes Prometheus me
   assert.equal(capabilities.data.contract?.error, 'rdk.observability.problem.v1');
   assert.equal(capabilities.data.contract?.errorShape?.retryable, false);
   assert.equal(capabilities.data.contract?.errorShape?.requestId, 'optional_correlation_id');
+  assert.equal(capabilities.data.persistence?.mode, 'process-memory-cache');
+  assert.equal(capabilities.data.persistence?.authoritative, 'process-cache');
+  assert.equal(capabilities.data.persistence?.degraded, true);
+  assert.equal(capabilities.data.persistence?.limits?.maxRuns, 2_000);
+  assert.equal(capabilities.data.panelRegistry?.schema, 'rdk.observability.panel-registry.v1');
+  assert.equal(capabilities.data.panelRegistry?.specVersion, '1.0.0');
+  assert.ok(capabilities.data.panelRegistry?.renderers?.some((item) => item.kind === 'topology'));
+  assert.ok(capabilities.data.panelRegistry?.dataSources?.some((item) => item.id === 'traces'));
+
+  const openapi = await (await fetch(`${baseUrl}/api/v1/ecosystem/openapi.json`)).json() as {
+    openapi: string;
+    info: { version: string };
+    paths: Record<string, unknown>;
+  };
+  assert.equal(openapi.openapi, '3.1.0');
+  assert.equal(openapi.info.version, '1.0.0');
+  assert.ok(openapi.paths['/v1/traces']);
+  assert.ok(openapi.paths['/api/v1/observability/catalog']);
+  assert.ok(openapi.paths['/api/v1/observability/runs/{runId}/scores']);
+  assert.ok(openapi.paths['/api/v1/observability/runs/{runId}/spans:batch']);
 });
 
 test('accepts OTLP/HTTP protobuf and standard OTLP/gRPC traces and metrics', async () => {

@@ -20,6 +20,19 @@ d-obs 把 AI 观测数据收敛到 OpenTelemetry OTLP。应用可以使用 HTTP 
 | Prometheus scrape | `GET /metrics` | 生产默认需要 `RDK_OBSERVABILITY_METRICS_TOKEN`；开发/迁移环境可显式关闭强制认证 |
 | 端侧 Prometheus scrape | `GET /edge-metrics` | 默认仅允许回环抓取；配置 `RDK_OBSERVABILITY_EDGE_METRICS_TOKEN` 后使用专用 Bearer/API key；仅输出设备身份、心跳和最新数值样本 |
 | 能力发现 | `GET /api/v1/ecosystem/capabilities` | 无需鉴权 |
+| 机器可读 OpenAPI | `GET /api/v1/ecosystem/openapi.json` | 无需鉴权；与能力版本同步 |
+
+能力发现响应还会返回三类接入元数据：`persistence` 说明公共运行索引当前是否为
+进程级有界缓存，`panelRegistry` 描述内置可视化渲染器和数据源，`contract.openapiUrl`
+指向可供 SDK 生成器消费的 OpenAPI 3.1 文档。接入方应先读取能力，再按返回的协议、
+限制和鉴权方式初始化 exporter；这样同一 SDK 可以兼容本地降级部署和生产部署。
+
+可视化插件使用 `rdk.observability.panel-registry.v1`。面板定义至少包含
+`version/kind/query/transform/viz/interactions/drilldown/refresh`，未知版本或图表类型
+会安全降级为 `stat` 面板；外部数据源可以先在自己的插件层注册 renderer/data source，
+再根据能力摘要决定是否启用。平台当前内置 line、bar、stat、table、heatmap、topology、
+flamegraph、logs、trace 九类 renderer，以及 metrics、logs、traces、events、topology
+五类 data source。
 
 配置写入 token：
 
