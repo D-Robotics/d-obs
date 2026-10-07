@@ -17,14 +17,33 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run build
+      - name: Dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Deployment preflight
+        env:
+          RDK_ALERT_STATE_PATH: ${{ runner.temp }}/d-obs-state.json
+        run: npm run doctor
+      - name: TypeScript test coverage smoke
+        run: node --import tsx --test --experimental-test-coverage "server/**/*.test.ts"
       # 冒烟：无数据库环境也能正常启动并响应（优雅降级契约）。
       - name: Boot smoke test (no database)
         run: |
-          npx tsx server/main.ts &
+          set -eu
+          npx tsx server/main.ts > /tmp/d-obs-ci-server.log 2>&1 &
           server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           for i in $(seq 1 20); do
-            if curl -sf http://127.0.0.1:47110/ops-observability > /dev/null; then break; fi
+            if curl -sf http://127.0.0.1:47110/healthz > /dev/null; then break; fi
             sleep 1
           done
+          curl -fsS http://127.0.0.1:47110/healthz | grep -q '"ok":true'
+          ready_status="$(curl -sS -o /tmp/d-obs-ci-ready.json -w '%{http_code}' http://127.0.0.1:47110/readyz)"
+          case "$ready_status" in
+            200|503) ;;
+            *) echo "unexpected /readyz status: $ready_status"; cat /tmp/d-obs-ci-ready.json; exit 1 ;;
+          esac
+          grep -Eq '"status":"(ready|degraded)"|"reason":"database_not_configured"' /tmp/d-obs-ci-ready.json
+          curl -fsS http://127.0.0.1:47110/api/v1/ecosystem/capabilities | grep -q 'capabilities'
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:47110/api/v1/observability/runs)" = "401"
           curl -sf -o /dev/null http://127.0.0.1:47110/ops-observability
-          kill $server_pid

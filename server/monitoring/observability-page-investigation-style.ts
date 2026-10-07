@@ -19,6 +19,7 @@ export const OPS_OBSERVABILITY_INVESTIGATION_STYLE = `
     .trend-head h3{margin:0;font-size:13px}.trend-head p{margin:2px 0 0;color:var(--muted);font-size:10px}.trend-head .right{margin-left:auto;text-align:right;color:var(--muted);font-size:9px}
     .trend-chart{width:100%;height:174px;display:block;border-radius:7px;background:linear-gradient(180deg,var(--c113),var(--c111))}
     .trend-legend{display:flex;gap:13px;flex-wrap:wrap;margin-top:10px;color:var(--muted);font-size:9px}
+    .trend-data-table{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}.trend-data-table>summary{display:inline-flex;align-items:center;min-height:30px;cursor:pointer;color:var(--green);font-size:10px;font-weight:650}.trend-data-table>summary:focus-visible{outline:2px solid var(--green);outline-offset:2px}.trend-data-table .data-table{margin-top:7px;display:block;max-height:260px;overflow:auto;font-size:10px}.trend-data-table .data-table th,.trend-data-table .data-table td{padding:6px 8px;font-size:10px}.trend-data-table .data-table th{position:sticky;top:0;z-index:1}
     .trend-legend span{display:inline-flex;align-items:center;gap:5px}.trend-legend i{width:7px;height:7px;border-radius:50%}
     .investigation-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(280px,.75fr);gap:12px;align-items:start}
     .evidence-panel,.investigation-side{padding:16px}

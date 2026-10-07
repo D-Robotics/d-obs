@@ -25,6 +25,7 @@ export type DeviceRecord = {
   tenantId: string;
   model: string;
   firmware: string;
+  agentVersion: string;
   labels: Record<string, unknown>;
   status: 'active' | 'disabled';
   createdAt: string;
@@ -62,6 +63,7 @@ create table if not exists public.studio_devices (
   tenant_id text not null default 'platform',
   model text not null default '',
   firmware text not null default '',
+  agent_version text not null default '',
   labels jsonb not null default '{}'::jsonb,
   status text not null default 'active' check (status in ('active', 'disabled')),
   created_at timestamptz not null default now(),
@@ -100,6 +102,8 @@ async function ensureSchema(p: Pool): Promise<void> {
     });
   }
   await schemaReady;
+  // Upgrade devices created before agent version reporting was introduced.
+  await p.query(`alter table public.studio_devices add column if not exists agent_version text not null default ''`);
 }
 
 function offlineMinutes(): number {
@@ -165,6 +169,7 @@ function rowToDevice(row: Record<string, unknown>): DeviceRecord {
     tenantId: String(row.tenant_id ?? 'platform'),
     model: String(row.model ?? ''),
     firmware: String(row.firmware ?? ''),
+    agentVersion: String(row.agent_version ?? ''),
     labels: parseLabels(row.labels),
     status: row.status === 'disabled' ? 'disabled' : 'active',
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at ?? ''),
@@ -288,6 +293,7 @@ export type HeartbeatSample = { ts: number; metrics: Record<string, number> };
 export type DeviceHeartbeat = {
   model: string;
   firmware: string;
+  agentVersion: string;
   samples: HeartbeatSample[];
 };
 
@@ -322,6 +328,7 @@ export function parseDeviceHeartbeat(value: unknown): DeviceHeartbeat | null {
   return {
     model: cleanText(input.model, 80),
     firmware: cleanText(input.firmware, 80),
+    agentVersion: cleanText(input.agentVersion, 40),
     samples,
   };
 }
@@ -340,9 +347,10 @@ export async function recordDeviceHeartbeat(
      set last_seen_at = now(),
          last_ip = $2,
          model = case when $3 <> '' then $3 else model end,
-         firmware = case when $4 <> '' then $4 else firmware end
+         firmware = case when $4 <> '' then $4 else firmware end,
+         agent_version = case when $5 <> '' then $5 else agent_version end
      where device_id = $1`,
-    [cleanText(deviceId, 64), cleanText(clientIp, 64), heartbeat.model, heartbeat.firmware],
+    [cleanText(deviceId, 64), cleanText(clientIp, 64), heartbeat.model, heartbeat.firmware, heartbeat.agentVersion],
   );
   if (tokenCache.size > 4_096) tokenCache.clear();
   let accepted = 0;
@@ -544,6 +552,15 @@ export async function createDeviceCommand(input: {
 export async function claimDeviceCommands(deviceId: string, limit = 10): Promise<DeviceCommandRecord[]> {
   const p = await pool();
   await ensureSchema(p);
+  // A device can disappear after claiming a command. Requeue stale deliveries
+  // so a transient reboot does not leave fleet actions stuck forever.
+  await p.query(
+    `update public.studio_device_commands
+        set status = 'pending', delivered_at = null
+      where device_id = $1 and status = 'delivered'
+        and delivered_at < now() - interval '10 minutes'`,
+    [deviceId],
+  );
   const claimable = await p.query(
     `update public.studio_device_commands
      set status = 'delivered', delivered_at = now()

@@ -19,6 +19,7 @@ import type {
 import {
   loadPublicObservabilityQuality,
   persistPublicObservabilityFeedback,
+  persistPublicObservabilityEvaluation,
   persistPublicObservabilityScore,
 } from './public-observability-quality-store.js';
 
@@ -55,6 +56,7 @@ export interface PublicObservabilityRunRecord {
   errorSpanCount: number;
   scoreCount: number;
   feedbackCount: number;
+  evaluationCount: number;
   idempotencyKey?: string;
 }
 
@@ -83,6 +85,29 @@ export interface PublicObservabilityScoreRecord {
   dataType: string;
   source: string;
   comment?: string;
+  evaluator?: string;
+  dataset?: string;
+  modelVersion?: string;
+  promptVersion?: string;
+  threshold?: number;
+  status?: 'passed' | 'failed' | 'unrated';
+  metadata?: Record<string, PublicObservabilityScalar>;
+  createdAt: number;
+}
+
+export interface PublicObservabilityEvaluationRecord {
+  evaluationId: string;
+  runId: string;
+  owner: string;
+  name: string;
+  value: number;
+  evaluator: string;
+  dataset?: string;
+  modelVersion?: string;
+  promptVersion?: string;
+  threshold?: number;
+  status: 'passed' | 'failed' | 'unrated';
+  metadata: Record<string, PublicObservabilityScalar>;
   createdAt: number;
 }
 
@@ -137,6 +162,25 @@ export interface PublicObservabilityScoreInput {
   dataType?: string;
   source?: string;
   comment?: string;
+  evaluator?: string;
+  dataset?: string;
+  modelVersion?: string;
+  promptVersion?: string;
+  threshold?: number;
+  metadata?: Record<string, PublicObservabilityScalar>;
+}
+
+export interface PublicObservabilityEvaluationInput {
+  runId: string;
+  owner: string;
+  name: string;
+  value: number;
+  evaluator: string;
+  dataset?: string;
+  modelVersion?: string;
+  promptVersion?: string;
+  threshold?: number;
+  metadata?: Record<string, PublicObservabilityScalar>;
 }
 
 export interface PublicObservabilityFeedbackInput {
@@ -157,10 +201,31 @@ export class PublicObservabilityConflictError extends Error {
   }
 }
 
+/**
+ * A run's span budget is cumulative, rather than merely a per-request limit.
+ * Callers can trim or batch their exporter when this error is returned;
+ * retrying the same run cannot add more spans once the budget is exhausted.
+ */
+export class PublicObservabilityQuotaError extends Error {
+  readonly code = 'observability_run_span_quota_exceeded';
+  readonly status = 429;
+  readonly retryable = false;
+
+  constructor(
+    readonly limit: number,
+    readonly current: number,
+    readonly requested: number,
+  ) {
+    super(`observability run span quota exceeded (limit=${limit}, current=${current}, requested=${requested})`);
+    this.name = 'PublicObservabilityQuotaError';
+  }
+}
+
 type StoredRun = PublicObservabilityRunRecord & {
   spans: Map<string, PublicObservabilitySpanRecord>;
   scores: PublicObservabilityScoreRecord[];
   feedback: PublicObservabilityFeedbackRecord[];
+  evaluations: PublicObservabilityEvaluationRecord[];
 };
 
 type StoredObjectProfile = PublicObservabilityObjectProfile & {
@@ -215,6 +280,7 @@ const MAX_RUNS = 2_000;
 const MAX_SPANS_PER_RUN = 256;
 const MAX_SCORES_PER_RUN = 100;
 const MAX_FEEDBACK_PER_RUN = 100;
+const MAX_EVALUATIONS_PER_RUN = 100;
 const MAX_ATTRIBUTES = 24;
 const MAX_TEXT = 160;
 const MAX_LONG_TEXT = 1_000;
@@ -559,10 +625,12 @@ class PublicObservabilityStore {
       errorSpanCount: 0,
       scoreCount: 0,
       feedbackCount: 0,
+      evaluationCount: 0,
       ...(input.idempotencyKey ? { idempotencyKey: cleanText(input.idempotencyKey, 256) } : {}),
       spans: new Map<string, PublicObservabilitySpanRecord>(),
       scores: [],
       feedback: [],
+      evaluations: [],
     };
     this.upsertStoredRun(record);
     if (record.idempotencyKey) this.idempotency.set(`${keyId}:${record.idempotencyKey}`, record.runId);
@@ -703,8 +771,10 @@ class PublicObservabilityStore {
       const quality = await loadPublicObservabilityQuality({ owner: run.owner, runId: run.runId });
       if (quality.scores.length) run.scores = quality.scores.slice(-MAX_SCORES_PER_RUN);
       if (quality.feedback.length) run.feedback = quality.feedback.slice(-MAX_FEEDBACK_PER_RUN);
+      if (quality.evaluations.length) run.evaluations = quality.evaluations.slice(-MAX_EVALUATIONS_PER_RUN);
       run.scoreCount = run.scores.length;
       run.feedbackCount = run.feedback.length;
+      run.evaluationCount = run.evaluations.length;
     } catch {
       // Quality data is additive; a database outage must not hide the trace.
     }
@@ -827,7 +897,20 @@ class PublicObservabilityStore {
         attributes: normalizeScalarMap(internal.attributes),
       });
     }
-    if (!normalizedSpans.length && input.status) {
+    // Span IDs are the idempotency key for a run. Deduplicate within a batch
+    // before applying the cumulative run budget so retries do not consume
+    // quota, while genuinely new spans cannot grow the run past the limit.
+    const uniqueSpans = [...new Map(
+      normalizedSpans.map((span) => [`${span.traceId}:${span.spanId}`, span] as const),
+    ).values()];
+    const newSpanCount = uniqueSpans.reduce(
+      (count, span) => count + (run!.spans.has(`${span.traceId}:${span.spanId}`) ? 0 : 1),
+      0,
+    );
+    if (run!.spans.size + newSpanCount > MAX_SPANS_PER_RUN) {
+      throw new PublicObservabilityQuotaError(MAX_SPANS_PER_RUN, run!.spans.size, newSpanCount);
+    }
+    if (!uniqueSpans.length && input.status) {
       run.status = pickRunStatus(run.status, input.status);
       if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
         run.completedAt = input.completedAt ?? Date.now();
@@ -835,7 +918,7 @@ class PublicObservabilityStore {
       run.updatedAt = Date.now();
       return { run: this.publicRun(run), spans: [] };
     }
-    await this.persistAndStoreSpans(run, normalizedSpans.map((span) => this.toInternalSpan(span)).filter((span): span is StudioTraceSpan => Boolean(span)));
+    await this.persistAndStoreSpans(run, uniqueSpans.map((span) => this.toInternalSpan(span)).filter((span): span is StudioTraceSpan => Boolean(span)));
     this.updateRunStats(run);
     if (input.status) {
       run.status = pickRunStatus(run.status, input.status);
@@ -846,7 +929,7 @@ class PublicObservabilityStore {
       run.status = 'running';
     }
     run.updatedAt = Date.now();
-    return { run: this.publicRun(run), spans: normalizedSpans };
+    return { run: this.publicRun(run), spans: uniqueSpans };
   }
 
   private matchingRuns(owner: string, options: PublicObservabilityRunFilter = {}): StoredRun[] {
@@ -1283,6 +1366,9 @@ class PublicObservabilityStore {
     let feedbackCount = 0;
     let positiveFeedbackCount = 0;
     const scoreTotals = new Map<string, { total: number; count: number }>();
+    const evaluationTotals = new Map<string, { total: number; count: number }>();
+    let evaluationPassedCount = 0;
+    let evaluationCount = 0;
     for (const run of runs) {
       feedbackCount += run.feedbackCount;
       positiveFeedbackCount += run.feedback.filter((item) => item.kind === 'up').length;
@@ -1291,6 +1377,14 @@ class PublicObservabilityStore {
         current.total += score.value;
         current.count += 1;
         scoreTotals.set(score.name, current);
+      }
+      evaluationCount += run.evaluationCount;
+      evaluationPassedCount += run.evaluations.filter((item) => item.status === 'passed').length;
+      for (const evaluation of run.evaluations) {
+        const current = evaluationTotals.get(evaluation.name) ?? { total: 0, count: 0 };
+        current.total += evaluation.value;
+        current.count += 1;
+        evaluationTotals.set(evaluation.name, current);
       }
       for (const span of run.spans.values()) {
         if (span.kind === 'generation') {
@@ -1335,6 +1429,9 @@ class PublicObservabilityStore {
       quality: {
         scoreCount: [...scoreTotals.values()].reduce((sum, item) => sum + item.count, 0),
         averageScores: Object.fromEntries([...scoreTotals.entries()].map(([name, item]) => [name, item.total / item.count])),
+        evaluationCount,
+        averageEvaluations: Object.fromEntries([...evaluationTotals.entries()].map(([name, item]) => [name, item.total / item.count])),
+        evaluationPassRate: evaluationCount ? evaluationPassedCount / evaluationCount : null,
         feedbackCount,
         positiveFeedbackRate: feedbackCount ? positiveFeedbackCount / feedbackCount : null,
       },
@@ -1383,6 +1480,7 @@ class PublicObservabilityStore {
     record.errorSpanCount = trace.filter((span) => span.status === 'error').length;
     record.scoreCount = 0;
     record.feedbackCount = 0;
+    record.evaluationCount = 0;
     record.spans = new Map(trace.map((span) => [`${span.traceId}:${span.spanId}`, span] as const));
     this.upsertStoredRun(record);
     await this.hydrateQuality(record);
@@ -1432,6 +1530,7 @@ class PublicObservabilityStore {
       record.errorSpanCount = publicSpans.filter((span) => span.status === 'error').length;
       record.scoreCount = 0;
       record.feedbackCount = 0;
+      record.evaluationCount = 0;
       record.firstSpanAt = publicSpans[0]?.startTime;
       record.lastSpanAt = publicSpans.at(-1)?.endTime;
       record.createdAt = publicSpans[0]?.startTime ?? Date.now();
@@ -1490,6 +1589,15 @@ class PublicObservabilityStore {
       dataType: cleanText(input.dataType, 32) || 'numeric',
       source: cleanText(input.source, 64) || 'manual',
       ...(cleanText(input.comment, 1_000) ? { comment: cleanText(input.comment, 1_000) } : {}),
+      evaluator: cleanText(input.evaluator, 120) || 'manual',
+      ...(cleanText(input.dataset, 160) ? { dataset: cleanText(input.dataset, 160) } : {}),
+      ...(cleanText(input.modelVersion, 120) ? { modelVersion: cleanText(input.modelVersion, 120) } : {}),
+      ...(cleanText(input.promptVersion, 120) ? { promptVersion: cleanText(input.promptVersion, 120) } : {}),
+      ...(Number.isFinite(input.threshold) ? { threshold: Number(input.threshold) } : {}),
+      status: Number.isFinite(input.threshold)
+        ? (input.value >= Number(input.threshold) ? 'passed' : 'failed')
+        : 'unrated',
+      metadata: normalizeScalarMap(input.metadata, new Set(['model', 'provider', 'route', 'experiment', 'variant', 'groundTruthRef'])),
       createdAt: Date.now(),
     };
     run.scores = [...run.scores, score].slice(-MAX_SCORES_PER_RUN);
@@ -1497,6 +1605,42 @@ class PublicObservabilityStore {
     run.updatedAt = score.createdAt;
     await persistPublicObservabilityScore(score).catch(() => undefined);
     return score;
+  }
+
+  async recordEvaluation(input: PublicObservabilityEvaluationInput): Promise<PublicObservabilityEvaluationRecord> {
+    const run = this.runs.get(cleanText(input.runId, 200));
+    if (!run) throw new Error('run not found');
+    if (!run.owner || run.owner !== cleanText(input.owner, 256)) throw new Error('run not found');
+    const value = Number(input.value);
+    if (!Number.isFinite(value)) throw new Error('invalid evaluation');
+    const threshold = Number.isFinite(input.threshold) ? Number(input.threshold) : undefined;
+    const evaluation: PublicObservabilityEvaluationRecord = {
+      evaluationId: `eval_${crypto.randomUUID().replace(/-/g, '')}`,
+      runId: run.runId,
+      owner: run.owner,
+      name: cleanText(input.name, 120) || 'evaluation',
+      value,
+      evaluator: cleanText(input.evaluator, 120) || 'manual',
+      ...(cleanText(input.dataset, 160) ? { dataset: cleanText(input.dataset, 160) } : {}),
+      ...(cleanText(input.modelVersion, 120) ? { modelVersion: cleanText(input.modelVersion, 120) } : {}),
+      ...(cleanText(input.promptVersion, 120) ? { promptVersion: cleanText(input.promptVersion, 120) } : {}),
+      ...(threshold !== undefined ? { threshold } : {}),
+      status: threshold === undefined ? 'unrated' : value >= threshold ? 'passed' : 'failed',
+      metadata: normalizeScalarMap(input.metadata, new Set(['model', 'provider', 'route', 'experiment', 'variant', 'groundTruthRef'])),
+      createdAt: Date.now(),
+    };
+    run.evaluations = [...run.evaluations, evaluation].slice(-MAX_EVALUATIONS_PER_RUN);
+    run.evaluationCount = run.evaluations.length;
+    run.updatedAt = evaluation.createdAt;
+    await persistPublicObservabilityEvaluation(evaluation).catch(() => undefined);
+    return evaluation;
+  }
+
+  async getEvaluations(owner: string, runId: string): Promise<PublicObservabilityEvaluationRecord[]> {
+    const run = this.runs.get(cleanText(runId, 200));
+    if (!run || run.owner !== cleanText(owner, 256)) return [];
+    if (!run.evaluations.length) await this.hydrateQuality(run);
+    return run.evaluations.slice(-MAX_EVALUATIONS_PER_RUN).map((item) => ({ ...item, metadata: { ...item.metadata } }));
   }
 
   async recordFeedback(input: PublicObservabilityFeedbackInput): Promise<PublicObservabilityFeedbackRecord> {
@@ -1563,6 +1707,7 @@ class PublicObservabilityStore {
       errorSpanCount: run.errorSpanCount,
       scoreCount: run.scoreCount,
       feedbackCount: run.feedbackCount,
+      evaluationCount: run.evaluationCount,
       ...(run.idempotencyKey ? { idempotencyKey: run.idempotencyKey } : {}),
     };
   }

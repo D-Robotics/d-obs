@@ -63,6 +63,18 @@ test('页面明确区分云侧与端侧数据域', () => {
   assert.match(html, /domain-switcher/);
 });
 
+test('Command Palette 是真正的模态：背景 inert、焦点可循环且搜索文案不夸大能力', () => {
+  const html = OPS_OBSERVABILITY_HTML;
+  assert.match(html, /function setPaletteInert\(inert\)/);
+  assert.match(html, /node\.inert=true/);
+  assert.match(html, /function commandPaletteFocusable\(\)/);
+  assert.match(html, /function commandPaletteContains\(node,palette\)/);
+  assert.match(html, /ensureNavigationLabels\(\)/);
+  assert.match(html, /搜索工作台模块/);
+  assert.doesNotMatch(html, /指标、事故、Trace、SLO 或任意模块/);
+  assert.doesNotMatch(html, /placeholder="搜索事故、告警、Trace、SLO…"/);
+});
+
 test('页面脚本模板字面量里没有会被吃掉的单反斜杠正则转义', async () => {
   // 页面 JS 全部写在 TS 模板字面量里，`\s` / `\.` / `\+` 这类**单反斜杠**会被模板
   // 字面量当转义吃掉（`\s`→`s`、`\.`→`.`），正则悄悄失效且不报错。真实事故：

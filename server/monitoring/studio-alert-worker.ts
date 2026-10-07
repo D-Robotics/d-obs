@@ -98,6 +98,7 @@ type Pool = {
 };
 
 import { collectNorthStarObservations } from './north-star-metrics.js';
+import { acquireWorkerLease } from './worker-lease.js';
 import {
   reconcileAlertState,
   type AlertObservation,
@@ -185,9 +186,25 @@ async function createPool(): Promise<Pool> {
   const connectionString = String(process.env.RDK_CHAT_CREDITS_DB_URL ?? '').trim();
   if (!connectionString) throw new Error('RDK_CHAT_CREDITS_DB_URL 未配置');
   const pgMod = (await import('pg' as string)) as {
-    default: { Pool: new (cfg: { connectionString: string; max?: number }) => Pool };
+    default: {
+      Pool: new (cfg: {
+        connectionString: string;
+        max?: number;
+        connectionTimeoutMillis?: number;
+        idleTimeoutMillis?: number;
+        statement_timeout?: number;
+        application_name?: string;
+      }) => Pool;
+    };
   };
-  return new pgMod.default.Pool({ connectionString, max: 2 });
+  return new pgMod.default.Pool({
+    connectionString,
+    max: 2,
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 30_000,
+    statement_timeout: 15_000,
+    application_name: 'd-obs-alert-worker',
+  });
 }
 
 async function probeHttp(
@@ -1149,7 +1166,7 @@ async function collectSyntheticObservations(
   ];
 }
 
-async function runWorker(): Promise<void> {
+async function runWorkerCycle(): Promise<void> {
   void registerPlatformObjects().catch(() => undefined);
   const config = await loadAlertConfig();
   if (!config.global.enabled) {
@@ -1568,6 +1585,19 @@ async function runWorker(): Promise<void> {
   console.log(
     `[alert-worker] checks=${observations.length} active=${active} transitions=${reconciled.transitions.length}`,
   );
+}
+
+async function runWorker(): Promise<void> {
+  const lease = await acquireWorkerLease();
+  if (!lease.acquired) {
+    console.log('[alert-worker] another evaluator holds the lease; skipping this cycle');
+    return;
+  }
+  try {
+    await runWorkerCycle();
+  } finally {
+    await lease.release();
+  }
 }
 
 const invokedAsScript = (() => {

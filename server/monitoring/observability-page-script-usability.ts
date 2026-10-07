@@ -45,12 +45,17 @@ export const OPS_OBSERVABILITY_SCRIPT_USABILITY = `
       // Some production releases do not yet expose the optional object registry
       // endpoint. Do not leave operators staring at an infinite spinner when
       // the core alert overview and incident workbench are already healthy.
+      const scheduleInterval=typeof window.setInterval==='function'?window.setInterval.bind(window):setInterval;
+      const scheduleTimeout=typeof window.setTimeout==='function'?window.setTimeout.bind(window):setTimeout;
+      const cancelInterval=typeof window.clearInterval==='function'?window.clearInterval.bind(window):clearInterval;
+      let objectFallbackTimer=0;
       function renderUnavailableObjectRegistry(){
         const root=$('objectsContent');if(!root)return;
         const loading=root.querySelector('.empty');
-        if(!loading||loading.textContent!=='对象注册表正在加载…'||root.querySelector('[data-object-fallback]'))return;
+        if(!loading||loading.textContent!=='对象注册表正在加载…'||root.querySelector('[data-object-fallback]')){if(objectFallbackTimer){cancelInterval(objectFallbackTimer);objectFallbackTimer=0}return;}
         loading.textContent='对象注册表暂不可用；告警策略和事故工作台仍可用，请稍后重试。';
         const retry=add(root,'button','btn','重试对象');retry.type='button';retry.dataset.objectFallback='true';retry.addEventListener('click',()=>loadAll(true));
       }
-      setInterval(renderUnavailableObjectRegistry,1500);
+      objectFallbackTimer=scheduleInterval(renderUnavailableObjectRegistry,1500);
+      scheduleTimeout(()=>{if(objectFallbackTimer){cancelInterval(objectFallbackTimer);objectFallbackTimer=0}},30000);
 `;

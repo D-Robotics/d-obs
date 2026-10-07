@@ -57,6 +57,23 @@ export interface PublicObservabilityScoreInput {
   dataType?: string;
   source?: string;
   comment?: string;
+  evaluator?: string;
+  dataset?: string;
+  modelVersion?: string;
+  promptVersion?: string;
+  threshold?: number;
+  metadata?: Record<string, PublicObservabilityScalar>;
+}
+
+export interface PublicObservabilityEvaluationInput {
+  name: string;
+  value: number;
+  evaluator: string;
+  dataset?: string;
+  modelVersion?: string;
+  promptVersion?: string;
+  threshold?: number;
+  metadata?: Record<string, PublicObservabilityScalar>;
 }
 
 export interface PublicObservabilityFeedbackInput {
@@ -93,6 +110,7 @@ export interface PublicObservabilityRunRecord {
   errorSpanCount: number;
   scoreCount: number;
   feedbackCount: number;
+  evaluationCount: number;
   idempotencyKey?: string;
 }
 
@@ -186,6 +204,7 @@ export interface PublicObservabilityObservationContext {
   run: PublicObservabilityRunRecord;
   span<T>(input: PublicObservabilityObservationSpanInput, work: () => Promise<T> | T): Promise<T>;
   recordScore(input: PublicObservabilityScoreInput): Promise<PublicObservabilityScoreRecord>;
+  recordEvaluation(input: PublicObservabilityEvaluationInput): Promise<PublicObservabilityEvaluationRecord>;
   recordFeedback(input: PublicObservabilityFeedbackInput): Promise<PublicObservabilityFeedbackRecord>;
 }
 
@@ -233,6 +252,9 @@ export interface PublicObservabilitySummary {
   quality: {
     scoreCount: number;
     averageScores: Record<string, number>;
+    evaluationCount: number;
+    averageEvaluations: Record<string, number>;
+    evaluationPassRate: number | null;
     feedbackCount: number;
     positiveFeedbackRate: number | null;
   };
@@ -262,6 +284,28 @@ export interface PublicObservabilityScoreRecord {
   dataType: string;
   source: string;
   comment?: string;
+  evaluator?: string;
+  dataset?: string;
+  modelVersion?: string;
+  promptVersion?: string;
+  threshold?: number;
+  status?: 'passed' | 'failed' | 'unrated';
+  metadata?: Record<string, PublicObservabilityScalar>;
+  createdAt: number;
+}
+
+export interface PublicObservabilityEvaluationRecord {
+  evaluationId: string;
+  runId: string;
+  name: string;
+  value: number;
+  evaluator: string;
+  dataset?: string;
+  modelVersion?: string;
+  promptVersion?: string;
+  threshold?: number;
+  status: 'passed' | 'failed' | 'unrated';
+  metadata: Record<string, PublicObservabilityScalar>;
   createdAt: number;
 }
 
@@ -324,6 +368,10 @@ export interface PublicObservabilityClientOptions {
   authorization: string | (() => string | Promise<string>);
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** 最大重试次数（不含首次请求）；仅对可重试且具备幂等语义的请求生效。 */
+  maxRetries?: number;
+  /** 重试退避基数，默认 250ms；会叠加少量随机抖动。 */
+  retryBaseDelayMs?: number;
   headers?: HeadersInitLike;
 }
 
@@ -339,7 +387,9 @@ export interface PublicObservabilityClient {
   updateObject(objectId: string, input: PublicObservabilityObjectUpdateInput): Promise<PublicObservabilityObjectDetail>;
   getRun(runId: string): Promise<PublicObservabilityRunRecord>;
   getTrace(runId: string, options?: { limit?: number }): Promise<PublicObservabilityTraceResult>;
+  getEvaluations(runId: string): Promise<PublicObservabilityEvaluationRecord[]>;
   recordScore(runId: string, input: PublicObservabilityScoreInput): Promise<PublicObservabilityScoreRecord>;
+  recordEvaluation(runId: string, input: PublicObservabilityEvaluationInput): Promise<PublicObservabilityEvaluationRecord>;
   recordFeedback(runId: string, input: PublicObservabilityFeedbackInput): Promise<PublicObservabilityFeedbackRecord>;
   observeRun<T>(
     input: PublicObservabilityObserveInput,
@@ -359,6 +409,7 @@ export class PublicObservabilityApiError extends Error {
   readonly details?: Record<string, unknown>;
   readonly url: string;
   readonly method: string;
+  readonly retryAfterMs?: number;
   readonly responseBody?: string;
   readonly responseJson?: unknown;
 
@@ -367,6 +418,7 @@ export class PublicObservabilityApiError extends Error {
     code: string;
     url: string;
     method: string;
+    retryAfterMs?: number;
     retryable?: boolean;
     safeForUser?: boolean;
     details?: Record<string, unknown>;
@@ -382,6 +434,7 @@ export class PublicObservabilityApiError extends Error {
     this.details = options.details;
     this.url = options.url;
     this.method = options.method;
+    this.retryAfterMs = options.retryAfterMs;
     this.responseBody = options.responseBody;
     this.responseJson = options.responseJson;
   }
@@ -626,6 +679,16 @@ function parseErrorFields(payload: unknown): {
   return { code, message, retryable, safeForUser, details };
 }
 
+function retryAfterMsFromResponse(response: Response): number | undefined {
+  const raw = response.headers.get('retry-after');
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(30_000, Math.ceil(seconds * 1_000));
+  const date = Date.parse(raw);
+  if (!Number.isFinite(date)) return undefined;
+  return Math.min(30_000, Math.max(0, date - Date.now()));
+}
+
 function timeoutPromise(ms: number): { signal?: AbortSignal; clear(): void } {
   if (!Number.isFinite(ms) || ms <= 0) {
     return { clear() {} };
@@ -695,6 +758,7 @@ export async function observePublicRun<T>(
       }
     },
     recordScore: (score) => client.recordScore(created.run.runId, score),
+    recordEvaluation: (evaluation) => client.recordEvaluation(created.run.runId, evaluation),
     recordFeedback: (feedback) => client.recordFeedback(created.run.runId, feedback),
   };
   try {
@@ -762,7 +826,7 @@ export function createPublicObservabilityClient(options: PublicObservabilityClie
   const defaultHeaders = new Headers(options.headers ?? {});
   let client!: PublicObservabilityClient;
 
-  async function requestJson<T>(
+  async function requestJsonOnce<T>(
     method: string,
     path: string,
     init: { query?: Record<string, string>; body?: unknown; extraHeaders?: HeadersInitLike } = {},
@@ -817,6 +881,7 @@ export function createPublicObservabilityClient(options: PublicObservabilityClie
           method,
           responseBody: responseText || undefined,
           responseJson: parsed,
+          retryAfterMs: retryAfterMsFromResponse(response),
         });
       }
       const payload = unwrapEnvelope<T>(parsed);
@@ -847,6 +912,35 @@ export function createPublicObservabilityClient(options: PublicObservabilityClie
       throw error;
     } finally {
       timeout.clear();
+    }
+  }
+
+  async function requestJson<T>(
+    method: string,
+    path: string,
+    init: { query?: Record<string, string>; body?: unknown; extraHeaders?: HeadersInitLike } = {},
+  ): Promise<{ data: T; response: Response }> {
+    const maxRetries = Math.max(0, Math.min(5, Math.trunc(options.maxRetries ?? 2)));
+    const extraHeaders = init.extraHeaders ? new Headers(init.extraHeaders) : new Headers();
+    const idempotent = method === 'GET'
+      || method === 'HEAD'
+      || path.includes(':batch')
+      || extraHeaders.has('Idempotency-Key');
+    let attempt = 0;
+    while (true) {
+      try {
+        return await requestJsonOnce<T>(method, path, init);
+      } catch (error) {
+        const retryable = error instanceof PublicObservabilityApiError && error.retryable;
+        if (!retryable || !idempotent || attempt >= maxRetries) throw error;
+        const retryAfterMs = error instanceof PublicObservabilityApiError ? error.retryAfterMs ?? 0 : 0;
+        const base = Math.max(10, Math.min(30_000, Math.trunc(options.retryBaseDelayMs ?? 250)));
+        const exponential = Math.min(30_000, base * 2 ** attempt);
+        const jitter = Math.floor(Math.random() * Math.max(1, Math.floor(exponential * 0.25)));
+        const delayMs = Math.max(retryAfterMs, exponential + jitter);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        attempt += 1;
+      }
     }
   }
 
@@ -948,6 +1042,13 @@ export function createPublicObservabilityClient(options: PublicObservabilityClie
       );
       return data;
     },
+    async getEvaluations(runId: string): Promise<PublicObservabilityEvaluationRecord[]> {
+      const { data } = await requestJson<{ runId: string; evaluations: PublicObservabilityEvaluationRecord[] }>(
+        'GET',
+        `/api/v1/observability/runs/${encodeURIComponent(cleanText(runId, 200))}/evaluations`,
+      );
+      return data.evaluations;
+    },
     async recordScore(runId: string, input: PublicObservabilityScoreInput): Promise<PublicObservabilityScoreRecord> {
       const value = finiteNumber(input.value, 'score.value');
       const { data } = await requestJson<PublicObservabilityScoreRecord>(
@@ -960,6 +1061,33 @@ export function createPublicObservabilityClient(options: PublicObservabilityClie
             ...(input.dataType ? { dataType: cleanText(input.dataType, 32) } : {}),
             ...(input.source ? { source: cleanText(input.source, 64) } : {}),
             ...(input.comment ? { comment: cleanText(input.comment, 1_000) } : {}),
+            ...(input.evaluator ? { evaluator: cleanText(input.evaluator, 120) } : {}),
+            ...(input.dataset ? { dataset: cleanText(input.dataset, 160) } : {}),
+            ...(input.modelVersion ? { modelVersion: cleanText(input.modelVersion, 120) } : {}),
+            ...(input.promptVersion ? { promptVersion: cleanText(input.promptVersion, 120) } : {}),
+            ...(input.threshold !== undefined ? { threshold: finiteNumber(input.threshold, 'score.threshold') } : {}),
+            ...(input.metadata ? { metadata: compactScalarMap(input.metadata, 8) } : {}),
+          }),
+        },
+      );
+      return data;
+    },
+    async recordEvaluation(runId: string, input: PublicObservabilityEvaluationInput): Promise<PublicObservabilityEvaluationRecord> {
+      const value = finiteNumber(input.value, 'evaluation.value');
+      if (!cleanText(input.evaluator, 120)) throw new Error('evaluation.evaluator is required.');
+      const { data } = await requestJson<PublicObservabilityEvaluationRecord>(
+        'POST',
+        `/api/v1/observability/runs/${encodeURIComponent(cleanText(runId, 200))}/evaluations`,
+        {
+          body: compactObject({
+            name: cleanText(input.name, 120),
+            value,
+            evaluator: cleanText(input.evaluator, 120),
+            ...(input.dataset ? { dataset: cleanText(input.dataset, 160) } : {}),
+            ...(input.modelVersion ? { modelVersion: cleanText(input.modelVersion, 120) } : {}),
+            ...(input.promptVersion ? { promptVersion: cleanText(input.promptVersion, 120) } : {}),
+            ...(input.threshold !== undefined ? { threshold: finiteNumber(input.threshold, 'evaluation.threshold') } : {}),
+            ...(input.metadata ? { metadata: compactScalarMap(input.metadata, 8) } : {}),
           }),
         },
       );

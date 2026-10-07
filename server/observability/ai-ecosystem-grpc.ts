@@ -6,6 +6,7 @@ import {
   type sendUnaryData,
   type ServerUnaryCall,
 } from '@grpc/grpc-js';
+import { readFile } from 'node:fs/promises';
 import {
   ingestLogPayload,
   ingestMetricPayload,
@@ -128,17 +129,55 @@ export type AiEcosystemGrpcRuntime = {
   address: string;
 };
 
-export function startAiEcosystemGrpcServer(options: {
+function flagEnabled(value: unknown): boolean {
+  const text = String(value ?? '').trim().toLowerCase();
+  return text === '1' || text === 'true' || text === 'yes';
+}
+
+function loopbackHost(host: string): boolean {
+  const value = host.trim().toLowerCase();
+  return value === 'localhost' || value === '::1' || value === '0:0:0:0:0:0:0:1' || value === '127.0.0.1' || value.startsWith('127.');
+}
+
+async function grpcCredentials(host: string): Promise<ReturnType<typeof ServerCredentials.createInsecure>> {
+  const certPath = String(process.env.RDK_OTLP_GRPC_TLS_CERT_FILE ?? '').trim();
+  const keyPath = String(process.env.RDK_OTLP_GRPC_TLS_KEY_FILE ?? '').trim();
+  const caPath = String(process.env.RDK_OTLP_GRPC_TLS_CA_FILE ?? '').trim();
+  if (Boolean(certPath) !== Boolean(keyPath)) {
+    throw new Error('RDK_OTLP_GRPC_TLS_CERT_FILE and RDK_OTLP_GRPC_TLS_KEY_FILE must be configured together');
+  }
+  if (certPath && keyPath) {
+    const [certChain, privateKey, rootCerts] = await Promise.all([
+      readFile(certPath),
+      readFile(keyPath),
+      caPath ? readFile(caPath) : Promise.resolve(null),
+    ]);
+    const requireClientCertificate = flagEnabled(process.env.RDK_OTLP_GRPC_TLS_REQUIRE_CLIENT_CERT);
+    return ServerCredentials.createSsl(rootCerts, [{ private_key: privateKey, cert_chain: certChain }], requireClientCertificate);
+  }
+  const requireTls = flagEnabled(process.env.RDK_OTLP_GRPC_REQUIRE_TLS)
+    || (String(process.env.NODE_ENV ?? '').trim().toLowerCase() === 'production' && !loopbackHost(host));
+  if (requireTls) {
+    throw new Error('OTLP/gRPC on a non-loopback host requires TLS certificate and key files');
+  }
+  if (!loopbackHost(host)) {
+    console.warn('[d-obs] OTLP/gRPC is using plaintext on a non-loopback host; configure RDK_OTLP_GRPC_TLS_CERT_FILE and RDK_OTLP_GRPC_TLS_KEY_FILE');
+  }
+  return ServerCredentials.createInsecure();
+}
+
+export async function startAiEcosystemGrpcServer(options: {
   host?: string;
   port: number;
 }): Promise<AiEcosystemGrpcRuntime> {
   const host = options.host?.trim() || '127.0.0.1';
+  const credentials = await grpcCredentials(host);
   const server = new Server();
   server.addService(traceServiceDefinition, { Export: exportTrace });
   server.addService(metricsServiceDefinition, { Export: exportMetrics });
   server.addService(logsServiceDefinition, { Export: exportLogs });
   return new Promise((resolve, reject) => {
-    server.bindAsync(`${host}:${options.port}`, ServerCredentials.createInsecure(), (error, port) => {
+    server.bindAsync(`${host}:${options.port}`, credentials, (error, port) => {
       if (error) {
         server.forceShutdown();
         reject(error);

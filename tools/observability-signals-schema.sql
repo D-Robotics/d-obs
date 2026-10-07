@@ -60,6 +60,7 @@ create table if not exists public.studio_devices (
   tenant_id text not null default 'platform',
   model text not null default '',
   firmware text not null default '',
+  agent_version text not null default '',
   labels jsonb not null default '{}'::jsonb,
   status text not null default 'active' check (status in ('active', 'disabled')),
   created_at timestamptz not null default now(),
@@ -67,6 +68,7 @@ create table if not exists public.studio_devices (
   last_seen_at timestamptz null,
   last_ip text null
 );
+alter table public.studio_devices add column if not exists agent_version text not null default '';
 
 create table if not exists public.studio_device_samples (
   device_id text not null,
@@ -106,8 +108,22 @@ create table if not exists public.studio_public_observability_scores (
   data_type text not null,
   source text not null,
   comment text,
+  evaluator text not null default 'manual',
+  dataset text,
+  model_version text,
+  prompt_version text,
+  threshold double precision,
+  status text not null default 'unrated' check (status in ('passed', 'failed', 'unrated')),
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+alter table public.studio_public_observability_scores add column if not exists evaluator text not null default 'manual';
+alter table public.studio_public_observability_scores add column if not exists dataset text;
+alter table public.studio_public_observability_scores add column if not exists model_version text;
+alter table public.studio_public_observability_scores add column if not exists prompt_version text;
+alter table public.studio_public_observability_scores add column if not exists threshold double precision;
+alter table public.studio_public_observability_scores add column if not exists status text not null default 'unrated';
+alter table public.studio_public_observability_scores add column if not exists metadata jsonb not null default '{}'::jsonb;
 create index if not exists studio_public_observability_scores_run_idx
   on public.studio_public_observability_scores (account_scope_id, environment, run_id, created_at desc);
 
@@ -126,6 +142,26 @@ create table if not exists public.studio_public_observability_feedback (
 );
 create index if not exists studio_public_observability_feedback_run_idx
   on public.studio_public_observability_feedback (account_scope_id, environment, run_id, created_at desc);
+
+-- ===== AI 评测记录（与运行 Trace 分离，支持 evaluator/dataset/版本和质量门禁） =====
+create table if not exists public.studio_public_observability_evaluations (
+  evaluation_id text primary key,
+  account_scope_id text not null,
+  environment text not null,
+  run_id text not null,
+  name text not null,
+  value double precision not null,
+  evaluator text not null default 'manual',
+  dataset text,
+  model_version text,
+  prompt_version text,
+  threshold double precision,
+  status text not null default 'unrated' check (status in ('passed', 'failed', 'unrated')),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists studio_public_observability_evaluations_run_idx
+  on public.studio_public_observability_evaluations (account_scope_id, environment, run_id, created_at desc);
 
 -- ===== 自定义看板（面板编组 + 时间维度 + 模板导入导出） =====
 -- 取代旧 studio_obs_dashboard_panels 扁平面板表（该表不在本文件中建了）；

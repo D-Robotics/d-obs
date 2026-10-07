@@ -232,6 +232,8 @@ ops/grafana-container.sh       # 按标准参数重建容器（改镜像/环境�
   新看板统一放 `ops/grafana/dashboards/*.json`，uid 以 `rdk-` 前缀。
 - 访问模型：Grafana 本体为匿名 Viewer，公网入口由 nginx `auth_request`
   （`/_dobs_grafana_auth` → `/api/ops/grafana/auth`）统一把关；浏览器侧经
-  `/dobs/api/ops/grafana/session` 换取 12 小时 HttpOnly 门禁 cookie
-  （工作台"Grafana 大盘"链接已自动完成换取）。
+  `/dobs/api/ops/grafana/session` 换取 10 分钟 HttpOnly HMAC 门禁 cookie
+  （工作台"Grafana 大盘"链接已自动完成换取）。Cookie 是 Grafana 专用
+  opaque gate，不是 `RDK_CREDITS_ADMIN_TOKEN`；生产建议配置独立的
+  `RDK_GRAFANA_GATE_SECRET`。
 - 管理员密码在服务器 `/opt/d-obs/grafana/.admin-password`（600，不入库）。

@@ -20,6 +20,7 @@
     "start": "tsx server/main.ts",
     "worker": "tsx server/monitoring/studio-alert-worker.ts",
     "worker:check-config": "tsx server/monitoring/studio-alert-worker.ts --check-config",
+    "doctor": "node tools/d-obs-doctor.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test \"server/**/*.test.ts\"",
     "build": "tsc -p tsconfig.json --outDir dist --noEmit false && cp server/observability/otlp-trace.proto server/observability/otlp-metrics.proto server/observability/otlp-logs.proto dist/server/observability/",
@@ -34,7 +35,7 @@
     "@supabase/supabase-js": "^2.100.1",
     "express": "^4.22.2",
     "pg": "8.21.0",
-    "undici": "7.29.0",
+    "undici": "7.30.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

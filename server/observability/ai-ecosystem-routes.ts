@@ -37,6 +37,8 @@ const MAX_OTLP_SPANS = 512;
 const MAX_OTLP_METRIC_POINTS = 512;
 const MAX_OTLP_LOGS = 512;
 const MAX_LOG_BODY = 1_000;
+const OBSERVABILITY_API_VERSION = '1.0.0';
+const OBSERVABILITY_ERROR_CONTRACT = 'rdk.observability.problem.v1';
 
 /** logs 的低敏感属性白名单：与 traces 的语义映射同族，永不收 payload/凭据/URL query。 */
 const LOG_ATTRIBUTE_ALLOW = new Set([
@@ -182,6 +184,9 @@ async function principalForCredential(credential: { token: string; presented: st
   // 与匿名凭据一致（sha256(token)），身份映射在注册表，遥测数据零 PII。
   if (await resolveIngestToken(credential.token)) return publicPrincipalForToken(credential.token);
   if (configured) return null;
+  const allowDynamic = String(process.env.RDK_ALLOW_DYNAMIC_OBSERVABILITY_TOKENS ?? '').trim();
+  const production = String(process.env.NODE_ENV ?? '').trim().toLowerCase() === 'production';
+  if (production && allowDynamic !== '1' && allowDynamic.toLowerCase() !== 'true') return null;
   return publicPrincipalForToken(credential.token);
 }
 
@@ -622,7 +627,12 @@ async function ingestMetrics(req: Request, res: Response): Promise<void> {
 
 function metricsTokenMatches(req: Request): boolean {
   const expected = text(process.env.RDK_OBSERVABILITY_METRICS_TOKEN, 4_000);
-  if (!expected) return true;
+  if (!expected) {
+    const configured = String(process.env.RDK_OBSERVABILITY_REQUIRE_METRICS_TOKEN ?? '').trim();
+    const production = String(process.env.NODE_ENV ?? '').trim().toLowerCase() === 'production';
+    const required = configured ? configured === '1' || configured.toLowerCase() === 'true' : production;
+    return !required;
+  }
   const actual = text(req.header('authorization')?.replace(/^Bearer\s+/i, ''), 4_000) || text(req.header('x-api-key'), 4_000);
   return Boolean(actual) && sameSecret(actual, expected);
 }
@@ -704,6 +714,22 @@ export function createAiEcosystemRouter(): Router {
       ok: true,
       data: {
         schema: 'rdk.ai.observability.capabilities.v2',
+        apiVersion: OBSERVABILITY_API_VERSION,
+        contract: {
+          schemaUrl: '/api/v1/ecosystem/capabilities',
+          error: OBSERVABILITY_ERROR_CONTRACT,
+          errorShape: {
+            ok: false,
+            code: 'stable_machine_code',
+            error: 'human_readable_or_legacy_alias',
+            message: 'safe_human_readable_message',
+            retryable: false,
+            retryAfterSeconds: 0,
+            requestId: 'optional_correlation_id',
+          },
+          pagination: 'limit_cursor_or_limit_offset_by_endpoint',
+          compatibility: 'additive_fields_are backward_compatible; unknown fields must be ignored',
+        },
         signals: ['traces', 'metrics', 'logs'],
         protocols: ['otlp/http-json', 'otlp/http-protobuf', 'otlp/grpc', 'prometheus exposition'],
         traceEndpoints: tracePaths,
@@ -721,6 +747,34 @@ export function createAiEcosystemRouter(): Router {
         },
         prometheusEndpoint: '/metrics',
         edgeMetricsEndpoint: '/edge-metrics',
+        evaluationEndpoints: {
+          record: '/api/v1/observability/runs/:runId/evaluations',
+          list: '/api/v1/observability/runs/:runId/evaluations',
+        },
+        healthEndpoints: { liveness: '/healthz', readiness: '/readyz' },
+        limits: {
+          requestBodyBytes: 2 * 1024 * 1024,
+          maxSpansPerBatch: MAX_OTLP_SPANS,
+          maxMetricPointsPerBatch: MAX_OTLP_METRIC_POINTS,
+          maxLogsPerBatch: MAX_OTLP_LOGS,
+          maxLogBodyCharacters: MAX_LOG_BODY,
+          maxRequestsPerMinute: Number.parseInt(String(process.env.RDK_OTLP_MAX_REQUESTS_PER_MINUTE ?? '600'), 10) || 600,
+        },
+        authentication: {
+          ingestTokenEnv: 'RDK_PUBLIC_OBSERVABILITY_API_TOKEN',
+          dynamicTokens: 'development_only',
+          metricsTokenEnv: 'RDK_OBSERVABILITY_METRICS_TOKEN',
+        },
+        contentTypes: {
+          httpJson: 'application/json',
+          httpProtobuf: 'application/x-protobuf',
+          grpc: 'application/grpc',
+        },
+        versionNegotiation: {
+          header: 'x-rdk-observability-version',
+          current: OBSERVABILITY_API_VERSION,
+          policy: 'server accepts missing header and additive-compatible minor versions',
+        },
         semanticConventions: ['gen_ai.*', 'moss.*', 'rdk.*', 'openinference.*'],
         payloadPolicy: 'low-sensitivity; prompts, completions, tool arguments/results and credentials are not retained',
       },

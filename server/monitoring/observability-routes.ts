@@ -132,6 +132,11 @@ import {
   ssoRelayUpstreamCookieHeader,
 } from './sso-relay.js';
 import { clientAddress } from '../trusted-proxy.js';
+import {
+  GRAFANA_GATE_TTL_SECONDS,
+  issueGrafanaGate,
+  verifyGrafanaGate,
+} from './grafana-gate.js';
 
 const execFileAsync = promisify(execFile);
 // 共享横切件与域路由（2026-09 拆分：observability-routes.ts 保留核心编排，
@@ -158,6 +163,37 @@ import { registerModelPoolRoutes } from './observability-model-pool-routes.js';
 export { isOpsAdminRequest } from './observability-access.js';
 export { isProtectedAgentFrontendModel } from './observability-route-kit.js';
 let configWriteQueue: Promise<void> = Promise.resolve();
+
+/**
+ * The Grafana reverse proxy sends the handoff cookie back as x-admin-token in
+ * its auth_request subrequest. Accept that short-lived gate only on this
+ * dedicated route; never let it become a general operations credential.
+ */
+const requireGrafanaGateAccess: RequestHandler = (req, res, next) => {
+  const cookieGate = String(req.header('cookie') ?? '')
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith('dobs_grafana_gate='))
+    ?.slice('dobs_grafana_gate='.length);
+  let decodedCookieGate = '';
+  if (cookieGate) {
+    try {
+      decodedCookieGate = decodeURIComponent(cookieGate);
+    } catch {
+      decodedCookieGate = '';
+    }
+  }
+  const gate = req.header('x-admin-token') || decodedCookieGate;
+  if (verifyGrafanaGate(gate)) {
+    if (!isOpsObservabilityConfigured()) {
+      res.status(503).json({ ok: false, error: 'central_store_disabled' });
+      return;
+    }
+    next();
+    return;
+  }
+  requireObservabilityAccess(req, res, next);
+};
 
 export function createOpsObservabilityRouter(): Router {
   const router = Router();
@@ -317,7 +353,7 @@ export function createOpsObservabilityRouter(): Router {
 
   // Same gate for the Grafana UI: the container runs as an anonymous Viewer
   // for usability, so this subrequest is the only access boundary.
-  router.get('/api/ops/grafana/auth', requireObservabilityAccess, (_req, res) => {
+  router.get('/api/ops/grafana/auth', requireGrafanaGateAccess, (_req, res) => {
     res.status(204).end();
   });
 
@@ -325,20 +361,20 @@ export function createOpsObservabilityRouter(): Router {
   // calls with headers (localStorage token / SSO), but a top-level navigation
   // to /dobs/grafana/ cannot carry headers. An authenticated operator may
   // exchange a session for a short-lived HttpOnly gate cookie, which nginx
-  // maps back to the admin-token header inside the auth subrequest. The
+  // maps back to the dedicated gate header inside the auth subrequest. The
   // cookie only unlocks the Grafana surface (Path=/dobs, SameSite=Lax).
   router.get('/api/ops/grafana/session', requireObservabilityAccessTenantAware, (req, res) => {
-    const token = String(process.env.RDK_CREDITS_ADMIN_TOKEN ?? '').trim();
-    if (!token) {
+    const gate = issueGrafanaGate();
+    if (!gate) {
       res.status(503).json({ ok: false, error: 'central_store_disabled' });
       return;
     }
+    res.setHeader('Cache-Control', 'no-store');
     res.setHeader(
       'set-cookie',
-      `dobs_grafana_gate=${encodeURIComponent(token)}; Path=/dobs; HttpOnly; Secure; SameSite=Lax; Max-Age=43200`,
+      `dobs_grafana_gate=${encodeURIComponent(gate)}; Path=/dobs; HttpOnly; Secure; SameSite=Lax; Max-Age=${GRAFANA_GATE_TTL_SECONDS}`,
     );
     res.status(204).end();
-    void req;
   });
 
   registerSignalsRoutes(router);

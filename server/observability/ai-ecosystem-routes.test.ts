@@ -88,6 +88,20 @@ test('accepts OTLP/HTTP JSON and exposes the run through the public SDK', async 
   assert.equal(run.projectId, 'ecosystem');
   assert.equal(run.service, 'otel-agent');
   assert.equal((await client.getTrace(runId)).trace[0]?.kind, 'generation');
+
+  const evaluation = await client.recordEvaluation(runId, {
+    name: 'groundedness',
+    value: 0.92,
+    threshold: 0.85,
+    evaluator: 'offline-judge-v3',
+    dataset: 'support-regression',
+    modelVersion: 'test-model-v2',
+    promptVersion: 'answer-v1',
+    metadata: { experiment: 'candidate', variant: 'b' },
+  });
+  assert.equal(evaluation.status, 'passed');
+  assert.equal(evaluation.evaluator, 'offline-judge-v3');
+  assert.deepEqual((await client.getEvaluations(runId)).map((item) => item.evaluationId), [evaluation.evaluationId]);
 });
 
 test('accepts Phoenix/Langfuse-compatible OTLP aliases and exposes Prometheus metrics', async () => {
@@ -129,9 +143,25 @@ test('accepts Phoenix/Langfuse-compatible OTLP aliases and exposes Prometheus me
   assert.match(prometheus, /rdk_ai_otlp_spans_accepted_total\s+[1-9]/);
   assert.match(prometheus, /rdk_upstream_gen_ai_client_token_usage\{firmware="fw-2\.1\.0",model="test-model",robot="robot-01",service="metrics-agent"\}\s+20/);
 
-  const capabilities = await (await fetch(`${baseUrl}/api/v1/ecosystem/capabilities`)).json() as { data: { protocols: string[]; edgeMetricsEndpoint?: string } };
+  const capabilities = await (await fetch(`${baseUrl}/api/v1/ecosystem/capabilities`)).json() as {
+    data: {
+      protocols: string[];
+      edgeMetricsEndpoint?: string;
+      evaluationEndpoints?: { record: string; list: string };
+      apiVersion?: string;
+      contract?: { error?: string; errorShape?: { retryable?: boolean; requestId?: string } };
+    };
+  };
   assert.deepEqual(capabilities.data.protocols, ['otlp/http-json', 'otlp/http-protobuf', 'otlp/grpc', 'prometheus exposition']);
   assert.equal(capabilities.data.edgeMetricsEndpoint, '/edge-metrics');
+  assert.deepEqual(capabilities.data.evaluationEndpoints, {
+    record: '/api/v1/observability/runs/:runId/evaluations',
+    list: '/api/v1/observability/runs/:runId/evaluations',
+  });
+  assert.equal(capabilities.data.apiVersion, '1.0.0');
+  assert.equal(capabilities.data.contract?.error, 'rdk.observability.problem.v1');
+  assert.equal(capabilities.data.contract?.errorShape?.retryable, false);
+  assert.equal(capabilities.data.contract?.errorShape?.requestId, 'optional_correlation_id');
 });
 
 test('accepts OTLP/HTTP protobuf and standard OTLP/gRPC traces and metrics', async () => {

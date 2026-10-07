@@ -5,6 +5,7 @@ import {
   getPublicObservabilityStore,
   PublicObservabilityConflictError,
   type PublicObservabilityFeedbackInput,
+  type PublicObservabilityEvaluationInput,
   type PublicObservabilityRunCreateInput,
   type PublicObservabilityRunFilter,
   type PublicObservabilityScoreInput,
@@ -179,6 +180,21 @@ function publicRecord(record: Record<string, unknown>): Record<string, unknown> 
   return result;
 }
 
+function isObservabilityQuotaError(error: unknown): error is {
+  code: 'observability_run_span_quota_exceeded';
+  limit: number;
+  current: number;
+  requested: number;
+  retryable: false;
+} {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as Record<string, unknown>;
+  return value.code === 'observability_run_span_quota_exceeded'
+    && Number.isFinite(value.limit)
+    && Number.isFinite(value.current)
+    && Number.isFinite(value.requested);
+}
+
 function sendError(res: Response, error: unknown): void {
   if (error instanceof PublicObservabilityHttpError) {
     res.status(error.status).json({
@@ -186,6 +202,20 @@ function sendError(res: Response, error: unknown): void {
       error: error.code,
       code: error.code,
       retryable: error.retryable,
+    });
+    return;
+  }
+  if (isObservabilityQuotaError(error)) {
+    res.status(429).json({
+      ok: false,
+      error: error.code,
+      code: error.code,
+      retryable: false,
+      details: {
+        limit: error.limit,
+        current: error.current,
+        requested: error.requested,
+      },
     });
     return;
   }
@@ -362,14 +392,61 @@ export function createPublicObservabilityRouter(): Router {
       const body = bodyObject(req);
       const value = Number(body.value);
       if (!Number.isFinite(value) || !text(body.name, 120)) throw new PublicObservabilityHttpError(400, 'invalid_score');
+      const threshold = body.threshold === undefined || body.threshold === null ? undefined : Number(body.threshold);
+      if (threshold !== undefined && !Number.isFinite(threshold)) throw new PublicObservabilityHttpError(400, 'invalid_score_threshold');
       const score = await store.recordScore({
         ...(body as Omit<PublicObservabilityScoreInput, 'runId' | 'owner' | 'value' | 'name'>),
         runId,
         owner: identity.owner,
         name: text(body.name, 120),
         value,
+        ...(threshold !== undefined ? { threshold } : {}),
       });
       res.status(201).json({ ok: true, data: publicRecord(score as unknown as Record<string, unknown>) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post('/api/v1/observability/runs/:runId/evaluations', async (req: PublicRequest, res) => {
+    try {
+      const identity = await principal(req);
+      const runId = text(req.params.runId, 200);
+      const run = await store.getRun(identity.owner, runId);
+      if (!run) throw new PublicObservabilityHttpError(404, 'observability_run_not_found');
+      const body = bodyObject(req);
+      const value = Number(body.value);
+      const evaluator = text(body.evaluator, 120);
+      if (!Number.isFinite(value) || !text(body.name, 120) || !evaluator) {
+        throw new PublicObservabilityHttpError(400, 'invalid_evaluation');
+      }
+      const threshold = body.threshold === undefined || body.threshold === null ? undefined : Number(body.threshold);
+      if (threshold !== undefined && !Number.isFinite(threshold)) {
+        throw new PublicObservabilityHttpError(400, 'invalid_evaluation_threshold');
+      }
+      const evaluation = await store.recordEvaluation({
+        ...(body as Omit<PublicObservabilityEvaluationInput, 'runId' | 'owner' | 'value' | 'name' | 'evaluator'>),
+        runId,
+        owner: identity.owner,
+        name: text(body.name, 120),
+        evaluator,
+        value,
+        ...(threshold !== undefined ? { threshold } : {}),
+      });
+      res.status(201).json({ ok: true, data: publicRecord(evaluation as unknown as Record<string, unknown>) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get('/api/v1/observability/runs/:runId/evaluations', async (req: PublicRequest, res) => {
+    try {
+      const identity = await principal(req);
+      const runId = text(req.params.runId, 200);
+      const run = await store.getRun(identity.owner, runId);
+      if (!run) throw new PublicObservabilityHttpError(404, 'observability_run_not_found');
+      const evaluations = await store.getEvaluations(identity.owner, runId);
+      res.json({ ok: true, data: { runId, evaluations: evaluations.map((item) => publicRecord(item as unknown as Record<string, unknown>)) } });
     } catch (error) {
       sendError(res, error);
     }

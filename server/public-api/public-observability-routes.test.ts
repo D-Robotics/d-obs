@@ -59,9 +59,19 @@ test('public observability SDK can create, append, query and score a run', async
   assert.equal(appended.run.status, 'completed');
 
   await client.recordScore(runId, { name: 'quality', value: 0.9 });
+  const evaluation = await client.recordEvaluation(runId, {
+    name: 'groundedness',
+    value: 0.9,
+    threshold: 0.8,
+    evaluator: 'route-test-evaluator',
+  });
+  assert.equal(evaluation.status, 'passed');
+  assert.equal((await client.getEvaluations(runId)).length, 1);
   await client.recordFeedback(runId, { kind: 'up', comment: 'good' });
   const summary = await client.getSummary({ objectId: runId, windowMinutes: 60 });
   assert.equal(summary.quality.scoreCount, 1);
+  assert.equal(summary.quality.evaluationCount, 1);
+  assert.equal(summary.quality.evaluationPassRate, 1);
   assert.equal(summary.quality.feedbackCount, 1);
   assert.equal(summary.quality.positiveFeedbackRate, 1);
 
@@ -93,4 +103,37 @@ test('public observability auth does not swallow unrelated routes', async () => 
   const response = await fetch(`${baseUrl}/outside`);
   assert.equal(response.status, 200);
   assert.equal(await response.text(), 'ok');
+});
+
+test('public observability API enforces the cumulative span quota per run', async () => {
+  const runId = `quota-test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const client = createPublicObservabilityClient({ baseUrl, authorization: 'quota-test-token' });
+  await client.createRun({ runId, projectId: 'quota-project', environment: 'test', service: 'quota-test' });
+
+  let nextSpan = 0;
+  const append = async (count: number) => {
+    const spans = Array.from({ length: count }, () => {
+      const id = (++nextSpan).toString(16).padStart(16, '0');
+      const startTime = Date.now() + nextSpan;
+      return { spanId: id, name: `quota.span.${nextSpan}`, kind: 'custom' as const, startTime, endTime: startTime + 1 };
+    });
+    return client.appendSpans(runId, { spans });
+  };
+
+  // createRun stores one root span, so 255 additional spans fill the 256-span budget.
+  assert.equal((await append(64)).accepted, 64);
+  assert.equal((await append(64)).accepted, 64);
+  assert.equal((await append(64)).accepted, 64);
+  assert.equal((await append(63)).accepted, 63);
+
+  await assert.rejects(
+    () => append(1),
+    (error: unknown) => error instanceof PublicObservabilityApiError
+      && error.status === 429
+      && error.code === 'observability_run_span_quota_exceeded'
+      && error.retryable === false
+      && Number((error.details as Record<string, unknown> | undefined)?.limit) === 256
+      && Number((error.details as Record<string, unknown> | undefined)?.current) === 256,
+  );
+  assert.equal((await client.getTrace(runId)).trace.length, 256);
 });

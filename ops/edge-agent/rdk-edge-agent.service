@@ -12,7 +12,9 @@
 #        RDK_OBS_REPORT_URL=https://<d-obs-host>        # 必配，d-obs 基址
 #        RDK_DEVICE_TOKEN_FILE=/var/lib/rdk-edge-agent/device-token  # 必配
 #        # 可选：RDK_DEVICE_ID / RDK_EDGE_MODEL / RDK_EDGE_FIRMWARE /
-#        #       RDK_EDGE_AGENT_INTERVAL_SECONDS / RDK_EDGE_OUTBOX_PATH
+#        #       RDK_EDGE_AGENT_INTERVAL_SECONDS / RDK_EDGE_OUTBOX_PATH /
+#        #       RDK_EDGE_REQUIRE_TLS=1 / RDK_EDGE_MAX_BACKOFF_SECONDS /
+#        #       RDK_EDGE_HEARTBEAT_JITTER_SECONDS
 #   4. 安装并启动：
 #        scp ops/edge-agent/rdk-edge-agent.service root@<board>:/etc/systemd/system/
 #        ssh root@<board> systemctl daemon-reload

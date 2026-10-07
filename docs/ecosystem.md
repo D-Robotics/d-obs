@@ -14,8 +14,10 @@ d-obs 把 AI 观测数据收敛到 OpenTelemetry OTLP。应用可以使用 HTTP 
 | OTLP logs | `POST /v1/logs`（别名 `/api/public/otel/v1/logs`） | 同上 |
 | OTLP HTTP protobuf | 上述 traces/metrics/logs 路径 + `Content-Type: application/x-protobuf` | 同上 |
 | OTLP gRPC | `opentelemetry.proto.collector.{trace,metrics,logs}.v1.*Service/Export` | gRPC metadata 中的 `authorization`、`x-api-key` 或 `api-key` |
+| AI 评估写入 | `POST /api/v1/observability/runs/:runId/evaluations` | 同一 Bearer/API key；仅接收分数、评估器、数据集与版本引用 |
+| AI 评估读取 | `GET /api/v1/observability/runs/:runId/evaluations` | 同一 Bearer/API key |
 | 边缘设备心跳 | `POST /api/edge/heartbeat`（`x-rdk-device-token`） | 设备 token（工作台“边缘设备”签发） |
-| Prometheus scrape | `GET /metrics` | 默认匿名；配置 `RDK_OBSERVABILITY_METRICS_TOKEN` 后需要 Bearer/API key |
+| Prometheus scrape | `GET /metrics` | 生产默认需要 `RDK_OBSERVABILITY_METRICS_TOKEN`；开发/迁移环境可显式关闭强制认证 |
 | 端侧 Prometheus scrape | `GET /edge-metrics` | 默认仅允许回环抓取；配置 `RDK_OBSERVABILITY_EDGE_METRICS_TOKEN` 后使用专用 Bearer/API key；仅输出设备身份、心跳和最新数值样本 |
 | 能力发现 | `GET /api/v1/ecosystem/capabilities` | 无需鉴权 |
 
@@ -63,7 +65,10 @@ export OTEL_EXPORTER_OTLP_PROTOCOL='grpc'
 export OTEL_EXPORTER_OTLP_HEADERS='authorization=Bearer change-me-with-a-long-random-value'
 ```
 
-gRPC 监听器当前使用明文连接，建议只绑定回环或内网地址，并在外部 TLS/mTLS 终止层后面部署。
+gRPC 默认仅适合回环开发监听。生产非回环监听必须配置
+`RDK_OTLP_GRPC_TLS_CERT_FILE`、`RDK_OTLP_GRPC_TLS_KEY_FILE`，需要双向认证时再配置
+`RDK_OTLP_GRPC_TLS_CA_FILE` 与 `RDK_OTLP_GRPC_TLS_REQUIRE_CLIENT_CERT=1`；未配置时生产启动会拒绝
+非回环明文 receiver。
 
 最小请求示例：
 
@@ -114,8 +119,10 @@ traces/metrics/logs 都会落库（metrics/logs/设备样本默认保留 14 天�
 3. 板上运行（或装 `ops/edge-agent/rdk-edge-agent.service`）：
 
 ```bash
-export RDK_OBS_REPORT_URL='http://<d-obs-host>:<port>'
+export RDK_OBS_REPORT_URL='https://<d-obs-host>:<port>'
 export RDK_DEVICE_TOKEN_FILE=/var/lib/rdk-edge-agent/token
+export RDK_EDGE_REQUIRE_TLS=1             # 生产环境拒绝明文 HTTP
+export RDK_EDGE_MAX_BACKOFF_SECONDS=900   # 弱网连续失败时指数退避上限
 node tools/edge-agent.mjs          # 每分钟采集 CPU/内存/温度/磁盘/BPU 并上报
 ```
 
@@ -133,6 +140,10 @@ ops/edge-agent/bootstrap.sh \
 脚本不会把设备 token 写进仓库；token 只在服务端一次性响应和板端 `0600` 文件中出现。
 启动后用 `journalctl -u rdk-edge-agent@rdk-x5-01.service` 检查首轮心跳，再在工作台的
 “边缘设备”页面确认在线。
+
+设备心跳还会携带 agent 版本。服务端会把超过 10 分钟没有完成回执的下行命令重新放回
+队列，避免设备重启后命令永久卡在 `delivered`。生产规模部署建议给每台设备设置不同的
+`RDK_EDGE_HEARTBEAT_JITTER_SECONDS`，避免整点同时上报。
 
 ## Phoenix 与 Langfuse
 
@@ -195,6 +206,26 @@ Agent Run、一次模型调用、一次工具/ROS2 动作和一台设备的资�
 标签。高吞吐部署应在板端放置 OpenTelemetry Collector/Alloy，使用批处理、内存限制、
 磁盘队列、重试和 mTLS，再把 OTLP 转发到 d-obs。
 
+### AI 评估与质量门禁
+
+评估器可以把离线或在线结果写回同一个 run，保留 `evaluator`、`dataset`、`modelVersion`、
+`promptVersion`、阈值和低基数 metadata。服务端会计算 `passed`、`failed` 或 `unrated`，不接收
+prompt、completion、工具参数或原始用户内容；SDK 也提供 `recordEvaluation` 与
+`getEvaluations`，便于把评估结果接入发布门禁和回归看板。
+
+```ts
+const evaluation = await observability.recordEvaluation(runId, {
+  name: 'groundedness',
+  value: 0.92,
+  threshold: 0.85,
+  evaluator: 'offline-judge-v3',
+  dataset: 'support-regression-2026-09',
+  modelVersion: 'qwen-plus-2026-08',
+  promptVersion: 'answer-v12',
+  metadata: { experiment: 'release-candidate', variant: 'b' },
+});
+```
+
 ## 数据边界
 
 接入层只允许低敏感字段：模型、提供商、Token 数、工具名、服务、环境、版本、对象引用、
@@ -206,7 +237,14 @@ Agent Run、一次模型调用、一次工具/ROS2 动作和一台设备的资�
 
 ```bash
 npm run typecheck
+node tools/d-obs-doctor.mjs --json
 node --import tsx --test server/observability/ai-ecosystem-routes.test.ts
 curl http://127.0.0.1:47110/api/v1/ecosystem/capabilities
 curl http://127.0.0.1:47110/metrics
 ```
+
+生产部署还应配置 `RDK_PUBLIC_OBSERVABILITY_API_TOKEN`；未配置固定 token 时只有开发环境可
+通过 `RDK_ALLOW_DYNAMIC_OBSERVABILITY_TOKENS=1` 使用动态 scope。生产 `/metrics` 默认要求
+`RDK_OBSERVABILITY_METRICS_TOKEN`，OTLP 摄取按 `RDK_OTLP_MAX_REQUESTS_PER_MINUTE` 限流，
+超限返回 `429` 和 `Retry-After`。服务探针优先使用 `/healthz`（进程存活）与 `/readyz`
+（数据库和治理运行时可服务），不要把深度业务查询放进 liveness 检查。

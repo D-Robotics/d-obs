@@ -18,6 +18,9 @@
  *   RDK_EDGE_MODEL / RDK_EDGE_FIRMWARE  可选；缺省从 /proc/device-tree/model 读型号
  *   RDK_EDGE_AGENT_INTERVAL_SECONDS  采集间隔秒数，默认 60
  *   RDK_EDGE_OUTBOX_PATH             离线缓冲文件，默认 /var/lib/rdk-edge-agent/outbox.jsonl
+ *   RDK_EDGE_MAX_BACKOFF_SECONDS     连续失败后的最大重试间隔，默认 900
+ *   RDK_EDGE_HEARTBEAT_JITTER_SECONDS 每轮额外随机抖动，默认 0
+ *   RDK_EDGE_REQUIRE_TLS=1           拒绝生产环境中的明文 http 上报
  *
  * 用法：
  *   node tools/edge-agent.mjs           # 常驻采集（systemd 服务）
@@ -36,6 +39,7 @@ const execFileP = promisify(execFile);
 
 const REPORT_URL = String(process.env.RDK_OBS_REPORT_URL || '').trim();
 const TOKEN_FILE = String(process.env.RDK_DEVICE_TOKEN_FILE || '').trim();
+const AGENT_VERSION = '1.1.0';
 const DEVICE_ID = String(process.env.RDK_DEVICE_ID || '').trim() || hostname();
 const INTERVAL_SECONDS = (() => {
   const value = Number(process.env.RDK_EDGE_AGENT_INTERVAL_SECONDS);
@@ -43,6 +47,15 @@ const INTERVAL_SECONDS = (() => {
 })();
 const OUTBOX_PATH =
   String(process.env.RDK_EDGE_OUTBOX_PATH || '').trim() || '/var/lib/rdk-edge-agent/outbox.jsonl';
+const MAX_BACKOFF_SECONDS = (() => {
+  const value = Number(process.env.RDK_EDGE_MAX_BACKOFF_SECONDS);
+  return Number.isFinite(value) && value >= 60 ? Math.min(86_400, Math.floor(value)) : 900;
+})();
+const JITTER_SECONDS = (() => {
+  const value = Number(process.env.RDK_EDGE_HEARTBEAT_JITTER_SECONDS);
+  return Number.isFinite(value) && value >= 0 ? Math.min(300, Math.floor(value)) : 0;
+})();
+const REQUIRE_TLS = String(process.env.RDK_EDGE_REQUIRE_TLS || '').trim() === '1';
 const INTERVAL_OVERRIDE_PATH = `${dirname(OUTBOX_PATH)}/interval.txt`; // 下行命令 set-interval 的持久化
 const AGENT_PATH = fileURLToPath(import.meta.url);
 let intervalSeconds = INTERVAL_SECONDS; // 运行期可被下行命令修改
@@ -264,9 +277,9 @@ async function reportHeartbeat(token, model, firmware, samples) {
     headers: {
       'content-type': 'application/json',
       'x-rdk-device-token': token,
-      'user-agent': 'd-obs-edge-agent/1',
+      'user-agent': `d-obs-edge-agent/${AGENT_VERSION}`,
     },
-    body: JSON.stringify({ model, firmware, samples: samples.map(({ ts, metrics }) => ({ ts, metrics })) }),
+    body: JSON.stringify({ agentVersion: AGENT_VERSION, model, firmware, samples: samples.map(({ ts, metrics }) => ({ ts, metrics })) }),
     signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
   });
   return { ok: response.status >= 200 && response.status < 300, status: response.status };
@@ -399,6 +412,11 @@ async function main() {
     process.exitCode = 2;
     return;
   }
+  if (REQUIRE_TLS && !/^https:\/\//i.test(REPORT_URL)) {
+    console.error('[edge-agent] RDK_EDGE_REQUIRE_TLS=1 时 RDK_OBS_REPORT_URL 必须使用 https://');
+    process.exitCode = 2;
+    return;
+  }
 
   let token = '';
   try {
@@ -436,6 +454,7 @@ async function main() {
 
   let stopping = false;
   let running = false;
+  let consecutiveFailures = 0;
   const wakeups = new Set();
   const sleep = (ms) =>
     new Promise((resolve) => {
@@ -459,13 +478,16 @@ async function main() {
     running = true;
     try {
       await runRound(token, model, firmware);
+      consecutiveFailures = 0;
     } catch (error) {
-      // 主循环 catch 全部异常并继续
+      consecutiveFailures += 1;
       console.error(`[edge-agent] round failed, continue: ${shortError(error)}`);
     }
     running = false;
     if (stopping) break;
-    await sleep(intervalSeconds * 1000);
+    const exponential = Math.min(MAX_BACKOFF_SECONDS, intervalSeconds * (2 ** Math.min(consecutiveFailures, 6)));
+    const jitter = JITTER_SECONDS ? Math.floor(Math.random() * (JITTER_SECONDS + 1)) : 0;
+    await sleep((consecutiveFailures ? exponential : intervalSeconds + jitter) * 1000);
   }
   process.exit(0);
 }

@@ -41,6 +41,8 @@ import { startTelemetryGovernanceRuntime } from './observability/governance-runt
 import { resolveTrustProxySetting } from './trusted-proxy.js';
 import { flushSelfLogs, installSelfProcessGuards, recordSelfLog } from './observability/self-log-reporter.js';
 import { installNodeConsoleErrorTelemetry } from './monitoring/node-console-error-telemetry.js';
+import { createHealthRouter } from './monitoring/health-routes.js';
+import { createOtlpIngestGuard } from './observability/ingest-guard.js';
 
 // 自观测回灌：进程级错误守卫 + console ERROR/WARN 摘要写入 OTLP 日志域
 //（生产 NODE_ENV=production 时激活，见 node-console-error-telemetry.ts）。
@@ -56,6 +58,7 @@ app.disable('x-powered-by');
 // 真实客户端地址计数（生产是 nginx 反代到 127.0.0.1:18093）。取值说明见
 // server/trusted-proxy.ts。
 app.set('trust proxy', resolveTrustProxySetting());
+app.use(createHealthRouter());
 app.use(express.json({ limit: '2mb' }));
 
 function registrationTokenMatches(provided: unknown): boolean {
@@ -104,20 +107,22 @@ app.post('/api/ops/tenants/register', async (req, res) => {
 });
 
 app.post('/api/health/external-probe-report', async (req, res) => {
-  const identity = await resolveProbeReportIdentity(
-    req.header('x-rdk-external-probe-token'),
-    req.header('x-rdk-tenant-probe-token'),
-  );
-  if (!identity) {
-    res.status(401).json({ ok: false, error: 'invalid_probe_token' });
-    return;
-  }
-  const report = parseExternalProbeReport(req.body);
-  if (!report) {
-    res.status(400).json({ ok: false, error: 'invalid_probe_report' });
-    return;
-  }
   try {
+    // Identity resolution may hit PostgreSQL (tenant tokens). Keep it inside
+    // the boundary: Express 4 does not catch rejected async handlers.
+    const identity = await resolveProbeReportIdentity(
+      req.header('x-rdk-external-probe-token'),
+      req.header('x-rdk-tenant-probe-token'),
+    );
+    if (!identity) {
+      res.status(401).json({ ok: false, error: 'invalid_probe_token' });
+      return;
+    }
+    const report = parseExternalProbeReport(req.body);
+    if (!report) {
+      res.status(400).json({ ok: false, error: 'invalid_probe_report' });
+      return;
+    }
     await recordExternalProbeReport(report, identity);
     res.status(202).json({ ok: true, tenant: identity.scopeId });
   } catch {
@@ -127,17 +132,20 @@ app.post('/api/health/external-probe-report', async (req, res) => {
 // 边缘设备心跳摄取：独立 256-bit 设备 token（x-rdk-device-token），批量样本
 // 支持弱网补传（时间戳允许回填，见 device-registry.ts 的窗口约束）。
 app.post('/api/edge/heartbeat', async (req, res) => {
-  const deviceId = await resolveDeviceIdentity(req.header('x-rdk-device-token'));
-  if (!deviceId) {
-    res.status(401).json({ ok: false, error: 'invalid_device_token' });
-    return;
-  }
-  const heartbeat = parseDeviceHeartbeat(req.body);
-  if (!heartbeat || !heartbeat.samples.length) {
-    res.status(400).json({ ok: false, error: 'invalid_device_heartbeat' });
-    return;
-  }
   try {
+    // Token lookup is asynchronous and can fail when the central database is
+    // unavailable. Keep lookup, parsing and persistence in one response-safe
+    // boundary instead of allowing an Express 4 rejection to escape.
+    const deviceId = await resolveDeviceIdentity(req.header('x-rdk-device-token'));
+    if (!deviceId) {
+      res.status(401).json({ ok: false, error: 'invalid_device_token' });
+      return;
+    }
+    const heartbeat = parseDeviceHeartbeat(req.body);
+    if (!heartbeat || !heartbeat.samples.length) {
+      res.status(400).json({ ok: false, error: 'invalid_device_heartbeat' });
+      return;
+    }
     const result = await recordDeviceHeartbeat(deviceId, heartbeat, req.ip ?? '');
     res.status(202).json({ ok: true, device: deviceId, accepted: result.accepted, serverTime: Date.now() });
   } catch {
@@ -146,12 +154,12 @@ app.post('/api/edge/heartbeat', async (req, res) => {
 });
 // 下行命令：设备凭 token 认领（pending→delivered）与回执（delivered→ok/failed）。
 app.post('/api/edge/commands/claim', async (req, res) => {
-  const deviceId = await resolveDeviceIdentity(req.header('x-rdk-device-token'));
-  if (!deviceId) {
-    res.status(401).json({ ok: false, error: 'invalid_device_token' });
-    return;
-  }
   try {
+    const deviceId = await resolveDeviceIdentity(req.header('x-rdk-device-token'));
+    if (!deviceId) {
+      res.status(401).json({ ok: false, error: 'invalid_device_token' });
+      return;
+    }
     const commands = await claimDeviceCommands(deviceId);
     res.status(200).json({ ok: true, commands: commands.map((cmd) => ({ id: cmd.id, type: cmd.type, payload: cmd.payload })) });
   } catch {
@@ -159,18 +167,18 @@ app.post('/api/edge/commands/claim', async (req, res) => {
   }
 });
 app.post('/api/edge/commands/:commandId/ack', async (req, res) => {
-  const deviceId = await resolveDeviceIdentity(req.header('x-rdk-device-token'));
-  if (!deviceId) {
-    res.status(401).json({ ok: false, error: 'invalid_device_token' });
-    return;
-  }
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  const status = String(body.status ?? '');
-  if (status !== 'ok' && status !== 'failed') {
-    res.status(400).json({ ok: false, error: 'invalid_command_status' });
-    return;
-  }
   try {
+    const deviceId = await resolveDeviceIdentity(req.header('x-rdk-device-token'));
+    if (!deviceId) {
+      res.status(401).json({ ok: false, error: 'invalid_device_token' });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const status = String(body.status ?? '');
+    if (status !== 'ok' && status !== 'failed') {
+      res.status(400).json({ ok: false, error: 'invalid_command_status' });
+      return;
+    }
     const command = await ackDeviceCommand({ deviceId, commandId: String(req.params.commandId ?? ''), status, result: String(body.result ?? '') });
     if (!command) {
       res.status(404).json({ ok: false, error: 'command_not_found' });
@@ -196,6 +204,7 @@ app.get('/api/edge/agent-script', async (_req, res) => {
 });
 // 事件级埋点摄取：租户/平台 token 鉴权，逐条消毒去重后写 studio_ops_events。
 app.use(createOpsEventIngestRouter());
+app.use(createOtlpIngestGuard());
 app.use(createAiEcosystemRouter());
 app.use(createPublicObservabilityRouter());
 app.use(createOpsObservabilityRouter());

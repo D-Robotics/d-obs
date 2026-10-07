@@ -99,6 +99,7 @@ flowchart LR
 | **巡检与告警** | worker 进程 | 指标/日志/拨测三类规则，每 60 秒评估，Pending→告警→恢复状态机；**6 渠道投递**（飞书/钉钉/企微/Slack/Telegram/通用 Webhook，含重试、降噪、恢复通知、影子模式）；critical/warning 可分别覆盖投递渠道；**维护窗口**（静默期，事故照常记录不投递，窗口后自动补发）；**值班升级链**（ack 超时自动升级重发，每事故最多 3 次，确认即止） |
 | **告警中心与对象注册** | 工作台“告警中心 / 告警对象” | 以对象为一等实体贯通规则、事故、通知和观测数据；自动登记主机、服务、网关、数据库、设备及 OTLP resource；提供级别/状态摘要、按日趋势和对象下钻 |
 | **公开状态页** | `GET /status` | 免鉴权只读：worker 存活、检查通过率、进行中事故摘要；输出脱敏（URL/email 占位），无 token/租户/通道泄漏 |
+| **机器健康检查** | `GET /healthz` / `GET /readyz` | liveness 不访问数据库；readiness 检查中心库与遥测治理恢复状态，失败返回 503 和结构化原因 |
 | **事故管理** | 工作台“事故调查” | 事故工作台、负责人、活动记录、事故副驾（证据化根因假设，本部署为确定性证据引擎） |
 | **证据化行动环** | `/api/ops/observability/actions` | 所有变更类操作走“提案→带证据 proof→他人审批→白名单剧本执行→后置验证”闭环；不提供裸执行。行动标记来源（人工/副驾建议）并统计采纳率；worker 周期自动推进 `executing` 行动的后置验证；失败行动可一键重新提案 |
 | **自愈** | worker | 白名单剧本（nginx reload 前置校验、重启 alert-worker 等），冷却期 + 双人审批 |
@@ -145,6 +146,7 @@ flowchart LR
 
 ```bash
 npm install
+npm run doctor       # 启动前检查 Node、中心库、凭据、TLS 和 Worker 状态目录
 npm start
 # → [d-obs] observability workbench listening on http://1270.0.0.1:47110/ops-observability
 ```
@@ -382,6 +384,7 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | --- | --- | --- |
 | `RDK_CHAT_CREDITS_DB_URL` | ✅ | 中心 PostgreSQL 连接串（数据面真源） |
 | `RDK_CREDITS_ADMIN_TOKEN` | ✅ | 运营 token（`x-admin-token` 头） |
+| `RDK_GRAFANA_GATE_SECRET` |  | Grafana 浏览器门禁的独立 HMAC 密钥；不配置时从运营 token 派生，建议生产单独配置并轮换 |
 | `RDK_TENANT_REGISTRATION_TOKEN` |  | 租户自助注册 token（`x-registration-token` 头；不配 = 注册端点关闭，fail-closed） |
 | `RDK_SSO_RELAY_BASE_URL` |  | 主站 SSO 中继地址（生产 `http://127.0.0.1:18090`）。配了才有账号登录与**同源 Cookie 免登**；不配 = 登录端点 503 fail-closed，token 入口不受影响 |
 | `RDK_SSO_RELAY_LOGIN_RATE_MAX` |  | 登录端点**按客户端地址**的限流上限（默认 20 次/15 分钟） |
@@ -392,9 +395,15 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_DATA_DIR` |  | 本地状态/配置目录（默认数据布局） |
 | `RDK_GATEWAY_ADMIN_URL` / `GATEWAY_ADMIN_KEY` |  | 模型池网关 admin API 地址与密钥（默认 `127.0.0.1:3100`） |
 | `RDK_PUBLIC_OBSERVABILITY_API_TOKEN` |  | OTLP 与公共观测写入 token；配置后所有 `/v1/*` 写入必须使用该 Bearer/API key |
-| `RDK_OBSERVABILITY_METRICS_TOKEN` |  | Prometheus `/metrics` 的可选 Bearer/API key；不配时保留本地兼容的匿名抓取 |
+| `RDK_ALLOW_DYNAMIC_OBSERVABILITY_TOKENS` |  | 仅开发环境允许未配置固定 token 时按凭据动态派生 scope；生产默认拒绝，建议始终配置固定 token |
+| `RDK_OBSERVABILITY_METRICS_TOKEN` |  | Prometheus `/metrics` 的 Bearer/API key；生产环境默认必配 |
+| `RDK_OBSERVABILITY_REQUIRE_METRICS_TOKEN` |  | 是否强制 `/metrics` 认证（默认生产环境开启，设 `0` 仅用于内网兼容迁移） |
+| `RDK_OTLP_MAX_REQUESTS_PER_MINUTE` |  | 单凭据/IP 的 OTLP 请求限额（默认 600），超限返回 429 + `Retry-After` |
 | `RDK_OBSERVABILITY_EDGE_METRICS_TOKEN` |  | 端侧 `/edge-metrics` 的专用 Bearer/API key；未配置时只允许回环抓取 |
 | `RDK_OTLP_GRPC_HOST` / `RDK_OTLP_GRPC_PORT` |  | 可选 OTLP/gRPC receiver 监听地址与端口；配置 `RDK_OTLP_GRPC_PORT` 后启用，默认 host 为 `127.0.0.1` |
+| `RDK_OTLP_GRPC_TLS_CERT_FILE` / `RDK_OTLP_GRPC_TLS_KEY_FILE` |  | OTLP/gRPC TLS 证书与私钥；生产非回环监听时必配 |
+| `RDK_OTLP_GRPC_TLS_CA_FILE` / `RDK_OTLP_GRPC_TLS_REQUIRE_CLIENT_CERT` |  | 可选客户端 CA 与 mTLS 客户端证书强制开关 |
+| `RDK_OTLP_GRPC_REQUIRE_TLS` |  | 强制 OTLP/gRPC 使用 TLS；生产非回环监听默认自动开启 |
 | `RDK_ALERT_INTERNAL_HEALTH_URL` |  | internal-health 检查目标 |
 | `STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL` |  | Langfuse 公开看板 URL，配置后 Agent Trace 面板嵌入它 |
 | `RDK_OBSERVABILITY_ENVIRONMENT` |  | 环境标注（production/dev），写入事件投影 |
@@ -402,6 +411,8 @@ curl -X POST .../tenants/<tenantId>/status -d '{"status":"disabled"}'
 | `RDK_ALERT_SHADOW_MODE` |  | 告警通知影子模式（默认 true = 只记录不外发）。仅在告警配置文件尚无通道时作为首次迁移兜底 |
 | `RDK_ALERT_WEBHOOK_URL` / `RDK_ALERT_WEBHOOK_SECRET` / `RDK_ALERT_FEISHU_WEBHOOK` / `RDK_ALERT_FEISHU_SIGN_SECRET` |  | 通用 Webhook / 飞书通道的首次迁移兜底（同上前提） |
 | `RDK_ALERT_STATE_PATH` |  | 告警 worker 状态文件路径 |
+| `RDK_ALERT_WORKER_LOCK_REQUIRED` / `RDK_ALERT_WORKER_LOCK_KEY` |  | Worker 是否必须持有 PostgreSQL advisory lock（生产默认开启）及锁名；防止双 Worker 重复评估和通知 |
+| `RDK_HEALTH_REQUIRE_DATABASE` |  | `/readyz` 是否必须连通 PostgreSQL（生产默认开启；开发环境可保持降级可用） |
 | `RDK_ALERT_DISK_PATH` / `RDK_ALERT_SYSTEMD_SERVICE` / `RDK_ALERT_NGINX_ACCESS_LOG` / `RDK_ALERT_POSTGRES_CONTAINER` / `RDK_ALERT_PUBLIC_HEALTH_URL` / `RDK_ALERT_GATEWAY_TARGET_HEALTH_FILES` |  | 告警 worker 各内置检查的目标与日志路径（磁盘、systemd 服务、nginx 日志、PG 容器、公网健康、网关目标健康文件） |
 | `RDK_ALERT_LOG_ERRORS` |  | `1` = 把告警/事件写入失败打到日志（默认静默） |
 | `RDK_SYNTHETIC_PROBE_HMAC_SECRET` |  | 合成探针签名密钥（≥16 字节）。不配则回落到 `SSO_DIRECT_AES_KEY`；两者都没有时**拒绝执行**未签名探针 |
@@ -450,6 +461,8 @@ d-obs 会把真实客户端地址用 `X-Forwarded-For` / `X-Real-IP` 转发给�
 
 ```bash
 npm run typecheck            # tsc --noEmit 全闭包类型检查
+npm run doctor               # 部署前配置体检
+node tools/d-obs-doctor.mjs --json  # 机器可读结果（供 CI 读取）
 npm test                     # 核心回归测试（告警状态机、鉴权、租户、探针上报）
 npm run build                # 编译 dist/，并复制 OTLP protobuf schema
 npm start                    # 工作台 + 全部 JSON API（含模型池探测/路由/替换）
