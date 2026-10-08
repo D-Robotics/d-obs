@@ -59,7 +59,7 @@ function baseRoutes(options?: {
         ];
       },
     },
-    { match: /date_trunc/, rows: () => options?.histogram ?? [] },
+    { match: /date_trunc/, rows: () => options?.histogram ?? [{ day_key: '2026-10-01', opened: 3 }] },
     { match: /recent_errors/, rows: () => [{ total_events: 0, distinct_fingerprints: 0, affected_components: 0, categories: '[]', items: '[]' }] },
     { match: /from latest/, rows: () => [options?.airuns ?? { total: 0, errors: 0, partials: 0 }] },
     {
@@ -81,7 +81,7 @@ test('collectWeeklyOpsDigest：窗口 168h，周聚合与环比成型', async ()
   const p = fakePool(
     baseRoutes({
       weekly: { opened: 5, resolved: 4, mttrAvg: 95.5, mttrP80: 140, previousOpened: 8 },
-      histogram: [{ day: '2026-10-01', opened: 3 }],
+      histogram: [{ day_key: '2026-10-01', opened: 3 }],
     }),
   );
   const digest = await collectWeeklyOpsDigest(p, { now: FRIDAY_NOW });
@@ -118,7 +118,7 @@ test('buildFeishuWeeklyOpsDigestCard：卡片含三枚跳转按钮且标题带�
 
 test('buildWeeklyOpsDigestText：文本含环比与看板地址', async () => {
   const p = fakePool(
-    baseRoutes({ weekly: { opened: 5, resolved: 4, previousOpened: 8 }, histogram: [{ day: '2026-10-01', opened: 2 }] }),
+    baseRoutes({ weekly: { opened: 5, resolved: 4, previousOpened: 8 }, histogram: [{ day_key: '2026-10-01', opened: 2 }] }),
   );
   const digest = await collectWeeklyOpsDigest(p, { now: FRIDAY_NOW });
   const text = buildWeeklyOpsDigestText(digest, testConfig());

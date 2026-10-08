@@ -183,8 +183,8 @@ async function collectWeeklyHistogram(
   lookbackHours: number,
 ): Promise<Array<{ day: string; weekday: string; count: number }>> {
   const result = await p.query(
-    `select to_char(date_trunc('day', first_seen_at at time zone $3), 'YYYY-MM-DD') day,
-            count(*)::int opened
+    `select to_char(date_trunc('day', first_seen_at at time zone $3::text), 'YYYY-MM-DD') as day_key,
+            count(*)::int as opened
      from public.studio_alert_incidents
      where first_seen_at >= $1::timestamptz - make_interval(hours => $2::int)
        and first_seen_at <= $1::timestamptz + interval '5 minutes'
@@ -193,7 +193,7 @@ async function collectWeeklyHistogram(
   );
   const byDay = new Map<string, number>();
   for (const row of records(result.rows)) {
-    byDay.set(String(row.day ?? ''), number(row.opened));
+    byDay.set(String(row.day_key ?? ''), number(row.opened));
   }
   const toMs = windowTo.getTime();
   const histogram: Array<{ day: string; weekday: string; count: number }> = [];
