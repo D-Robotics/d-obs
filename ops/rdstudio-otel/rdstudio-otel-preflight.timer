@@ -1,0 +1,12 @@
+[Unit]
+Description=Check RDK Studio OTLP collector to d-obs every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=rdstudio-otel-preflight.service
+
+[Install]
+WantedBy=timers.target

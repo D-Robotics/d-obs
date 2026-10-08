@@ -166,6 +166,16 @@ fi
 
 say "切换软链并重启"
 ln -sfn "releases/$RELEASE" "$CUR_LINK"
+
+# rdstudio Collector is a separate systemd service on the same host. Install
+# the guarded renderer and its preflight timer from the same release so a
+# renderer/capability digest drift cannot turn a restart into a crash loop.
+install -m 0750 "$REL_DIR/ops/rdstudio-otel/render-config-safe.sh" /usr/local/sbin/rdstudio-otel-render-config
+install -m 0644 "$REL_DIR/ops/rdstudio-otel/rdstudio-otel-collector-safe-render.conf" /etc/systemd/system/rdstudio-otel-collector.service.d/zz-dobs-safe-render.conf
+install -m 0644 "$REL_DIR/ops/rdstudio-otel/rdstudio-otel-preflight.service" /etc/systemd/system/rdstudio-otel-preflight.service
+install -m 0644 "$REL_DIR/ops/rdstudio-otel/rdstudio-otel-preflight.timer" /etc/systemd/system/rdstudio-otel-preflight.timer
+systemctl daemon-reload
+systemctl enable --now rdstudio-otel-preflight.timer
 if ! systemctl restart d-obs; then
   echo "重启失败，回滚" >&2
 fi

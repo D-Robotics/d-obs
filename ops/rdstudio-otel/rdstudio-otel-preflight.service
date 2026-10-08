@@ -1,0 +1,13 @@
+[Unit]
+Description=Preflight RDK Studio OTLP collector to d-obs
+After=network-online.target rdstudio-otel-collector.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/d-obs/current/ops/rdstudio-otel/preflight.sh
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/run
