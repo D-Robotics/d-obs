@@ -68,10 +68,19 @@ export function projectStudioTraceCoverage(
   const observed = new Set(input.observedSegments ?? []);
   const minimumStudioVersion = input.minimumStudioVersion ?? '1.4.0';
   const supportedMocMajor = input.supportedMocMajor ?? 1;
-  const mocMajor = semverTuple(input.mocVersion)?.[0];
   const localDev = input.surface === 'local-dev';
-  const versionEligible = versionAtLeast(input.studioVersion, minimumStudioVersion);
-  const contractEligible = mocMajor === supportedMocMajor;
+  // run fact 只带 app_version（MOC/Moss 版本随 span 才有），无 span 的运行版本未知。
+  // 未知只能降级为"按片段证据判定"，不能当成"版本不兼容"——否则所有无 span 运行
+  // 都会被误标 version_unsupported 并把全部必需片段抄成缺失。
+  const studioVersionReported = semverTuple(input.studioVersion) !== null;
+  const versionEligible = studioVersionReported
+    ? versionAtLeast(input.studioVersion, minimumStudioVersion)
+    : true;
+  const mocMajor = semverTuple(input.mocVersion)?.[0];
+  const contractEligible =
+    input.mocVersion == null || input.mocVersion === ''
+      ? true
+      : mocMajor === supportedMocMajor;
   const eligible = !localDev && versionEligible && contractEligible;
   const common = {
     eligible,
