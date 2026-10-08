@@ -89,6 +89,19 @@ export interface RunObservabilityTraceGroup {
   }>;
 }
 
+export interface RunObservabilityCandidateSpan {
+  spanRef: string;
+  name: string;
+  serviceName: string;
+  startedAt: string;
+  startOffsetMs: number;
+  durationMs: number | null;
+  outcome: string | null;
+  clientOperationId: string | null;
+  propagationReason: string | null;
+  traceRef: string | null;
+}
+
 export interface RunObservabilityDetail {
   schema: 'rdk.studio.run-observability.v1';
   run: {
@@ -118,6 +131,14 @@ export interface RunObservabilityDetail {
     truncated: boolean;
   };
   traces: RunObservabilityTraceGroup[];
+  /**
+   * 未绑定 client span 的软关联线索（run-start 绑定失败的存量形态）。
+   * 只按账号归属+时间窗关联展示，不回写 run_id，不进入权威链路证据。
+   */
+  unboundCandidates: {
+    basis: 'owner_and_time_window';
+    spans: RunObservabilityCandidateSpan[];
+  };
   summary:
     | { availability: 'available'; value: unknown }
     | { availability: 'missing' | 'unavailable' };
@@ -451,8 +472,38 @@ function mapTraceGroups(
   });
 }
 
-function safeEvidenceSummary(row: Record<string, unknown>): string | undefined {
-  const summary = cleanText(row.safe_summary ?? row.summary, 240);
+function mapCandidateSpans(
+  rows: Array<Record<string, unknown>>,
+  scope: { accountScopeId: string; environment: StudioDeploymentEnvironment },
+  runStartMs: number,
+): RunObservabilityCandidateSpan[] {
+  return rows.slice(0, 12).map((row) => {
+    const startMs = Math.trunc(Number(row.start_time_ms));
+    const endMs = Math.trunc(Number(row.end_time_ms));
+    const traceId = cleanText(row.trace_id, 64).toLowerCase();
+    const rawAttributes =
+      row.attributes && typeof row.attributes === 'object' && !Array.isArray(row.attributes)
+        ? (row.attributes as Record<string, unknown>)
+        : {};
+    const validStart = Number.isFinite(startMs);
+    return {
+      spanRef:
+        displayRef('span', scope, `${traceId}:${cleanText(row.span_id, 64)}`) ?? 'span-unavailable',
+      name: cleanText(row.name, 100) || 'unknown',
+      serviceName: cleanText(row.service_name, 80) || 'rdk-studio',
+      startedAt: validStart ? new Date(startMs).toISOString() : '',
+      startOffsetMs: validStart && Number.isFinite(runStartMs) ? startMs - runStartMs : 0,
+      durationMs:
+        validStart && Number.isFinite(endMs) && endMs >= startMs ? endMs - startMs : null,
+      outcome: cleanText(row.outcome, 24) || null,
+      clientOperationId: cleanText(row.client_operation_id, 80) || null,
+      propagationReason: cleanText(rawAttributes['rdk.propagation.reason'], 40) || null,
+      traceRef: traceId ? displayRef('trace', scope, traceId) : null,
+    };
+  });
+}
+
+function safeEvidenceSummary(row: Record<string, unknown>): string | undefined {  const summary = cleanText(row.safe_summary ?? row.summary, 240);
   if (!summary) return undefined;
   const redacted = redactTelemetryPayload(summary, { maxStringBytes: 240, maxTotalBytes: 512 });
   return redacted.ok && typeof redacted.value === 'string' ? redacted.value : undefined;
@@ -574,8 +625,56 @@ export function createRunObservabilityService(deps: RunObservabilityServiceDepen
     }
     if (!factResult.rows.length) return { status: 'not_found' };
     const fact = rowJson(factResult.rows[0], 'run_fact');
+    const runStartIso = safeIso(fact.started_at);
+    const runEndIso = safeIso(fact.completed_at);
+    const runStartMs = runStartIso ? Date.parse(runStartIso) : Number.NaN;
+    const runEndMs = runEndIso ? Date.parse(runEndIso) : Number.NaN;
+    const candidateWindowStartMs = Number.isFinite(runStartMs) ? runStartMs - 15_000 : null;
+    const candidateWindowEndMs = Number.isFinite(runStartMs)
+      ? (Number.isFinite(runEndMs) ? runEndMs : runStartMs + 30 * 60_000) + 60_000
+      : null;
+    // run-start 绑定失败的客户端 span（run_id 为空）只能按归属+时间窗软关联；
+    // 展示为候选线索而非权威链路，任何模糊匹配都不回写存储。
+    const candidateRowsPromise =
+      candidateWindowStartMs !== null && candidateWindowEndMs !== null
+        ? optionalRows(
+            deps.db,
+            `select span_id, trace_id, name, service_name, start_time_ms, end_time_ms,
+                    outcome, client_operation_id, attributes
+             from public.studio_trace_spans
+             where account_scope_id = $1 and environment = $2
+               and coalesce(run_id, '') = ''
+               and source = 'client'
+               and start_time_ms >= $3 and start_time_ms <= $4
+               and coalesce(
+                 governance_expires_at,
+                 to_timestamp(start_time_ms / 1000.0) + interval '35 days'
+               ) > now()
+               and not exists (
+                 select 1 from public.studio_telemetry_tombstones tombstone
+                 where tombstone.account_scope_id = $1
+                   and tombstone.environment = $2
+                   and (
+                     tombstone.user_id is null
+                     or tombstone.user_id = studio_trace_spans.owner_user_id
+                   )
+                   and (tombstone.run_id is null or tombstone.run_id = studio_trace_spans.run_id)
+                   and (tombstone.trace_id is null or tombstone.trace_id = studio_trace_spans.trace_id)
+                   and (tombstone.session_id is null or tombstone.session_id = studio_trace_spans.session_id)
+                   and tombstone.grant_id is null
+               )
+             order by start_time_ms asc, span_id asc
+             limit 13`,
+            [
+              scope.accountScopeId,
+              scope.environment,
+              candidateWindowStartMs,
+              candidateWindowEndMs,
+            ],
+          )
+        : Promise.resolve({ availability: 'available' as const, rows: [] });
 
-    const [traceSettled, summaryResult, opsResult, productResult, mappingResult] =
+    const [traceSettled, summaryResult, opsResult, productResult, mappingResult, candidateResult] =
       await Promise.all([
         traceAdapter.readByRun(scope, verified.runId).then(
           (value) => ({ ok: true as const, value }),
@@ -643,6 +742,7 @@ export function createRunObservabilityService(deps: RunObservabilityServiceDepen
          limit 1`,
           [scope.accountScopeId, verified.runId, scope.environment],
         ),
+        candidateRowsPromise,
       ]);
 
     const traceResult: TraceReadResult = traceSettled.ok
@@ -806,6 +906,10 @@ export function createRunObservabilityService(deps: RunObservabilityServiceDepen
           truncated: traceResult.truncated,
         },
         traces: mapTraceGroups(traceResult, scope),
+        unboundCandidates: {
+          basis: 'owner_and_time_window',
+          spans: mapCandidateSpans(candidateResult.rows, scope, runStartMs),
+        },
         summary,
         evidence: {
           availability: {
