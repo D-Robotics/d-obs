@@ -168,7 +168,8 @@ export function protectedEvolutionPath(value: string): boolean {
 export function evaluateEvolutionDiff(input: {
   changedFiles: string[];
   diffText: string;
-  verificationPassed: boolean;
+  /** true=验证跑过且通过；false=验证跑过但失败；null=验证未执行（如保护路径提前拦截）。 */
+  verificationPassed: boolean | null;
 }): {
   passed: boolean;
   protectedFiles: string[];
@@ -187,7 +188,9 @@ export function evaluateEvolutionDiff(input: {
     reasons.push(`改动文件数 ${changedFiles.length} 超过上限 ${MAX_CHANGED_FILES}`);
   }
   if (diffLines > MAX_DIFF_LINES) reasons.push(`补丁行数 ${diffLines} 超过上限 ${MAX_DIFF_LINES}`);
-  if (!input.verificationPassed) reasons.push('确定性构建或回归测试未通过');
+  if (input.verificationPassed === false) {
+    reasons.push('确定性构建或回归测试未通过');
+  }
   return {
     passed: reasons.length === 0,
     protectedFiles,

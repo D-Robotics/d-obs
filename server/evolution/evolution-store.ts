@@ -164,6 +164,30 @@ export async function recentlyAttemptedEvolutionTags(
   return new Set(result.rows.map((row) => text(row.failure_tag, 80)).filter(Boolean));
 }
 
+/**
+ * 保护路径隔离期：窗口内累计 ≥minRejections 次"触碰受保护路径"被拒的主题，
+ * 长期跳过选题——其证据源在保护边界内，重试只会每天烧一轮 agent run。
+ * 隔离过期后允许一次探针重试；若边界仍未放宽会再次被拒并重新进入隔离。
+ */
+export async function protectedPathQuarantinedTags(
+  p: EvolutionPool,
+  windowDays = 14,
+  minRejections = 2,
+): Promise<Set<string>> {
+  const result = await p.query(
+    `select failure_tag
+       from public.studio_evolution_runs
+      where failure_tag is not null
+        and status = 'rejected'
+        and coalesce(gate_report->>'protectedPathCount', '0')::int > 0
+        and started_at >= now() - make_interval(days => $1::int)
+      group by failure_tag
+     having count(*) >= $2::int`,
+    [Math.max(1, Math.min(90, Math.floor(windowDays))), Math.max(1, Math.floor(minRejections))],
+  );
+  return new Set(result.rows.map((row) => text(row.failure_tag, 80)).filter(Boolean));
+}
+
 export async function updateEvolutionWorkerStatus(
   p: EvolutionPool,
   input: {
