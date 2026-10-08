@@ -1466,6 +1466,15 @@ export function mergeAndValidateAlertConfig(
 ): AlertConfig {
   const notificationPatch = patch.notification ?? {};
   const syntheticPatch = patch.synthetic ?? {};
+  // PATCH 里的规则键先过旧键别名映射：文件/存量配置可能仍以旧键书写
+  // （如 moss-model-target-degraded），不映射的话合并循环遍历的是现键集合，
+  // 旧键补丁会被静默忽略，调用方以为改了实际什么都没改。
+  const canonicalPatchRules: Partial<Record<AlertRuleKey, Partial<AlertRuleConfig>>> = {};
+  for (const [rawKey, value] of Object.entries(patch.rules ?? {})) {
+    if (value === undefined) continue;
+    const key = LEGACY_RULE_KEY_ALIASES[rawKey] ?? rawKey;
+    canonicalPatchRules[key as AlertRuleKey] = value as Partial<AlertRuleConfig>;
+  }
   const next: AlertConfig = {
     ...current,
     version: ALERT_CONFIG_VERSION,
@@ -1528,7 +1537,7 @@ export function mergeAndValidateAlertConfig(
   delete (next.synthetic as Record<string, unknown>).clearPassword;
   for (const key of ruleKeys) {
     const previous = current.rules[key];
-    const patchRule = patch.rules?.[key];
+    const patchRule = canonicalPatchRules[key];
     const merged: AlertRuleConfig = {
       ...previous,
       ...(patchRule ? stripRuleAudit(patchRule) : {}),

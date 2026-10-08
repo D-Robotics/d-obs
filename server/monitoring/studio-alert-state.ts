@@ -69,6 +69,8 @@ export interface AlertWorkerState {
   notificationHistory?: string[];
   /** ops 事件 → 日志域镜像的 created_at 游标（ISO 字符串）。 */
   logMirrorCursor?: string;
+  /** 外来评估器侵入告警的上次时间（ISO 字符串），24h 节流。 */
+  foreignEvaluatorWarnedAt?: string;
 }
 
 export interface AlertTransition {

@@ -1545,6 +1545,32 @@ async function runWorkerCycle(): Promise<void> {
         console.warn('[alert-worker] status snapshot failed:', sanitizeOpsSummary(error, 240));
       },
     );
+    // 外来评估器侵入检测：本 worker 是共享告警表的唯一评估器，但生产曾出现并行
+    // 部署的 legacy worker 以旧配置写表（channel=unconfigured、severity 漂移、
+    // 已禁用规则的事故被永久维持 open），三次复活 12 天无人发现。近 24h 出现
+    // unconfigured 记录只有两种解释：又有第二评估器在写表，或本机通知渠道失配，
+    // 两者都必须处置；按 24h 节流告警，经自监控日志域可见。
+    const foreignRecords = await p
+      .query(
+        `select count(*)::int n from public.studio_alert_notifications
+         where occurred_at > now() - interval '24 hours' and channel = 'unconfigured'`,
+      )
+      .catch(() => null);
+    if (foreignRecords) {
+      const foreignCount = Number(foreignRecords.rows[0]?.n ?? 0);
+      const lastWarnedAt = state.foreignEvaluatorWarnedAt
+        ? Date.parse(state.foreignEvaluatorWarnedAt)
+        : Number.NaN;
+      if (
+        foreignCount > 0 &&
+        (!Number.isFinite(lastWarnedAt) || Date.now() - lastWarnedAt >= 24 * 60 * 60_000)
+      ) {
+        state.foreignEvaluatorWarnedAt = new Date().toISOString();
+        console.warn(
+          `[alert-worker] foreign-evaluator tripwire: 近 24h 出现 ${foreignCount} 条 unconfigured 通知记录 — 疑似第二评估器写共享告警表或本机通知渠道失配，请核对 rdstudio-alert-worker.timer/mask 与通知配置`,
+        );
+      }
+    }
     // 事故生命周期写日志域：opened/escalated 按严重度、resolved INFO，
     // 让日志查询与根因关联能按时间线回放告警状态变化。
     for (const transition of reconciled.transitions) {
