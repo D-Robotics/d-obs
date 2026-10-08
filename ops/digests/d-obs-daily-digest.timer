@@ -1,0 +1,11 @@
+[Unit]
+Description=Send the d-obs daily stability digest at 20:00 China time
+
+[Timer]
+OnCalendar=*-*-* 20:00:00 Asia/Shanghai
+AccuracySec=1s
+Persistent=false
+Unit=d-obs-daily-digest.service
+
+[Install]
+WantedBy=timers.target

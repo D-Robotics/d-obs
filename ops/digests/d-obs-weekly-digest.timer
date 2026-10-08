@@ -1,0 +1,11 @@
+[Unit]
+Description=Send the d-obs weekly ops digest on Friday 18:00 China time
+
+[Timer]
+OnCalendar=Fri *-*-* 18:00:00 Asia/Shanghai
+AccuracySec=1s
+Persistent=false
+Unit=d-obs-weekly-digest.service
+
+[Install]
+WantedBy=timers.target

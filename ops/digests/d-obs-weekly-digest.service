@@ -1,0 +1,19 @@
+[Unit]
+Description=d-obs weekly ops digest (Feishu card on Friday 18:00 CST)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/d-obs/current
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/d-obs.env
+ExecStart=/opt/node-v22.19.0-linux-x64/bin/node /opt/d-obs/current/server/monitoring/studio-weekly-digest.js
+UMask=0077
+TimeoutStartSec=3min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
