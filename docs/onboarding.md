@@ -100,6 +100,34 @@ export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <token>'
 AI 语义映射（gen_ai.* / OpenInference）、评估写入与 gRPC 启用方式见
 [ecosystem.md](./ecosystem.md)。
 
+### 3.1 同机已有 OTel Collector 的应用：转发而非重复接入
+
+应用侧已自建 OTel Collector 时，**不要让应用绕开 collector 直连**（会分裂数据面），
+也不要为 d-obs 新增第三个导出目标（多数受控 collector 对导出拓扑有契约与证据要求）。
+推荐做法：把 collector 上一个**已死的或过渡性的导出槽位经 env 重指向 d-obs**。
+以 rdstudio-otel-collector 为例（2026-10-08 实施）：
+
+1. **签发专用凭据**：工作台「观测查询 → 接入凭据」为该 collector 单独签发 token
+   （如 `service:rdkstudio-otel-collector`），落 `0600` 凭据文件——与应用自身的
+   上报凭据分离，最小权限且归属可在 owner 维度区分；
+2. **env 重指向**：collector 的 `EnvironmentFile` 里把既有导出槽位的
+   endpoint/token 两个 env 改指 d-obs。collector 配置模板里写的是 `${env:VAR}`
+   占位符、在进程启动时才求值，因此 **改 env 不改变渲染配置的字节摘要**——
+   若该 collector 有配置摘要绑定的 attestation（rdstudio 即如此），此法可完全
+   不触碰契约；改前备份 env，改后重启 collector 验证配置 sha 不变；
+3. **验证**：向 collector 入口注入一条 ERROR 状态合成 span（尾采样必留），观察
+   collector 自身指标 `otelcol_exporter_sent_spans{exporter=…}` 递增，再查
+   d-obs 库 `public.studio_trace_spans` 出现对应 trace_id、`owner_user_id` 等
+   于专用凭据的 owner 哈希。
+
+**attestation 35 天有效期陷阱**：若 collector 启动前跑"配置摘要 + 二进制指纹 +
+冒烟证据"的 attestation 校验（证据文档含 `validUntil`），证据过期后 collector
+**无法重启**——服务长期不重启时毫无征兆，一次普通重启即触发停机。rdstudio 的
+修复与自愈机制已在生产落地，可直接复用：`/opt/d-obs-otel-attestation-renew/`
+（`renew.sh` 用生产二进制 + 当前配置在 Docker 里实跑 exact 冒烟 → 续签证据 →
+更新 capability 摘要，冒烟失败不动任何文件），`/etc/cron.d/otel-attestation-renew`
+每月 3 日自动执行。凡采用同款 attestation 契约的 collector 都应部署此机制。
+
 ## 4. 租户拨测（新项目最小接入）
 
 适合只需要存活监控的项目：注册为租户，独立探针 token，systemd timer 每分钟拨测，
