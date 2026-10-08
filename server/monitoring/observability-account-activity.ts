@@ -167,10 +167,12 @@ export async function getAccountActivity(
   report.runs.lastStartedAt = iso(runsSummary?.rows[0]?.last_started_at);
   const runsRecent = await safeQuery(
     p,
-    `select run_id, outcome, error_category, started_at, completed_at, elapsed_ms,
+    `select run_id,
+            to_jsonb(r)->>'environment' environment,
+            outcome, error_category, started_at, completed_at, elapsed_ms,
             coalesce(prompt_tokens, 0) prompt_tokens, coalesce(completion_tokens, 0) completion_tokens,
             model, channel, client_type, device_id, session_id
-       from public.agent_run_records
+       from public.agent_run_records r
       where nullif(trim(sso_user_id), '') = any($1::text[])
         and started_at >= now() - make_interval(hours => $2::int)
       order by started_at desc

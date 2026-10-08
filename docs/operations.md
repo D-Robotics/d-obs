@@ -13,6 +13,9 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 | GET | `/status` | 公开只读状态页（不鉴权）：worker 存活、检查通过率、进行中事故；输出经脱敏（URL/email 占位），不含 token/租户/通道字段 |
 | GET | `/api/ops/observability/access` | 当前请求是否运营 admin（探活/自检） |
 | GET | `/api/ops/observability/overview?hours=24` | 总览：检查、事故、告警状态、行动队列 |
+| GET | `/api/ops/observability/overview?traceEnvironment=production&traceRunId=<run_id>` | 按单个 Run ID 精确读取低敏链路列表；列表只返回匿名 `runRef`，不会回显原始 ID |
+| GET | `/api/ops/observability/account-activity?identifier=<sso_id_or_username>&hours=168` | 按 SSO ID 或用户名聚合 Run、会话、用量、配置/登录审计、事故和运维事件 |
+| GET | `/api/ops/observability/account-activity/events?identifier=<sso_id_or_username>&hours=168&limit=200&eventCode=<code>` | 查看该账号的事件明细（最多 200 条，可按事件码筛选） |
 | GET | `/api/ops/observability/config` | 告警配置（definitions + rules + 通道） |
 | POST | `/api/ops/observability/run-checks` | 立即评估一轮（不等 60s 周期） |
 | POST | `/api/ops/observability/test-notification` | 测试通知模板真实投递 |
@@ -37,6 +40,9 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 **写端点统一约定**：`x-admin-token` + `x-rdk-ops-action: observability` 双头。
 `remediate`（直连自愈）与 `run-evolution`（直触进化）已退役为 410 fail-closed，
 必须走行动环。
+
+SSO 查询入口在工作台“系统配置 → 账号行为”：输入 SSO ID 或用户名，选择时间窗后检索。
+账号页的最近 Run 表格可直接跳到“运行链路”，也可以复制上表的 API 请求给值班脚本使用。
 
 ## 2. 告警规则语义
 
@@ -147,6 +153,10 @@ README 之外的深入参考：API 清单、鉴权细节、告警规则语义、
 | 租户探针上报 401 | 租户被停用、token 已轮换（旧 token 立即失效），或注册响应里的明文 token 没保存完整（只出现一次） |
 | 租户工作台 401 | `x-tenant-token` 不匹配任何活跃租户：admin 用 `GET /api/ops/observability/tenants` 核对状态，必要时 `POST .../tenants/<id>/token` 轮换 |
 | 租户视图里平台面板全空 | 预期行为：events/runs/SLO/Trace/进化面板是平台域数据，租户视图恒为空；租户请求变更类端点一律 403 `tenant_read_only` |
+| 链路页输入 Run UUID 显示 0 条 | 先确认“运行环境”与 Run 所属环境一致；现在 UUID 会走服务端精确查询，不依赖匿名 `runRef` 文本匹配。账号行为页的“查链路”会自动带上 Run ID 和本地开发环境映射 |
+| 链路样本有 Run 但“完整链路”为 0 | 打开该 Run 查看覆盖状态和缺失片段；检查 `studio_trace_spans` 是否收到 `client`、`studio_transport`、`moss_root`、`moss_children`、`terminal` 五段，以及 `agent_run_observability` 摘要。只要任一段未入库，状态保持 partial/summary-only |
+| Run 有摘要但详情暂不可用 | 先查 `studio_trace_spans` 的 `run_id/account_scope_id/environment` 是否一致，再查治理 tombstone 和 35 天保留窗口；详情接口按已签发 locator 读取，不支持直接把原始 Run ID拼到详情 URL |
+| OTLP 采集链路断供 | 按“入口鉴权 → OTLP 接收 → 队列/落库 → trace/metric/log 投影 → 看板查询”逐段看接收/拒绝、队列深度/丢弃、摄取耗时和最近样本时间；若只看到 Run 事实而没有 span，优先检查 Studio relay 的 OTLP 转发与 API key |
 
 ## 6. 数据与 schema
 

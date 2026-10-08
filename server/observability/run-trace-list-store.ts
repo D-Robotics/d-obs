@@ -34,6 +34,8 @@ export interface RunTraceListOptions {
   environment?: StudioDeploymentEnvironment;
   limit?: number;
   cursor?: string;
+  /** Optional exact bounded run-id lookup used by cross-view "查链路" links. */
+  runId?: string;
   /** Scope used to verify cursors. Admin listings use a fixed opaque scope. */
   cursorScope?: ObservabilityAccessScope;
   /** Test seam; production always uses the bounded dashboard pool. */
@@ -137,6 +139,188 @@ function stringArray(value: unknown, max = 24): string[] {
     .filter(Boolean);
 }
 
+// Run ids are UUIDs in the hosted client, but local/self-hosted producers are
+// allowed to use a bounded opaque id (for example `local-run-1`). Keep the
+// lookup parameter narrow and let the response remain HMAC/AEAD protected.
+const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+
+function canonicalRunId(value: unknown): string | null {
+  const candidate = text(value, 200);
+  return RUN_ID_PATTERN.test(candidate) ? candidate : null;
+}
+
+interface TraceCoverageAggregate {
+  spanCount: number;
+  traceCount: number;
+  clientSpanCount: number;
+  serverSpanCount: number;
+  clientDurationMs: number;
+  observedSegments: StudioTraceCoverageSegment[];
+  hasRunSummary: boolean;
+  surface: StudioTraceSurface | null;
+  studioVersion: string | null;
+  mossVersion: string | null;
+  mocVersion: string | null;
+}
+
+function emptyTraceCoverageAggregate(): TraceCoverageAggregate {
+  return {
+    spanCount: 0,
+    traceCount: 0,
+    clientSpanCount: 0,
+    serverSpanCount: 0,
+    clientDurationMs: 0,
+    observedSegments: [],
+    hasRunSummary: false,
+    surface: null,
+    studioVersion: null,
+    mossVersion: null,
+    mocVersion: null,
+  };
+}
+
+function aggregateKey(accountScopeId: string, runId: string): string {
+  return `${accountScopeId}\0${runId}`;
+}
+
+function mapSurface(value: unknown): StudioTraceSurface | null {
+  const candidate = text(value, 32).toLowerCase();
+  return ['web-cloud', 'web-self-host', 'desktop', 'local-dev', 'miniapp'].includes(candidate)
+    ? (candidate as StudioTraceSurface)
+    : null;
+}
+
+function safeVersion(value: unknown): string | null {
+  const version = clientReportedStudioVersion(value);
+  // Unified trace rows default resource versions to 0.0.0 when a producer
+  // did not send one. Treat that sentinel as unknown so a valid Run fact
+  // app_version can still identify an eligible producer.
+  return version === '0.0.0' ? null : version;
+}
+
+/**
+ * Read trace/summary coverage independently from the run facts.  This is a
+ * best-effort projection: a partially migrated database must still return
+ * the run list, so callers can retain the summary-only fallback when either
+ * optional table is unavailable.
+ */
+async function readTraceCoverageAggregates(
+  pool: QueryPool,
+  environmentValue: StudioDeploymentEnvironment,
+  windowStart: number,
+  windowEnd: number,
+  accountScopeIds: string[],
+  runIds: string[],
+  exactRunId: string | null,
+): Promise<Map<string, TraceCoverageAggregate>> {
+  const aggregates = new Map<string, TraceCoverageAggregate>();
+  if (!accountScopeIds.length || !runIds.length) return aggregates;
+  try {
+    const result = await pool.query(
+      `with wanted(account_scope_id, run_id) as (
+             select * from unnest($4::text[], $5::text[])
+           )
+       select s.account_scope_id, s.run_id,
+              count(*)::int span_count,
+              count(distinct s.trace_id)::int trace_count,
+              count(*) filter (where s.span_kind = 'client')::int client_span_count,
+              count(*) filter (where s.span_kind = 'server')::int server_span_count,
+              coalesce(sum(greatest(0, s.end_time_ms - s.start_time_ms))
+                filter (where s.span_kind = 'client'), 0)::bigint client_duration_ms,
+              bool_or(s.source_segment = 'client') has_client,
+              bool_or(s.source_segment = 'studio_transport') has_studio_transport,
+              bool_or(s.source_segment = 'moss' and s.name = 'moss.session') has_moss_root,
+              bool_or(s.source_segment = 'moss' and s.name <> 'moss.session') has_moss_children,
+              max(nullif(s.surface, '')) trace_surface,
+              max(nullif(s.studio_version, '')) studio_version,
+              max(nullif(s.moss_version, '')) moss_version,
+              max(nullif(s.moc_version, '')) moc_version
+         from public.studio_trace_spans s
+         join wanted on wanted.account_scope_id = s.account_scope_id
+                   and wanted.run_id = s.run_id
+        where s.environment = $1
+          and ($6::text is not null or s.start_time_ms >= $2)
+          and ($6::text is not null or s.start_time_ms <= $3)
+          and coalesce(
+            s.governance_expires_at,
+            to_timestamp(s.start_time_ms / 1000.0) + interval '35 days'
+          ) > now()
+          and not exists (
+            select 1 from public.studio_telemetry_tombstones tombstone
+             where tombstone.account_scope_id = s.account_scope_id
+               and tombstone.environment = s.environment
+               and (tombstone.user_id is null or tombstone.user_id = s.owner_user_id)
+               and (tombstone.run_id is null or tombstone.run_id = s.run_id)
+               and (tombstone.trace_id is null or tombstone.trace_id = s.trace_id)
+               and (tombstone.session_id is null or tombstone.session_id = s.session_id)
+               and tombstone.grant_id is null
+          )
+        group by s.account_scope_id, s.run_id`,
+      [environmentValue, windowStart, windowEnd, accountScopeIds, runIds, exactRunId],
+    );
+    for (const row of result.rows) {
+      const accountScopeId = text(row.account_scope_id, 256);
+      const runId = text(row.run_id, 200);
+      if (!accountScopeId || !runId) continue;
+      const observedSegments: StudioTraceCoverageSegment[] = [];
+      if (row.has_client === true) observedSegments.push('client');
+      if (row.has_studio_transport === true) observedSegments.push('studio_transport');
+      if (row.has_moss_root === true) {
+        observedSegments.push('moss_root', 'terminal');
+      }
+      if (row.has_moss_children === true) observedSegments.push('moss_children');
+      aggregates.set(aggregateKey(accountScopeId, runId), {
+        spanCount: number(row.span_count),
+        traceCount: number(row.trace_count),
+        clientSpanCount: number(row.client_span_count),
+        serverSpanCount: number(row.server_span_count),
+        clientDurationMs: number(row.client_duration_ms),
+        observedSegments,
+        hasRunSummary: false,
+        surface: mapSurface(row.trace_surface),
+        studioVersion: safeVersion(row.studio_version),
+        mossVersion: safeVersion(row.moss_version),
+        mocVersion: safeVersion(row.moc_version),
+      });
+    }
+  } catch {
+    // Trace tables are optional during a rolling schema migration. Preserve
+    // the run facts and report summary-only coverage in that case.
+  }
+
+  try {
+    const result = await pool.query(
+      `with wanted(account_scope_id, run_id) as (
+             select * from unnest($4::text[], $5::text[])
+           )
+       select o.account_scope_id, o.run_id
+         from public.agent_run_observability o
+         join wanted on wanted.account_scope_id = o.account_scope_id
+                   and wanted.run_id = o.run_id
+        where o.environment = $1
+          and ($6::text is not null or (
+            o.updated_at >= to_timestamp($2::double precision / 1000.0) - interval '35 days'
+            and o.updated_at <= to_timestamp($3::double precision / 1000.0)
+          ))
+          and ($6::text is null or o.updated_at > now() - interval '35 days')
+        group by o.account_scope_id, o.run_id`,
+      [environmentValue, windowStart, windowEnd, accountScopeIds, runIds, exactRunId],
+    );
+    for (const row of result.rows) {
+      const accountScopeId = text(row.account_scope_id, 256);
+      const runId = text(row.run_id, 200);
+      if (!accountScopeId || !runId) continue;
+      const key = aggregateKey(accountScopeId, runId);
+      const aggregate = aggregates.get(key) ?? emptyTraceCoverageAggregate();
+      aggregate.hasRunSummary = true;
+      aggregates.set(key, aggregate);
+    }
+  } catch {
+    // Summary rows are optional; trace spans can still establish coverage.
+  }
+  return aggregates;
+}
+
 function environment(value: unknown): StudioDeploymentEnvironment {
   const candidate = text(value, 24).toLowerCase() as StudioDeploymentEnvironment;
   return ENVIRONMENTS.has(candidate) ? candidate : 'production';
@@ -196,6 +380,7 @@ export async function getRunTraceList(options: RunTraceListOptions): Promise<Run
   const windowStart = cursor?.windowStart ?? windowEnd - hours * 60 * 60_000;
   const snapshotAt = cursor?.snapshotAt ?? windowEnd;
   const pool = options.pool ?? ((await getPostgresDashboardPool()) as QueryPool);
+  const requestedRunId = canonicalRunId(options.runId);
 
   // `environment` is present on current central rows.  The JSON fallback is
   // retained for older rows created before the explicit column was added.
@@ -218,11 +403,12 @@ export async function getRunTraceList(options: RunTraceListOptions): Promise<Run
               nullif(trim(to_jsonb(r)->>'session_id'), '') session_id,
               r.created_at
          from public.agent_run_records r
-        where r.started_at >= to_timestamp($1::double precision / 1000.0)
-          and r.started_at <= to_timestamp($2::double precision / 1000.0)
+        where ($8::text is not null or r.started_at >= to_timestamp($1::double precision / 1000.0))
+          and ($8::text is not null or r.started_at <= to_timestamp($2::double precision / 1000.0))
           and r.created_at <= to_timestamp($3::double precision / 1000.0)
           and nullif(trim(r.sso_user_id), '') is not null
           and (coalesce(to_jsonb(r)->>'client_type', '') <> 'local-dev' or $4::text = 'development')
+          and ($8::text is null or (r.run_id = $8::text and r.started_at > now() - interval '35 days'))
      ), latest as (
        select distinct on (account_scope_id, run_environment, run_id) *
          from candidates
@@ -260,10 +446,20 @@ export async function getRunTraceList(options: RunTraceListOptions): Promise<Run
       cursor?.sortTime ?? null,
       cursor?.tieBreaker ?? '',
       limit + 1,
+      requestedRunId,
     ],
   );
 
   const rows = result.rows.slice(0, limit);
+  const coverageAggregates = await readTraceCoverageAggregates(
+    pool,
+    environmentValue,
+    windowStart,
+    windowEnd,
+    rows.map((row) => text(row.account_scope_id, 256)).filter(Boolean),
+    rows.map((row) => text(row.run_id, 200)).filter(Boolean),
+    requestedRunId,
+  );
   const nextRow = rows.at(-1);
   const nextCursor =
     result.rows.length > limit && nextRow
@@ -294,15 +490,20 @@ export async function getRunTraceList(options: RunTraceListOptions): Promise<Run
     if (!locator) return [];
     const runRef = runDisplayRef(accountScopeId, runEnvironment, runId);
     const clientType = text(row.client_type, 32) || null;
-    const studioVersion = clientReportedStudioVersion(row.app_version) ?? null;
-    const producerSurface = surface(clientType);
-    const observedSegments: StudioTraceCoverageSegment[] = [];
+    const aggregate =
+      coverageAggregates.get(aggregateKey(accountScopeId, runId)) ??
+      emptyTraceCoverageAggregate();
+    const studioVersion = aggregate.studioVersion ?? clientReportedStudioVersion(row.app_version) ?? null;
+    const producerSurface = aggregate.surface ?? surface(clientType);
+    const observedSegments = aggregate.observedSegments;
     const coverage = projectStudioTraceCoverage({
       surface: producerSurface,
       ...(studioVersion ? { studioVersion } : {}),
+      ...(aggregate.mossVersion ? { mossVersion: aggregate.mossVersion } : {}),
+      ...(aggregate.mocVersion ? { mocVersion: aggregate.mocVersion } : {}),
       admittedAt: iso(row.started_at) ? Date.parse(String(iso(row.started_at))) : undefined,
       observedSegments,
-      hasRunSummary: false,
+      hasRunSummary: aggregate.hasRunSummary,
     });
     return [
       {
@@ -338,18 +539,18 @@ export async function getRunTraceList(options: RunTraceListOptions): Promise<Run
         channel: text(row.channel, 64) || null,
         appVersion: studioVersion,
         deviceModel: text(row.device_model, 120) || null,
-        clientSpanCount: 0,
-        serverSpanCount: 0,
-        clientDurationMs: 0,
-        traceCount: 0,
-        coverage: { ...coverage, spanCount: 0, observedSegments },
+        clientSpanCount: aggregate.clientSpanCount,
+        serverSpanCount: aggregate.serverSpanCount,
+        clientDurationMs: aggregate.clientDurationMs,
+        traceCount: aggregate.traceCount,
+        coverage: { ...coverage, spanCount: aggregate.spanCount, observedSegments },
         producer: {
           surface: producerSurface,
           studioVersion,
-          mossVersion: null,
-          mocVersion: null,
+          mossVersion: aggregate.mossVersion,
+          mocVersion: aggregate.mocVersion,
         },
-        evidence: { runSummary: false, operations: 0, productEvents: 0 },
+        evidence: { runSummary: aggregate.hasRunSummary, operations: 0, productEvents: 0 },
       },
     ];
   });

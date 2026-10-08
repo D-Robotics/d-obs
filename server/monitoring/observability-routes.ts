@@ -444,7 +444,7 @@ export function createOpsObservabilityRouter(): Router {
   const langfuseDashboardEmbed = (): string => {
     const url = String(process.env.STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL ?? '').trim();
     if (!/^https?:\/\//i.test(url)) {
-      return '<div class="notice">尚未配置 Langfuse 公开看板：在 Langfuse 项目里将 Dashboard 设为 Public，然后配置 <code>STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL</code> 并重启服务。</div>';
+      return '<div class="notice">尚未配置 Langfuse 公开看板，外部调用树暂不可用；本地低敏链路仍可在「运行证据链」查看。若要启用外部看板，请在 Langfuse 项目里将 Dashboard 设为 Public，然后配置 <code>STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL</code> 并重启服务。</div>';
     }
     const safeUrl = url.replace(/"/g, '&quot;');
     return `<iframe src="${safeUrl}" title="Langfuse Agent 追踪看板" loading="lazy" style="width:100%;height:72vh;border:1px solid rgba(148,163,184,.25);border-radius:12px;background:#fff"></iframe>`;
@@ -499,6 +499,9 @@ export function createOpsObservabilityRouter(): Router {
         }
         const traceLimit = queryInteger(query, 'traceLimit', 40, 1, 80);
         const traceCursor = queryText(query, 'traceCursor', 4_096);
+        // Cross-view strategy rows carry a canonical run id. Keep matching
+        // server-side so the browser never receives or searches raw IDs.
+        const traceRunId = queryText(query, 'traceRunId', 200);
         // 租户身份：SLO / trace 面板属于平台业务数据，不进入租户视图。
         // 管理员可用 ?tenant= 切换到某租户视角（复用同一过滤链路）。
         let tenantScope = tenantAccess ? tenantAccess.tenantId : null;
@@ -519,6 +522,7 @@ export function createOpsObservabilityRouter(): Router {
               environment: traceEnvironment,
               limit: traceLimit,
               ...(traceCursor ? { cursor: traceCursor } : {}),
+              ...(traceRunId ? { runId: traceRunId } : {}),
             });
           } catch (error) {
             if (error instanceof InvalidTraceCursorError) {
