@@ -162,6 +162,8 @@ export interface PublicObservabilitySpanBatchInput {
   spans: readonly Partial<PublicObservabilitySpanRecord>[];
   status?: PublicObservabilityRunStatus;
   completedAt?: number;
+  /** Durable-store account attribution override (e.g. scope-ref resolution). */
+  accountScopeId?: string;
 }
 
 export interface PublicObservabilityScoreInput {
@@ -1165,7 +1167,11 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
       run.updatedAt = Date.now();
       return { run: this.publicRun(run), spans: [] };
     }
-    await this.persistAndStoreSpans(run, uniqueSpans.map((span) => this.toInternalSpan(span)).filter((span): span is StudioTraceSpan => Boolean(span)));
+    await this.persistAndStoreSpans(
+      run,
+      uniqueSpans.map((span) => this.toInternalSpan(span)).filter((span): span is StudioTraceSpan => Boolean(span)),
+      cleanText(input.accountScopeId ?? '', 256) || undefined,
+    );
     this.updateRunStats(run);
     if (input.status) {
       run.status = pickRunStatus(run.status, input.status);
@@ -1914,7 +1920,11 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     return feedback;
   }
 
-  private async persistAndStoreSpans(run: StoredRun, spans: StudioTraceSpan[]): Promise<void> {
+  private async persistAndStoreSpans(
+    run: StoredRun,
+    spans: StudioTraceSpan[],
+    accountScopeId?: string,
+  ): Promise<void> {
     if (!spans.length) return;
     for (const span of spans) {
       const publicSpan = publicSpanFromStudioSpan(span);
@@ -1924,7 +1934,12 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     run.status = run.status === 'queued' ? 'running' : run.status;
     run.updatedAt = Date.now();
     this.updateRunStats(run);
-    await persistStudioTraceSpans({ spans, ownerUserId: run.owner, runId: run.runId }).catch(() => undefined);
+    await persistStudioTraceSpans({
+      spans,
+      ownerUserId: run.owner,
+      runId: run.runId,
+      ...(accountScopeId ? { accountScopeId } : {}),
+    }).catch(() => undefined);
   }
 
   private publicRun(run: StoredRun): PublicObservabilityRunRecord {

@@ -28,6 +28,7 @@ import { resolveIngestToken } from './ingest-token-store.js';
 import { decodeLogsProtobuf, decodeMetricsProtobuf, decodeTraceProtobuf } from './ai-ecosystem-protobuf.js';
 import { renderDevicePrometheusMetrics } from '../monitoring/device-prometheus.js';
 import { registerObjectsFromOtlp } from '../monitoring/observability-object-registry.js';
+import { resolveStudioScopeRefToAccountScopeId } from './scope-ref-resolver.js';
 import { getPanelRegistrySummary } from '../monitoring/observability-panel-registry.js';
 import { PUBLIC_OBSERVABILITY_OPENAPI } from './public-observability-openapi.js';
 
@@ -217,6 +218,8 @@ function metricValue(value: unknown): number | undefined {
 type NormalizedSpan = {
   runId: string;
   traceId: string;
+  /** App-derived HMAC partition reference from resource attributes, if sent. */
+  scopeRef?: string;
   span: {
     traceId: string;
     spanId: string;
@@ -267,6 +270,7 @@ function normalizeOtlpSpan(raw: unknown, resource: Record<string, unknown>, inde
   return {
     runId,
     traceId: currentTraceId,
+    scopeRef: text(resource['rdk.telemetry.scope.ref'], 80) || undefined,
     span: {
       traceId: currentTraceId,
       spanId: currentSpanId,
@@ -362,6 +366,9 @@ export async function ingestTracePayload(body: JsonObject, identity: Principal):
     const first = group[0];
     try {
       const existing = await store.getRun(identity.owner, first.runId);
+      const accountScopeId = first.scopeRef
+        ? await resolveStudioScopeRefToAccountScopeId(first.scopeRef)
+        : null;
       const result = await store.appendSpans({
         runId: first.runId,
         owner: identity.owner,
@@ -370,6 +377,7 @@ export async function ingestTracePayload(body: JsonObject, identity: Principal):
         source: 'server',
         spans: group.map((item) => item.span),
         run: first.run,
+        ...(accountScopeId ? { accountScopeId } : {}),
       });
       accepted += result.spans.length;
       rejected += group.length - result.spans.length;

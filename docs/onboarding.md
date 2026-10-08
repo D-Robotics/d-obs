@@ -128,6 +128,15 @@ AI 语义映射（gen_ai.* / OpenInference）、评估写入与 gRPC 启用方�
 更新 capability 摘要，冒烟失败不动任何文件），`/etc/cron.d/otel-attestation-renew`
 每月 3 日自动执行。凡采用同款 attestation 契约的 collector 都应部署此机制。
 
+**scope.ref 反解（2026-10-08 起）**：经 collector 中继的 span 默认归属 collector
+专用凭据 owner，run 链路视图（按 `agent_run_records.sso_user_id` 关联）看不到。
+d-obs 支持把 resource 属性 `rdk.telemetry.scope.ref` 反解回真实账号：配置
+`RDK_OBS_SCOPE_REF_HASH_KEY_FILE` 指向与应用侧同源的 scope hash key 文件
+（如 `/etc/rdstudio-otel/credentials/scope-hash-key`，需保证 d-obs 进程可读），
+反解用账号清单取自 `agent_run_records` 近 90 天活跃账号（10 分钟刷新）。反解命中时
+`studio_trace_spans.account_scope_id` 记真实账号、`owner_user_id` 保留凭据 owner；
+未配置或未命中时维持凭据 owner 归属（行为不变）。
+
 ## 4. 租户拨测（新项目最小接入）
 
 适合只需要存活监控的项目：注册为租户，独立探针 token，systemd timer 每分钟拨测，

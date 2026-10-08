@@ -13,6 +13,14 @@ export function isStudioTraceStoreConfigured(): boolean {
   return centralDbUrl().length > 0;
 }
 
+function validAccountScopeId(value: string | undefined): string | null {
+  const accountScopeId = String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]+/g, '')
+    .trim()
+    .slice(0, 256);
+  return accountScopeId || null;
+}
+
 export function resolveStudioTraceStoreEnvironment(): StudioDeploymentEnvironment {
   const configured = String(process.env.RDK_OBSERVABILITY_ENVIRONMENT ?? '')
     .trim()
@@ -61,10 +69,15 @@ export async function persistStudioTraceSpans(input: {
   spans: StudioTraceSpan[];
   ownerUserId: string | null | undefined;
   runId?: string;
+  /** Optional authenticated account attribution; defaults to the owner. */
+  accountScopeId?: string;
+  /** Test seam; production always uses the bounded central pool. */
+  pool?: Pool;
 }): Promise<boolean> {
   const ownerUserId = String(input.ownerUserId ?? '')
     .trim()
     .slice(0, 256);
+  const accountScopeId = validAccountScopeId(input.accountScopeId) ?? ownerUserId;
   const forcedRunId = String(input.runId ?? '')
     .trim()
     .slice(0, 200);
@@ -74,7 +87,7 @@ export async function persistStudioTraceSpans(input: {
   });
   if (!spans.length) return false;
   try {
-    const p = await pool();
+    const p = input.pool ?? (await pool());
     await ensureSchema(p);
     const environment = resolveStudioTraceStoreEnvironment();
     const rows = spans.map((span) => ({
@@ -97,9 +110,9 @@ export async function persistStudioTraceSpans(input: {
           owner_user_id, source, source_segment, name, start_time_ms, end_time_ms,
           status, status_message, attributes)
        select $1, $2, x.trace_id, x.span_id, x.parent_span_id, x.run_id,
-              $1, x.source, x.source_segment, x.name, x.start_time_ms,
+              $3, x.source, x.source_segment, x.name, x.start_time_ms,
               x.end_time_ms, x.status, x.status_message, x.attributes
-       from jsonb_to_recordset($3::jsonb) as x(
+       from jsonb_to_recordset($4::jsonb) as x(
          trace_id text, span_id text, parent_span_id text, run_id text,
          source text, source_segment text, name text, start_time_ms bigint,
          end_time_ms bigint, status text, status_message text, attributes jsonb
@@ -114,7 +127,7 @@ export async function persistStudioTraceSpans(input: {
        where public.studio_trace_spans.owner_user_id = excluded.owner_user_id
          and public.studio_trace_spans.run_id = excluded.run_id
          and public.studio_trace_spans.source = excluded.source`,
-      [ownerUserId, environment, JSON.stringify(rows)],
+      [accountScopeId, environment, ownerUserId, JSON.stringify(rows)],
     );
     return true;
   } catch (error) {
