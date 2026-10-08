@@ -173,6 +173,12 @@ export type ConversationTurnCentralRow = {
  * → 经 HTTP 上报到 web-cloud 中心(reportConversationTurnToCentral)。两路互斥,绝不双计。静默失败、有限重试
  * (dual-write 旁路,不拖慢 run 生命周期)。
  */
+/** PG text 不接受 NUL 字节：源文本（LLM 输出/用户粘贴）混入 \0 会让整条 turn 被拒。 */
+function stripNul(value: unknown): string | null {
+  const s = value == null ? '' : String(value);
+  return s.includes('\u0000') ? s.replace(/\u0000/g, '') : s;
+}
+
 export async function insertConversationTurnCentral(row: ConversationTurnCentralRow): Promise<boolean> {
   const clientType = (row.client_type ?? '').toString().trim() || resolveStudioDeploymentProfile();
   const appVersion = normalizeStudioTelemetryVersion(row.app_version);
@@ -204,13 +210,13 @@ export async function insertConversationTurnCentral(row: ConversationTurnCentral
       [
         sourceId,
         row.recorded_at,
-        row.sso_user_name,
-        row.user_message,
-        row.assistant_message,
+        stripNul(row.sso_user_name),
+        stripNul(row.user_message),
+        stripNul(row.assistant_message),
         row.tools_used,
         row.channel,
         row.outcome,
-        row.error_detail,
+        stripNul(row.error_detail),
         (row.session_id ?? '').toString().trim() || null,
         (row.sso_user_id ?? '').toString().trim() || null,
         clientType || null,

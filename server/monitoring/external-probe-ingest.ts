@@ -185,35 +185,37 @@ async function ensureTenantColumns(p: Pool): Promise<void> {
     `alter table public.studio_external_probe_status
        add column if not exists tenant_id text not null default 'platform'`,
   );
-  await p
+  // 每分钟拨测都会走到这里：先查现有主键再决定是否补建，
+  // 否则 PG 服务端每次都会把 42P16 写进日志（应用层吞掉也挡不住）。
+  const pkRows = await p
     .query(
       `select conname, pg_get_constraintdef(oid) as def
          from pg_catalog.pg_constraint
         where conrelid = 'public.studio_external_probe_status'::regclass
           and contype = 'p'`,
     )
-    .then(async (result) => {
-      for (const row of result.rows) {
-        const name = String(row.conname);
-        const def = String(row.def);
-        // 只删不含 tenant_id 的旧单列主键；复合主键保留。
-        if (/studio_external_probe_status/.test(name) && !def.includes('tenant_id')) {
-          await p.query(`alter table public.studio_external_probe_status drop constraint ${name}`);
-        }
-      }
-    })
-    .catch(() => {});
-  await p
-    .query(
-      `alter table public.studio_external_probe_status
-         add primary key (tenant_id, source)`,
-    )
-    .catch((error) => {
-      // 已有主键时忽略：42P10 已建、42P16 multiple primary keys。
-      const code = (error as { code?: string }).code;
-      if (code === '42P10' || code === '42P16' || code === '42P07') return undefined;
-      throw error;
-    });
+    .catch(() => ({ rows: [] as { conname: unknown; def: unknown }[] }));
+  for (const row of pkRows.rows) {
+    const name = String(row.conname);
+    const def = String(row.def);
+    // 只删不含 tenant_id 的旧单列主键；复合主键保留。
+    if (/studio_external_probe_status/.test(name) && !def.includes('tenant_id')) {
+      await p.query(`alter table public.studio_external_probe_status drop constraint ${name}`);
+    }
+  }
+  if (pkRows.rows.length === 0) {
+    await p
+      .query(
+        `alter table public.studio_external_probe_status
+           add primary key (tenant_id, source)`,
+      )
+      .catch((error) => {
+        // 约束查询失败回落到此路径时，已有主键则忽略：42P10 已建、42P16 multiple primary keys。
+        const code = (error as { code?: string }).code;
+        if (code === '42P10' || code === '42P16' || code === '42P07') return undefined;
+        throw error;
+      });
+  }
   await p.query(
     `create index if not exists studio_external_probe_status_tenant_idx
        on public.studio_external_probe_status (tenant_id)`,

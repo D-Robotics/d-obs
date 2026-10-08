@@ -186,6 +186,7 @@ const CATEGORY_SQL = `
 with runs as (
   select sso_user_id,
          lower(btrim(outcome)) as outcome,
+         error_category,
          started_at
     from public.agent_run_records
    where started_at >= now() - make_interval(days => $1::int)

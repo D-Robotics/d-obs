@@ -229,16 +229,23 @@ export async function getEvolutionOverview(p: EvolutionPool): Promise<EvolutionO
           order by started_at desc
           limit 30`,
       ),
-      p
-        .query(
+      (async () => {
+        // 候选表由 rdstudio 侧写入、可能尚不存在；先探表再计数。
+        // 不能用 CASE 分支内联：PG 在 parse 阶段就解析关系名，缺表时
+        // 整条语句仍报 42P01 并写服务端日志。
+        const probe = await p.query(
+          `select to_regclass('public.agent_evolution_candidates') is not null as ready`,
+        );
+        if (probe.rows[0]?.ready !== true) return { rows: [{}] };
+        return p.query(
           `select count(*)::int evidence_count
              from public.agent_evolution_candidates
             where recorded_at >= now() - interval '7 days'`,
-        )
-        .catch((error) => {
-          if ((error as { code?: string }).code === '42P01') return { rows: [{}] };
-          throw error;
-        }),
+        );
+      })().catch((error) => {
+        if ((error as { code?: string }).code === '42P01') return { rows: [{}] };
+        throw error;
+      }),
     ]);
     const status = statusResult.rows[0] ?? {};
     const summary = summaryResult.rows[0] ?? {};

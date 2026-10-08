@@ -68,6 +68,13 @@ export async function loadQualityTrend(windowDays = 30): Promise<QualityTrend> {
   const days = Math.max(1, Math.min(90, Math.floor(windowDays)));
   const p = await pool();
   let result;
+  // 表尚未建立（首次写入前的新部署）时直接按"无数据"返回：查了也是
+  // 42P01，应用层能吞，但 PG 会把每条都写进服务端日志变成持续噪音。
+  const ready = await p.query(
+    `select to_regclass('public.studio_public_observability_feedback') is not null
+       and to_regclass('public.studio_public_observability_scores') is not null as ready`,
+  );
+  if (ready.rows[0]?.ready !== true) return { ...emptyQualityTrend(days), configured: true };
   try {
     result = await p.query(
     `with span as (

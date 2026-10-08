@@ -1010,7 +1010,10 @@ export function createOpsObservabilityRouter(): Router {
     requireOpsMutationGuard,
     async (_req: Request, res: Response) => {
       try {
-        await execFileAsync('systemctl', ['start', 'rdstudio-alert-worker.service'], {
+        // 评估闭环已收敛到 d-obs 自有 worker（rdk-observability-worker.timer 的
+        // oneshot 单元）；rdstudio-alert-worker 是 rdstudio-web-opt 旧链路，
+        // 其 alert-config zod 会拒绝审计字段并静默降级，不得再被拉起。
+        await execFileAsync('systemctl', ['start', 'rdk-observability-worker.service'], {
           timeout: 15_000,
           maxBuffer: 200_000,
         });
