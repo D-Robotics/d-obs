@@ -16,6 +16,51 @@ export const OPS_OBSERVABILITY_UX_STYLE = `
     @media(max-width:720px){.global-command-bar{grid-template-columns:1fr;padding:8px}.workspace-facts{order:3}.global-search-trigger kbd{display:none}.command-palette-backdrop{padding:7vh 10px 14px}.command-palette-foot{flex-wrap:wrap;gap:7px}}
     body.palette-open{overflow:hidden}
     @media(prefers-reduced-motion:reduce){.global-search-trigger{transition:none}}
+
+    /* Visual hierarchy pass: separate the canvas, workspace surfaces and data rows.
+       The workbench has many valid panels; the contrast below makes the operator's
+       scan path (context → decision → evidence) legible without changing markup. */
+    body.ops-observability{background:var(--bg);background-image:linear-gradient(180deg,color-mix(in srgb,var(--panel) 42%,transparent),transparent 340px)}
+    body.ops-observability main{isolation:isolate}
+    body.ops-observability main:before{content:"";position:absolute;z-index:-1;inset:0 0 auto;height:280px;pointer-events:none;background:radial-gradient(700px 220px at 45% 0,color-mix(in srgb,var(--green) 7%,transparent),transparent 72%)}
+    body.ops-observability .view:not(.hidden){display:grid;gap:16px}
+    body.ops-observability .overview-stack{gap:16px}
+    body.ops-observability .panel{position:relative;border-color:color-mix(in srgb,var(--text) 11%,transparent);box-shadow:var(--shadow-soft),0 10px 24px color-mix(in srgb,var(--text) 4%,transparent)}
+    body.ops-observability .panel>.section-head{position:relative;padding-bottom:11px;border-bottom:1px solid color-mix(in srgb,var(--text) 8%,transparent)}
+    body.ops-observability .panel>.section-head:after{content:"";position:absolute;left:0;bottom:-1px;width:34px;height:2px;border-radius:99px;background:var(--green)}
+    body.ops-observability .panel>.section-head .hint{max-width:760px}
+    body.ops-observability .situation-hero{margin-bottom:2px;box-shadow:0 16px 34px color-mix(in srgb,var(--green) 13%,transparent),var(--shadow-soft)}
+    body.ops-observability .north-star-panel{background:linear-gradient(135deg,color-mix(in srgb,var(--panel) 94%,var(--green)),var(--panel) 62%)}
+    body.ops-observability .north-star-card{background:color-mix(in srgb,var(--panel) 82%,var(--bg));transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}
+    body.ops-observability .north-star-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px color-mix(in srgb,var(--text) 8%,transparent)}
+    body.ops-observability .unified-focus{gap:16px}
+    body.ops-observability .action-center,body.ops-observability .coverage-panel{background:var(--panel)}
+    body.ops-observability .pulse-grid{gap:14px}
+    body.ops-observability .pulse-card{background:color-mix(in srgb,var(--panel) 90%,var(--bg));}
+    body.ops-observability .pulse-card .pulse-link{opacity:.9}
+    body.ops-observability .detail-sections{background:color-mix(in srgb,var(--panel) 90%,var(--bg));}
+    body.ops-observability .detail-sections[open]{box-shadow:var(--shadow-soft),0 8px 20px color-mix(in srgb,var(--text) 4%,transparent)}
+    body.ops-observability .detail-sections>*:not(.detail-summary){background:var(--panel)}
+    body.ops-observability .rules-head,body.ops-observability .metric-head,body.ops-observability .template-head{background:color-mix(in srgb,var(--bg) 76%,var(--panel));border-color:color-mix(in srgb,var(--text) 10%,transparent)}
+    body.ops-observability .rule-row,body.ops-observability .metric-row,body.ops-observability .template-row{background:var(--panel);transition:background-color .14s ease,box-shadow .14s ease}
+    body.ops-observability .rule-row:hover,body.ops-observability .metric-row:hover,body.ops-observability .template-row:hover{background:color-mix(in srgb,var(--green) 4%,var(--panel));box-shadow:inset 3px 0 0 color-mix(in srgb,var(--green) 55%,transparent)}
+    body.ops-observability .rule-row:nth-child(even),body.ops-observability .metric-row:nth-child(even),body.ops-observability .template-row:nth-child(even){background:color-mix(in srgb,var(--bg) 20%,var(--panel))}
+    body.ops-observability .table-panel,body.ops-observability .strategy-card,body.ops-observability .template-list{overflow:hidden}
+    body.ops-observability .table-title{background:color-mix(in srgb,var(--bg) 55%,var(--panel));padding-top:16px;padding-bottom:13px}
+    body.ops-observability .table-title h2{font-size:16px}
+    body.ops-observability .view-head{padding-bottom:2px}
+    body.ops-observability .view-head h2{font-weight:760}
+    body.ops-observability .workspace-toolbar{box-shadow:0 4px 14px color-mix(in srgb,var(--text) 4%,transparent)}
+    body.ops-observability .nav-group{padding-top:4px}
+    body.ops-observability .nav-group+.nav-group{margin-top:14px}
+    body.ops-observability .nav-section-toggle{letter-spacing:.015em}
+    body.ops-observability .nav-group-items{margin-top:4px}
+    body.ops-observability .module-tab.active{font-weight:720}
+    @media(max-width:720px){
+      body.ops-observability .view:not(.hidden),body.ops-observability .overview-stack{gap:12px}
+      body.ops-observability .panel>.section-head{padding-bottom:9px}
+      body.ops-observability .unified-focus{gap:12px}
+    }
 `;
 
 export const OPS_OBSERVABILITY_SCRIPT_UX = `

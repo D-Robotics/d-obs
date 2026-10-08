@@ -131,6 +131,33 @@ export const OPS_OBSERVABILITY_PRODUCT_STYLE = `
     #incidentSummary .ic-trend{min-width:0}
     @media(max-width:900px){#incidentSummary{grid-template-columns:repeat(2,minmax(0,1fr))}#incidentSummary .ic-viz{grid-template-columns:1fr 1fr}.workspace-toolbar{border-radius:10px}}
     @media(max-width:520px){.page-head{margin-bottom:14px}.page-head h1{font-size:24px}.workspace-toolbar{padding:9px 10px}.workspace-fact{min-height:26px;padding:3px 8px}#incidentSummary .ic-viz{grid-template-columns:1fr;gap:12px}}
+
+      /* Hierarchy pass: establish a quiet canvas, a clear page context, and
+         distinct evidence surfaces. The workbench should read as a stack of
+         decisions instead of a flat sheet of equal cards. */
+      main{position:relative;background:linear-gradient(180deg,var(--c327) 0%,color-mix(in srgb,var(--c327) 92%,var(--c378)) 58%,var(--c327) 100%)}
+      main:before{content:"";position:absolute;inset:0 0 auto;height:220px;pointer-events:none;background:radial-gradient(ellipse at 76% 0%,color-mix(in srgb,var(--green) 7%,transparent),transparent 64%);opacity:.9}
+      main>*{position:relative}
+      .page-head{position:relative;padding:20px 22px 18px;margin-bottom:14px;border:1px solid color-mix(in srgb,var(--green) 12%,var(--line));border-radius:16px;background:linear-gradient(110deg,color-mix(in srgb,var(--panel) 96%,var(--green)) 0%,var(--panel) 58%,color-mix(in srgb,var(--panel) 94%,var(--blue)) 100%);box-shadow:0 12px 28px color-mix(in srgb,var(--text) 7%,transparent),inset 0 1px 0 color-mix(in srgb,var(--c2) 72%,transparent);overflow:hidden}
+      .page-head:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(180deg,var(--green),color-mix(in srgb,var(--green) 35%,var(--blue)));border-radius:16px 0 0 16px}
+      .page-head-copy{padding-left:4px}.page-head h1{font-size:29px;letter-spacing:-.04em}.page-kicker{color:var(--green);font-size:10px}.page-head .page-intro{font-size:13px!important;color:var(--text)!important;opacity:.78}.page-head #fresh{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:4px 8px;border-radius:999px;background:color-mix(in srgb,var(--panel2) 88%,transparent);color:var(--muted);font-size:10px}.page-head #fresh:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--orange);box-shadow:0 0 0 3px color-mix(in srgb,var(--orange) 14%,transparent)}
+      .page-head-actions{position:relative;z-index:1}.page-head-actions .btn{min-width:88px}.page-head-actions .btn.primary{box-shadow:0 8px 18px color-mix(in srgb,var(--green) 24%,transparent)}
+      .workspace-toolbar{position:relative;min-height:58px;margin-bottom:22px;padding:11px 14px;border:1px solid color-mix(in srgb,var(--green) 14%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--panel) 88%,var(--panel2));box-shadow:0 7px 18px color-mix(in srgb,var(--text) 5%,transparent)}
+      .workspace-toolbar:before{content:"";position:absolute;left:14px;right:14px;top:-1px;height:2px;border-radius:2px;background:linear-gradient(90deg,var(--green),color-mix(in srgb,var(--green) 10%,transparent) 68%,transparent)}
+      .scope-copy strong{font-size:12px}.scope-copy strong:before{content:"◉";margin-right:7px;color:var(--green);font-size:10px}.scope-control select{box-shadow:inset 0 1px 2px color-mix(in srgb,var(--text) 6%,transparent)}
+      .workspace-fact{box-shadow:inset 0 1px 0 color-mix(in srgb,var(--c2) 70%,transparent)}
+      .view{position:relative;padding-top:2px}.view>.view-head{position:relative;padding:0 0 12px;margin-bottom:16px;border-bottom:1px solid color-mix(in srgb,var(--green) 12%,var(--line))}.view>.view-head:after{content:"";position:absolute;left:0;bottom:-1px;width:56px;height:2px;background:var(--green);border-radius:2px}.view>.view-head .right{padding:5px 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel);box-shadow:var(--shadow-soft)}
+      .domain-note{position:relative;margin:0 0 14px;padding:12px 16px;border:1px solid color-mix(in srgb,var(--blue) 20%,var(--line));border-left:3px solid var(--blue);border-radius:10px;background:color-mix(in srgb,var(--blue) 6%,var(--panel));box-shadow:var(--shadow-soft);font-size:11px}.domain-note strong{color:var(--blue);font-weight:720}
+      .overview-stack{gap:16px}.overview-stack>.panel,.overview-stack>details,.overview-stack>.incident-section{position:relative;border-color:color-mix(in srgb,var(--text) 10%,var(--line));box-shadow:0 8px 20px color-mix(in srgb,var(--text) 4%,transparent)}.overview-stack>.panel:before,.overview-stack>details:before,.overview-stack>.incident-section:before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:3px;background:color-mix(in srgb,var(--green) 58%,transparent)}
+      .section-head{position:relative}.section-head h2:before{content:"";display:inline-block;width:6px;height:6px;margin:0 8px 2px 0;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 12%,transparent)}
+      .panel{border-color:color-mix(in srgb,var(--text) 10%,var(--line));box-shadow:0 7px 18px color-mix(in srgb,var(--text) 5%,transparent),inset 0 1px 0 color-mix(in srgb,var(--c2) 68%,transparent)}
+      .situation-hero{box-shadow:0 16px 34px color-mix(in srgb,var(--green) 18%,transparent)}
+      .north-star-card,.pulse-card,button.pulse-card,.incident-card,.check,.metric,.summary-card{box-shadow:0 4px 12px color-mix(in srgb,var(--text) 4%,transparent)}
+      .north-star-card:hover,.pulse-card:hover,button.pulse-card:hover,.incident-card:hover{transform:translateY(-2px);box-shadow:0 10px 24px color-mix(in srgb,var(--text) 9%,transparent)}
+      .rules-head,.metric-head,.template-head{background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 86%,var(--green)),var(--panel2));border-bottom-color:color-mix(in srgb,var(--green) 13%,var(--line))}
+      .rule-row,.metric-row,.template-row{transition:background .16s ease,box-shadow .16s ease}.rule-row:hover,.metric-row:hover,.template-row:hover{box-shadow:inset 3px 0 0 var(--green)}
+      .shell-status{padding:20px 22px!important;background:linear-gradient(110deg,var(--panel),color-mix(in srgb,var(--panel) 93%,var(--blue)));box-shadow:var(--shadow)}.shell-status strong{font-size:14px}.shell-status small{margin-top:3px}
+      @media(max-width:720px){.page-head{padding:17px 17px 16px;border-radius:13px}.page-head h1{font-size:24px}.workspace-toolbar{margin-bottom:18px}.view>.view-head{padding-bottom:10px}.view>.view-head .right{display:none}.overview-stack{gap:12px}}
     }
     /* The dark palette uses --c2 for the panel surface, so header content needs
        explicit on-shell colors instead of inheriting the panel token. These
