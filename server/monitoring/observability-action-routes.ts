@@ -44,7 +44,7 @@ import {
 import { loadAlertConfig, type AlertConfig } from './alert-config.js';
 import { getPostgresDashboardPool } from './postgres-dashboard-store.js';
 import { getOpsEventDetail, type OpsEventDetail } from './observability-store.js';
-import { recordOpsEvent } from './ops-event-store.js';
+import { recordOpsEvent, sanitizeOpsSummary } from './ops-event-store.js';
 import { resolveStudioTraceStoreEnvironment } from '../observability/studio-trace-store.js';
 import { opaqueObservabilityRef } from './observability-opaque-ref.js';
 import type { StudioDeploymentEnvironment } from '../../shared/studio-observability.js';
@@ -423,6 +423,9 @@ export function createObservabilityActionRouter(
         res.setHeader('Cache-Control', 'no-store');
         res.json({ ok: true, actions, stats });
       } catch (error) {
+        // 503 此前完全静默，生产连续两天无法回答看板 503 的原因；自日志回灌
+        // 依赖 console.warn，这里必须留下可归因的摘要。
+        console.warn('[observability-action] actions list unavailable:', sanitizeOpsSummary(error, 240));
         res
           .status(503)
           .json({ ok: false, error: safeErrorCode(error, 'action_store_unavailable') });

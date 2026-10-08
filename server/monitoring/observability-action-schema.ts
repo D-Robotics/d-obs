@@ -140,21 +140,52 @@ function sqlTrue(value: unknown): boolean {
   return value === true || value === 1 || value === 't' || value === 'true';
 }
 
-function readinessError(): Error {
-  return new Error('action_schema_unavailable');
+/**
+ * 供 worker warn / web console.warn 消费的失败细节。历史上该模块把探测查询
+ * 失败与目录检查不过统一吞成裸 `action_schema_unavailable`，生产连续两天
+ * 无法回答"为什么 503"，因此这里必须保留类别或底层错误文本。
+ */
+function probeFailureDetail(reasons: readonly string[]): string {
+  const detail = reasons
+    .filter(Boolean)
+    .join('; ')
+    .replace(/[^\w .,:()=|/-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+  return detail || 'unknown';
 }
 
-function isReady(row: Record<string, unknown> | undefined): boolean {
-  return Boolean(
-    row &&
-      sqlTrue(row.relation_exists) &&
-      sqlTrue(row.rls_enabled) &&
-      sqlTrue(row.columns_ready) &&
-      sqlTrue(row.nullability_ready) &&
-      sqlTrue(row.constraints_ready) &&
-      sqlTrue(row.indexes_ready) &&
-      sqlTrue(row.privileges_ready),
+function readinessError(detail?: string): Error {
+  return new Error(
+    detail ? `action_schema_unavailable: ${detail}` : 'action_schema_unavailable',
   );
+}
+
+type ReadinessRow = Record<string, unknown> & {
+  relation_exists?: unknown;
+  rls_enabled?: unknown;
+  columns_ready?: unknown;
+  nullability_ready?: unknown;
+  constraints_ready?: unknown;
+  indexes_ready?: unknown;
+  privileges_ready?: unknown;
+};
+
+function readinessReasons(row: ReadinessRow | undefined): string[] {
+  if (!row) return ['probe returned no row'];
+  const checks: Array<[string, unknown]> = [
+    ['relation missing', row.relation_exists],
+    ['rls disabled', row.rls_enabled],
+    ['columns incomplete', row.columns_ready],
+    ['nullability incomplete', row.nullability_ready],
+    ['constraints incomplete', row.constraints_ready],
+    ['indexes incomplete', row.indexes_ready],
+    ['privileges insufficient', row.privileges_ready],
+  ];
+  return checks
+    .filter(([, value]) => !sqlTrue(value))
+    .map(([name]) => name);
 }
 
 let readinessByPool = new WeakMap<object, Promise<void>>();
@@ -168,15 +199,17 @@ export async function ensureObservabilityActionSchema(p: ActionStorePool): Promi
     let result: PgResult;
     try {
       result = (await p.query(OBSERVABILITY_ACTION_SCHEMA_READINESS_SQL)) as PgResult;
-    } catch {
-      throw readinessError();
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      throw readinessError(`probe query failed: ${probeFailureDetail([raw])}`);
     }
-    if (!isReady(result.rows[0])) throw readinessError();
+    const reasons = readinessReasons(result.rows[0] as ReadinessRow | undefined);
+    if (reasons.length > 0) throw readinessError(probeFailureDetail(reasons));
   })().catch((error) => {
     readinessByPool.delete(key);
-    throw error instanceof Error && error.message === 'action_schema_unavailable'
+    throw error instanceof Error && error.message.startsWith('action_schema_unavailable')
       ? error
-      : readinessError();
+      : readinessError(probeFailureDetail([error instanceof Error ? error.message : String(error)]));
   });
   readinessByPool.set(key, check);
   return check;

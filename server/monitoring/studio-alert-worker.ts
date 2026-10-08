@@ -1018,6 +1018,7 @@ async function collectNginxObservation(config: AlertConfig): Promise<AlertObserv
     let count = 0;
     let badGateway = 0;
     let deviceOfflineSkipped = 0;
+    const pathCounts = new Map<string, number>();
     for (const line of String(stdout).split(/\r?\n/)) {
       const timestamp = line.match(/\[([^\]]+)\]/)?.[1];
       const status = Number(line.match(/"\s+(\d{3})\s+/)?.[1]);
@@ -1031,16 +1032,29 @@ async function collectNginxObservation(config: AlertConfig): Promise<AlertObserv
         }
         count += 1;
         if (status === 502 || status === 503 || status === 504) badGateway += 1;
+        const requestPath = (requestLine.split(/\s+/)[1] ?? requestLine)
+          .split('?')[0]
+          .slice(0, 80);
+        if (requestPath) pathCounts.set(requestPath, (pathCounts.get(requestPath) ?? 0) + 1);
       }
     }
     const skippedNote =
       deviceOfflineSkipped > 0 ? `，另排除设备离线 503 ${deviceOfflineSkipped} 次` : '';
+    let topPath = '';
+    let topCount = 0;
+    for (const [path, pathCount] of pathCounts) {
+      if (pathCount > topCount) {
+        topPath = path;
+        topCount = pathCount;
+      }
+    }
+    const topPathNote = topPath ? `，主要路径 ${topPath} ${topCount} 次` : '';
     return ruleObservation(config, {
       key,
       title: 'Nginx 5xx 日志异常',
       severity: ruleSeverity(config, key, count),
       unhealthy: count >= config.rules[key].threshold,
-      summary: `${config.rules[key].windowMinutes} 分钟内 Nginx 5xx ${count} 次（502/503/504 共 ${badGateway} 次${skippedNote}）`,
+      summary: `${config.rules[key].windowMinutes} 分钟内 Nginx 5xx ${count} 次（502/503/504 共 ${badGateway} 次${skippedNote}${topPathNote}）`,
     });
   } catch (error) {
     return ruleObservation(config, {
