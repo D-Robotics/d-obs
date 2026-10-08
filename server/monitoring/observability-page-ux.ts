@@ -41,6 +41,13 @@ export const OPS_OBSERVABILITY_UX_STYLE = `
     body.ops-observability .detail-sections{background:color-mix(in srgb,var(--panel) 90%,var(--bg));}
     body.ops-observability .detail-sections[open]{box-shadow:var(--shadow-soft),0 8px 20px color-mix(in srgb,var(--text) 4%,transparent)}
     body.ops-observability .detail-sections>*:not(.detail-summary){background:var(--panel)}
+    /* Each module needs a visible hand-off from the page header. The previous
+       accessibility-only treatment hid this heading completely, leaving the
+       first data panel to carry the context on its own. */
+    body.ops-observability .view>.view-head>div:first-child{position:static;width:auto;height:auto;padding:0;margin:0;overflow:visible;clip-path:none;white-space:normal}
+    body.ops-observability .view>.view-head{display:flex;align-items:flex-end;gap:16px;min-height:46px;margin:0;padding:0 0 12px;border-bottom:1px solid color-mix(in srgb,var(--text) 10%,transparent)}
+    body.ops-observability .view>.view-head .eyebrow{color:var(--green)}
+    body.ops-observability .view>.view-head .right{margin-left:auto}
     body.ops-observability .rules-head,body.ops-observability .metric-head,body.ops-observability .template-head{background:color-mix(in srgb,var(--bg) 76%,var(--panel));border-color:color-mix(in srgb,var(--text) 10%,transparent)}
     body.ops-observability .rule-row,body.ops-observability .metric-row,body.ops-observability .template-row{background:var(--panel);transition:background-color .14s ease,box-shadow .14s ease}
     body.ops-observability .rule-row:hover,body.ops-observability .metric-row:hover,body.ops-observability .template-row:hover{background:color-mix(in srgb,var(--green) 4%,var(--panel));box-shadow:inset 3px 0 0 color-mix(in srgb,var(--green) 55%,transparent)}
