@@ -71,7 +71,6 @@ export const OPS_OBSERVABILITY_SCRIPT_OPERATOR_METRICS = `
           const notice=make('div','operator-metrics-empty','运营指标暂未接入：请确认中心库已配置，并重试读取。');
           root.appendChild(notice);return;
         }
-        const windowLabel=$('operatorMetricsWindowLabel');if(windowLabel)windowLabel.textContent='近 '+operatorMetricNumber(metrics.windowDays)+' 天 · 低敏聚合';
         const rows=operatorMetricRows(metrics);
         if(!rows.length){
           root.appendChild(make('div','operator-metrics-empty','当前窗口没有可展示的运营样本；数据写入后会自动出现在这里。'));return;

@@ -64,7 +64,7 @@ export const OPS_OBSERVABILITY_SIGNALS_STYLE = `
 .signals-chart-tip .swatch{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;flex-shrink:0}
 .signals-chart-brush{position:absolute;background:rgba(59,130,246,.14);border:1px solid rgba(59,130,246,.5);border-radius:2px;pointer-events:none;z-index:4}
 .board-confirm-text{margin:0;font-size:12px;color:var(--muted);line-height:1.6}
-body.obs-kiosk header,body.obs-kiosk .side-nav,body.obs-kiosk .page-head,body.obs-kiosk .workspace-toolbar,body.obs-kiosk .module-switcher,body.obs-kiosk .skip-link{display:none!important}
+body.obs-kiosk header,body.obs-kiosk .side-nav,body.obs-kiosk .page-head,body.obs-kiosk .module-switcher,body.obs-kiosk .skip-link{display:none!important}
 body.obs-kiosk .app-shell{display:block}
 body.obs-kiosk #mainContent{padding:12px}
 .board-modal{position:fixed;inset:0;background:rgba(2,6,23,.62);display:flex;align-items:center;justify-content:center;z-index:90;padding:16px}

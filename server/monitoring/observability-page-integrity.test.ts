@@ -58,7 +58,10 @@ test('页面明确区分云侧与端侧数据域', () => {
   const html = OPS_OBSERVABILITY_HTML;
   assert.match(html, /data-domain-tab="cloud"/);
   assert.match(html, /data-domain-tab="edge"/);
-  assert.match(html, /端侧数据域/);
+  // 域差异由页头切换器表达（syncDomainSwitcher 的两套 hint 文案），不再依赖
+  // 视图内的说明条。
+  assert.match(html, /RDK Studio · 服务 · 服务器/);
+  assert.match(html, /机器人 · RDK 板 · edge-agent/);
   assert.match(html, /edge-agent/);
   assert.match(html, /domain-switcher/);
 });

@@ -395,7 +395,8 @@ test('两级路由：旧 hash 别名规范化为 视图/子模块，未知视图
   assert.equal(canon('model-pool'), JSON.stringify({ name: 'platform', child: 'model-pool', source: 'platform/model-pool' }));
   assert.equal(canon('settings/probing'), JSON.stringify({ name: 'platform', child: 'probing', source: 'platform/probing' }));
   assert.equal(canon('platform'), JSON.stringify({ name: 'platform', child: 'general', source: 'platform/general' }));
-  assert.equal(canon('alerts'), JSON.stringify({ name: 'alerts', child: 'rules', source: 'alerts/rules' }));
+  assert.equal(canon('alerts'), JSON.stringify({ name: 'alerts', child: 'center', source: 'alerts/center' }), '裸 #alerts 默认落在告警中心（响应队列优先）');
+  assert.equal(canon('alerts/rules'), JSON.stringify({ name: 'alerts', child: 'rules', source: 'alerts/rules' }));
   assert.equal(canon('alerts/channels'), JSON.stringify({ name: 'alerts', child: 'channels', source: 'alerts/channels' }));
   assert.equal(canon('agent-traces'), JSON.stringify({ name: 'traces', child: 'agent', source: 'traces/agent' }));
   assert.equal(canon('session-traces'), JSON.stringify({ name: 'traces', child: 'session', source: 'traces/session' }));

@@ -113,16 +113,10 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
           </div>
         </details>
         <details class="nav-group" id="nav-group-core" data-nav-group="core">
-          <summary class="nav-section-toggle" aria-controls="nav-group-core-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">告警与事故</span><span class="nav-group-alert" id="navCoreAlert" hidden></span></summary>
+          <summary class="nav-section-toggle" aria-controls="nav-group-core-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">告警响应</span><span class="nav-group-alert" id="navCoreAlert" hidden></span></summary>
           <div class="nav-group-items" id="nav-group-core-items">
             <button class="module-tab" data-view="investigate" aria-controls="view-investigate" title="从异常、证据和影响范围定位事故">事故调查<span id="incidentCount" class="tab-count" title="进行中事故数">—</span></button>
             <button class="module-tab" data-view="alerts/center" aria-controls="view-alerts" title="待认领、处理中与已关闭的处置队列，用 MTTA / MTTR 衡量响应效率">告警中心</button>
-            <button class="module-tab" data-view="alerts/strategies" aria-controls="view-alerts" title="自定义 PromQL 阈值策略：公共层与租户策略">自定义策略</button>
-            <button class="module-tab" data-view="alerts/rules" aria-controls="view-alerts" title="维护告警规则、阈值和通知路由">告警策略<span id="ruleCount" class="tab-count" title="触发中的策略数" hidden>—</span></button>
-            <button class="module-tab" data-view="alerts/metrics" aria-controls="view-alerts" title="系统指标的数据源、状态和阈值">指标与数据源<span id="metricCount" class="tab-count">—</span></button>
-            <button class="module-tab" data-view="alerts/objects" aria-controls="view-alerts" title="对象注册表与选择入口">告警对象<span id="objectCount" class="tab-count">—</span></button>
-            <button class="module-tab" data-view="alerts/channels" aria-controls="view-alerts" title="通知渠道的路由与降噪">通知模板<span id="channelCount" class="tab-count">—</span></button>
-            <button class="module-tab" data-view="alerts/silence" aria-controls="view-alerts" title="计划内维护的告警屏蔽窗口">告警屏蔽</button>
             <button class="module-tab" data-view="traces" aria-controls="view-traces" title="从事故证据下钻单次 Agent 与会话运行">链路追踪</button>
           </div>
         </details>
@@ -132,6 +126,11 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
             <button class="module-tab" data-view="signals" aria-controls="view-signals" title="查询 OTLP 指标与日志，维护自定义面板">观测查询</button>
             <button class="module-tab" data-view="signals/quality" aria-controls="view-signals" title="run 评分与用户反馈的按天趋势">质量与反馈</button>
             <button class="module-tab" data-view="service-levels" aria-controls="view-service-levels" title="查看用户旅程 SLO、错误预算和风险目标">SLO 与错误预算</button>
+          </div>
+        </details>
+        <details class="nav-group" id="nav-group-infra" data-nav-group="infra">
+          <summary class="nav-section-toggle" aria-controls="nav-group-infra-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">基础设施</span></summary>
+          <div class="nav-group-items" id="nav-group-infra-items">
             <button class="module-tab" data-view="devices" aria-controls="view-devices" title="查看边缘设备心跳、在线状态与板级指标">边缘设备</button>
             <button class="module-tab" data-view="data-health" aria-controls="view-data-health" title="查看关键业务数据是否持续入库">数据入库健康</button>
             <button class="module-tab" data-view="database" aria-controls="view-database" title="查看 PostgreSQL 运行状态、关系与数据表">数据库状态</button>
@@ -145,6 +144,15 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
             <button class="module-tab" data-view="evolution" aria-controls="view-evolution" title="查看每日自我进化的证据、质量闸门和候选">每日自我进化<span id="evolutionCount" class="tab-count" title="待审核候选数量">—</span></button>
           </div>
         </details>
+        <details class="nav-group" id="nav-group-alertconfig" data-nav-group="alertconfig">
+          <summary class="nav-section-toggle" aria-controls="nav-group-alertconfig-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">告警配置</span></summary>
+          <div class="nav-group-items" id="nav-group-alertconfig-items">
+            <button class="module-tab" data-view="alerts/rules" aria-controls="view-alerts" title="维护告警规则、阈值和通知路由">告警策略<span id="ruleCount" class="tab-count" title="触发中的策略数" hidden>—</span></button>
+            <button class="module-tab" data-view="alerts/strategies" aria-controls="view-alerts" title="自定义 PromQL 阈值策略：公共层与租户策略">自定义策略</button>
+            <button class="module-tab" data-view="alerts/channels" aria-controls="view-alerts" title="通知渠道的路由与降噪">通知模板</button>
+            <button class="module-tab" data-view="alerts/silence" aria-controls="view-alerts" title="计划内维护的告警屏蔽窗口">告警屏蔽</button>
+          </div>
+        </details>
         <details class="nav-group" id="nav-group-advanced" data-nav-group="advanced">
           <summary class="nav-section-toggle" aria-controls="nav-group-advanced-items"><span class="nav-toggle-caret" aria-hidden="true"></span><span class="nav-toggle-label">系统配置</span></summary>
           <div class="nav-group-items" id="nav-group-advanced-items">
@@ -156,30 +164,24 @@ export const OPS_OBSERVABILITY_HTML = `<!doctype html>
     </aside>
     <main id="mainContent" tabindex="-1">
     <div class="page-head">
-      <div class="page-head-copy"><div id="pageKicker" class="page-kicker">可观测中心 / 总览</div><h1 id="pageTitle">生产可观测与告警</h1><p id="pageIntro" class="page-intro">先判断生产影响，再处理事故、维护告警，最后下钻到链路证据。</p><p id="fresh" role="status" aria-live="polite">正在读取策略与巡检状态…</p></div>
-      <div class="page-head-actions"><span class="env-pill">production</span><button id="runChecks" class="btn" type="button">立即评估</button><button id="refresh" class="btn" type="button">刷新数据</button></div>
+      <div class="page-head-copy"><div id="pageKicker" class="page-kicker">可观测中心 / 总览</div><h1 id="pageTitle">生产可观测与告警</h1><p id="pageIntro" class="page-intro">先判断生产影响，再处理事故、维护告警，最后下钻到链路证据。</p></div>
+      <div class="page-head-actions">
+        <div class="workspace-facts" aria-label="工作区状态"><span id="fresh" role="status" aria-live="polite">正在读取策略与巡检状态…</span><span id="globalIncidentFact" class="workspace-fact"><strong>— 个进行中</strong></span><span id="scopeStatus" class="scope-status unknown" role="status" aria-live="polite">等待真实数据</span></div>
+        <div class="page-head-controls">
+          <label id="overviewScopeBar" class="scope-control" for="overviewWindow">时间窗口<select id="overviewWindow" aria-label="选择总览与 Trace 时间窗口"><option value="2">最近 2 小时</option><option value="24" selected>最近 24 小时</option><option value="168">最近 7 天</option></select></label>
+          <span class="env-pill">production</span>
+          <button id="runChecks" class="btn" type="button">立即评估</button>
+          <button id="refresh" class="btn" type="button">刷新数据</button>
+        </div>
+      </div>
     </div>
-    <div class="workspace-toolbar">
-    <div id="overviewScopeBar" class="scope-bar" role="region" aria-label="总览与 Trace 共用观察范围">
-      <div class="scope-copy"><strong>观察范围</strong><small>总览与链路追踪</small></div>
-      <label class="scope-control" for="overviewWindow">时间窗口<select id="overviewWindow" aria-label="选择总览与 Trace 时间窗口"><option value="2">最近 2 小时</option><option value="24" selected>最近 24 小时</option><option value="168">最近 7 天</option></select></label>
-      <span id="scopeStatus" class="scope-status unknown" role="status" aria-live="polite">等待真实数据</span>
-    </div>
-    <div class="global-command-bar" role="region" aria-label="快速导航">
-        <div class="workspace-facts" aria-label="工作区状态"><span id="globalIncidentFact" class="workspace-fact"><strong>— 个进行中</strong></span><span id="globalFreshnessFact" class="workspace-fact">等待评估</span><span id="globalViewFact" class="workspace-fact">当前视图</span></div>
-    </div>
-    </div>
-    <section id="view-overview" class="view hidden" aria-labelledby="overviewHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 总览</div><h2 id="overviewHeading">当前态势与行动</h2><p>先看用户影响和待办，再按证据进入对应调查链路。</p></div><div class="right" id="overviewWindowLabel">统一窗口 · 最近 24 小时</div></div>
-      <div class="domain-note"><strong>云侧数据域</strong>　RDK Studio、d-obs、OTLP gateway、服务器资源与云端应用链路。</div>
+    <section id="view-overview" class="view hidden" aria-label="当前态势与行动">
       <div id="overviewContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在汇总生产态势</strong><small>读取检查、事故、通知与审计数据…</small></div></div>
     </section>
-    <section id="view-service-levels" class="view hidden" aria-labelledby="serviceLevelsHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / SLO</div><h2 id="serviceLevelsHeading">SLO 与错误预算</h2><p>用 28 天用户旅程定义目标；内部参考线只用于运营判断，不构成合同 SLA。</p></div><div class="right" id="serviceLevelPolicyVersion">策略版本由服务端返回</div></div>
+    <section id="view-service-levels" class="view hidden" aria-label="SLO 与错误预算">
       <div id="serviceLevelContent" class="overview-stack" aria-live="polite"></div>
     </section>
-    <section id="view-signals" class="view hidden" aria-labelledby="signalsHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 观测查询</div><h2 id="signalsHeading">指标、日志与自定义看板</h2><p>查询 OTLP 落库的指标与日志；常用查询可组织为可拖拽排序的看板，并以模板导入导出。深度历史仍可前往 Prometheus 查询。</p></div><div class="right">OTLP 落库 · 管理员只读</div></div>
+    <section id="view-signals" class="view hidden" aria-label="指标、日志与自定义看板">
       <div class="module-switcher" role="tablist" aria-label="观测查询子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/metrics" aria-selected="true">指标查询<small>OTLP metrics 平台内查询</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/logs" aria-selected="false">日志查询<small>低敏感字段检索</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/promql" aria-selected="false">PromQL 查询<small>深度历史 · 直查 Prometheus</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/panels" aria-selected="false">自定义看板<small>多看板 · 拖拽排序 · 模板导入导出</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/quality" aria-selected="false">质量与反馈<small>评分与反馈按天趋势</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/catalog" aria-selected="false">指标字典<small>有哪些指标、都是啥意思</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="signals/tokens" aria-selected="false">接入凭据<small>按人/服务/租户签发上报凭据</small></button></div>
       <div class="view-module is-active" data-view-module="signals/metrics" role="tabpanel" aria-label="指标查询">
         <div class="signals-query-card">
@@ -306,9 +308,7 @@ curl -s -X POST 'https://rdkstudio.d-robotics.cc/dobs/v1/logs' \
         <div id="ingestTokensContent" aria-live="polite"><div class="signals-empty">正在读取凭据清单…</div></div>
       </details></div>
     </section>
-    <section id="view-devices" class="view hidden" aria-labelledby="devicesHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 边缘设备</div><h2 id="devicesHeading">边缘设备与心跳</h2><p>注册 RDK 板级设备、查看心跳与在线状态，下钻板级指标（CPU / 内存 / 温度 / BPU）。</p></div><div class="right">设备 token 只显示一次</div></div>
-      <div class="domain-note"><strong>端侧数据域</strong>　机器人、RDK 板、固件和 edge-agent 样本；端侧 Prometheus 查询使用 <code>plane="edge"</code>。</div>
+    <section id="view-devices" class="view hidden" aria-label="边缘设备与心跳">
       <div class="module-switcher" role="tablist" aria-label="边缘设备子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="devices/list" aria-selected="true">设备清单<small>在线状态与板级指标下钻</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="devices/register" aria-selected="false">注册设备<small>签发 token 与部署 edge-agent</small></button></div>
       <div class="view-module is-active" data-view-module="devices/list" role="tabpanel" aria-label="设备清单"><details id="devices-list" class="detail-sections" open><summary class="detail-summary"><strong>设备清单</strong><span>在线状态、最近心跳与板级指标下钻</span></summary><div id="devicesContent" aria-live="polite"><div class="signals-empty">正在读取设备清单…</div></div></details></div>
       <div class="view-module" data-view-module="devices/register" role="tabpanel" aria-label="注册设备" hidden><details id="devices-register" class="detail-sections" open><summary class="detail-summary"><strong>注册设备</strong><span>签发设备 token 并部署 edge-agent</span></summary>
@@ -322,29 +322,24 @@ curl -s -X POST 'https://rdkstudio.d-robotics.cc/dobs/v1/logs' \
         <div class="hint">板端部署：把 <code>tools/edge-agent.mjs</code> 复制到设备，token 存入文件，配置 <code>RDK_OBS_REPORT_URL</code> 与 <code>RDK_DEVICE_TOKEN_FILE</code> 后运行（或挂载 systemd 单元）；弱网时样本会缓冲在设备本地并自动补传。</div>
       </details></div>
     </section>
-    <section id="view-data-health" class="view hidden" aria-labelledby="dataHealthHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 数据健康</div><h2 id="dataHealthHeading">业务数据新鲜度</h2><p>检查关键业务数据是否持续入库，只展示数量、趋势和最近写入时间。</p></div><div class="right">业务入库 · 只读聚合</div></div>
+    <section id="view-data-health" class="view hidden" aria-label="业务数据新鲜度">
       <div id="dataHealthContent" class="database-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取数据健康状态</strong><small>仅查询聚合数量和最近写入时间…</small></div></div>
     </section>
-    <section id="view-operator-metrics" class="view hidden" aria-labelledby="operatorMetricsHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 用户增长</div><h2 id="operatorMetricsHeading">用户增长</h2><p>在同一套可观测数据里查看新增用户、DAU、对话次数和 Agent Run，判断用户从注册到使用的增长趋势。</p></div><div id="operatorMetricsWindowLabel" class="right">近 30 天 · 独立运营窗口</div></div>
+    <section id="view-operator-metrics" class="view hidden" aria-label="用户增长">
       <div id="operatorMetricsContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取运营指标</strong><small>汇总中心库日粒度数据…</small></div></div>
     </section>
-    <section id="view-database" class="view hidden" aria-labelledby="databaseHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 数据库</div><h2 id="databaseHeading">PostgreSQL 运行与资产</h2><p>查看运行状态、库表关系与表维护状态。</p></div><div class="right">中心 PG · 全程只读</div></div>
+    <section id="view-database" class="view hidden" aria-label="PostgreSQL 运行与资产">
       <div id="databaseContent" class="database-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取数据库状态</strong><small>查询运行指标、关系和表资产…</small></div></div>
     </section>
-    <section id="view-skill-loop" class="view hidden" aria-labelledby="skillLoopHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 学习与进化</div><h2 id="skillLoopHeading">Skill 数据闭环</h2><p>把埋点采集、运行反馈、候选证据、审核发布和命中率放在同一条可追溯链路。</p></div><div class="right">近 30 天 · 独立学习窗口</div></div>
+    <section id="view-skill-loop" class="view hidden" aria-label="Skill 数据闭环">
       <div id="skillLoopContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取 Skill 数据闭环</strong><small>汇总事件埋点、运行经验和 Skill 台账…</small></div></div>
     </section>
-    <section id="view-evolution" class="view hidden" aria-labelledby="evolutionHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 学习与进化</div><h2 id="evolutionHeading">每日自我进化</h2><p>查看证据聚合、质量闸门和可审核候选；候选从匿名失败信号生成，需要人工审核，不会直接修改生产代码、自动部署或降低质量闸门。</p></div><div class="right">CANDIDATE ONLY · 只读观测 <button id="runEvolution" class="btn primary" type="button">立即生成候选</button></div></div>
+    <section id="view-evolution" class="view hidden" aria-label="每日自我进化">
+      <div class="view-actions"><span class="view-actions-note">候选只读观测，需人工审核后才会发布</span><button id="runEvolution" class="btn primary" type="button">立即生成候选</button></div>
       <div id="evolutionModuleContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在读取每日自我进化</strong><small>汇总进化 worker、运行经验和候选状态…</small></div></div>
       <div id="evolutionContent" class="overview-stack hidden"></div>
     </section>
-    <section id="view-investigate" class="view hidden" aria-labelledby="investigationHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 事故调查</div><h2 id="investigationHeading">异常、证据与影响范围</h2><p>形成可复核的根因假设；只读调查，不直接执行处置。</p></div><div class="right">证据先行 · 只读调查</div></div>
+    <section id="view-investigate" class="view hidden" aria-label="异常、证据与影响范围">
       <div id="investigationContent" class="overview-stack" aria-live="polite"><div class="shell-status" role="status"><span class="shell-spinner" aria-hidden="true"></span><strong>正在建立调查视图</strong><small>关联异常趋势、代表事件与影响范围…</small></div></div>
     </section>
     <section id="view-traces" class="view hidden" aria-label="链路追踪">
@@ -355,8 +350,7 @@ curl -s -X POST 'https://rdkstudio.d-robotics.cc/dobs/v1/logs' \
       <div class="view-module" data-view-module="traces/agent" role="tabpanel" aria-label="Agent Trace" hidden>__LANGFUSE_DASHBOARD_EMBED__</div>
       <div class="view-module" data-view-module="traces/session" role="tabpanel" aria-label="会话 Trace" hidden><div class="right">数据按登录账号隔离</div><div class="notice">standalone d-obs 不承载 Agent 会话观测（没有 <code>/api/agent/session-observability</code>）：请用「运行证据链」按运行/会话筛选与下钻，或到业务站的会话 Trace 页查看完整链路。</div></div>
     </section>
-    <section id="view-tenants" class="view hidden" aria-labelledby="tenantsHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 租户管理</div><h2 id="tenantsHeading">团队接入与探针凭据</h2><p>注册租户、签发与轮换探针 token、停用或启用团队；所有操作均写入审计日志。</p></div><div class="right">探针 token 仅显示一次</div></div>
+    <section id="view-tenants" class="view hidden" aria-label="团队接入与探针凭据">
       <div class="module-switcher" role="tablist" aria-label="租户管理子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="tenants/list" aria-selected="true">租户列表<small>状态 · 心跳 · 凭据操作</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="tenants/create" aria-selected="false">创建租户<small>新团队接入与 token 签发</small></button></div>
       <div class="view-module is-active" data-view-module="tenants/list" role="tabpanel" aria-label="租户列表"><details class="detail-sections" open><summary class="detail-summary"><strong>租户列表</strong><span>状态、最近上报时间与凭据操作</span></summary><div id="tenantsContent"></div></details></div>
       <div class="view-module" data-view-module="tenants/create" role="tabpanel" aria-label="创建租户" hidden><details class="detail-sections" open><summary class="detail-summary"><strong>创建租户</strong><span>为新团队创建租户并签发探针 token</span></summary>
@@ -368,8 +362,7 @@ curl -s -X POST 'https://rdkstudio.d-robotics.cc/dobs/v1/logs' \
         <div id="newTenantIdHint" class="hint">租户 ID 是标识符不是名字：它会拼进告警键 <code>t.&lt;ID&gt;.&lt;检查项&gt;</code>（点作分隔符），并出现在 URL 与请求头里，因此只能用小写 ASCII 字母/数字/连字符（2–40 字符，需字母开头；<code>platform</code> 等保留字不可用）。中文名请填「显示名称」。</div>
       </details></div>
     </section>
-    <section id="view-platform" class="view hidden" aria-labelledby="platformHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 系统设置</div><h2 id="platformHeading">全局巡检与运行配置</h2><p>低频高级配置；改动会影响全局巡检、模型路由与通知。</p></div><div class="right">敏感配置只保存在服务器</div></div>
+    <section id="view-platform" class="view hidden" aria-label="全局巡检与运行配置">
       <div class="module-switcher" role="tablist" aria-label="系统配置子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="platform/model-pool" aria-selected="true">模型池<small>路由目标 · 健康 · 容量</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="platform/general" aria-selected="false">评估器<small>评估开关与环境标签</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="platform/probing" aria-selected="false">业务拨测<small>Canary 真实探测</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="platform/logs" aria-selected="false">日志签名<small>错误识别规则</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="platform/heal" aria-selected="false">自愈策略<small>自动恢复与冷却</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="platform/accounts" aria-selected="false">账号行为<small>SSO 账号行为审计</small></button></div>
       <div class="view-module is-active" data-view-module="platform/model-pool" role="tabpanel" aria-label="模型池"><div id="modelPoolContent"></div></div>
       <div class="view-module" data-view-module="platform/general" role="tabpanel" aria-label="评估器设置" hidden><div id="settingsContentGeneral"></div></div>
@@ -380,14 +373,14 @@ curl -s -X POST 'https://rdkstudio.d-robotics.cc/dobs/v1/logs' \
       <div id="settingsNotices" aria-live="polite"></div>
       <div class="form-actions" id="settingsActions"><button class="btn primary" id="saveSettings" type="button">保存系统设置</button><span class="feedback" id="settingsFeedback"></span></div>
     </section>
-    <section id="view-alerts" class="view hidden" aria-labelledby="alertsHeading">
-      <div class="view-head"><div><div class="eyebrow">可观测中心 / 告警策略</div><h2 id="alertsHeading">检测、阈值与通知</h2><p>维护规则、阈值和通知路由；事故处置请进入“事故调查”。</p></div><div class="right">按规则独立窗口 · 每分钟评估</div></div>
-      <div class="view-module is-active" data-view-module="alerts/rules" role="tabpanel" aria-label="告警策略">
+    <section id="view-alerts" class="view hidden" aria-label="告警中心与策略">
+      <div class="module-switcher" role="tablist" aria-label="告警子模块"><button class="module-switch-tab" type="button" role="tab" data-module-tab="alerts/center" aria-selected="true">告警中心<small>处置队列 · MTTA / MTTR</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="alerts/rules" aria-selected="false">告警策略<small>指标 / 日志 / 拨测阈值</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="alerts/strategies" aria-selected="false">自定义策略<small>PromQL 阈值 · 公共与租户</small></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="alerts/metrics" aria-selected="false">指标与数据源<span id="metricCount" class="tab-count">—</span></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="alerts/objects" aria-selected="false">告警对象<span id="objectCount" class="tab-count">—</span></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="alerts/channels" aria-selected="false">通知模板<span id="channelCount" class="tab-count">—</span></button><button class="module-switch-tab" type="button" role="tab" data-module-tab="alerts/silence" aria-selected="false">告警屏蔽<small>计划内维护窗口</small></button></div>
+      <div class="view-module" data-view-module="alerts/rules" role="tabpanel" aria-label="告警策略" hidden>
         <div class="panel strategy-card"><div class="toolbar"><label class="search-wrap" aria-label="策略搜索"><input id="ruleSearch" class="search" type="text" name="ops-observability-rule-filter" autocomplete="off" data-lpignore="true" data-1p-ignore="true" readonly placeholder="请输入策略名称或数据源" /></label><div class="filter-anchor"><button id="filterTrigger" class="btn filter-trigger" type="button">⌁ <span id="filterText">筛选</span></button><div id="ruleFilters" class="filter-popover hidden"><div class="filter-row"><span>监控类型</span><div id="categoryFilter" class="segmented" aria-label="规则类型筛选"><button data-category="all" class="active">全部</button><button data-category="metric">指标</button><button data-category="log">日志</button><button data-category="probe">拨测</button></div></div><div class="filter-row"><span>策略状态</span><div id="statusFilter" class="segmented" aria-label="策略状态筛选"><button data-status="all" class="active">全部</button><button data-status="enabled">生效</button><button data-status="disabled">停用</button></div></div><div class="filter-footer"><button id="clearFilters" class="filter-clear" type="button">清空全部条件</button><button id="closeFilters" class="btn primary" type="button">关闭</button></div></div></div></div>
           <div id="ruleSummary" class="rule-summary" aria-label="告警策略摘要"></div><div class="rules-panel"><div class="rules-head"><div>策略名称 / 数据源</div><div>监控类型</div><div>触发条件</div><div>执行周期</div><div>通知模板</div><div>创建人 / 创建时间</div><div>告警启停</div><div>操作</div></div><div id="rulesList"></div></div>
         </div>
       </div>
-      <div class="view-module" data-view-module="alerts/center" role="tabpanel" aria-label="告警中心" hidden>
+      <div class="view-module is-active" data-view-module="alerts/center" role="tabpanel" aria-label="告警中心">
         <div class="panel"><div id="incidentSummary" class="rule-summary" aria-label="处置概览"></div><div class="ic-toolbar"><div class="ic-tabs" id="incidentTabs"><button class="ic-tab is-active" data-ic-scope="all" data-ic-state="active" type="button">全部待处置</button><button class="ic-tab" data-ic-scope="mine" data-ic-state="active" type="button">我的</button><button class="ic-tab" data-ic-scope="all" data-ic-state="closed" type="button">已关闭</button></div><div class="ic-tabs" id="incidentSev"><button class="ic-tab is-active" data-ic-sev="" type="button">全部级别</button><button class="ic-tab" data-ic-sev="critical" type="button">严重</button><button class="ic-tab" data-ic-sev="warning" type="button">告警</button></div></div><div id="incidentList"></div></div>
       </div>
       <div class="view-module" data-view-module="alerts/strategies" role="tabpanel" aria-label="自定义策略" hidden>

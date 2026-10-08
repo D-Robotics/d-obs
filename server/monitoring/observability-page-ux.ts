@@ -6,14 +6,13 @@
  * SLO) without changing any data source or mutation boundary.
  */
 export const OPS_OBSERVABILITY_UX_STYLE = `
-    .global-command-bar{position:sticky;top:48px;z-index:12;display:grid;grid-template-columns:minmax(270px,1fr) auto;align-items:center;gap:10px;padding:8px 10px;margin:-4px 0 14px;border:1px solid var(--c349);border-radius:10px;background:linear-gradient(105deg,var(--c57) 0%,var(--c2) 70%);box-shadow:0 3px 12px var(--c350)}
     .global-search-trigger{display:flex;align-items:center;gap:10px;min-height:40px;width:100%;padding:5px 10px;border:1px solid var(--c351);border-radius:8px;background:var(--c2);color:var(--text);text-align:left;cursor:pointer;transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}
     .global-search-trigger:hover{border-color:var(--c169);box-shadow:0 4px 12px var(--c23);transform:translateY(-1px)}.global-search-trigger:focus-visible{outline:2px solid var(--c11);outline-offset:2px}.global-search-trigger:before{content:'⌕';display:grid;place-items:center;width:24px;height:24px;border-radius:6px;background:var(--c352);color:var(--green);font-size:15px}.global-search-copy{display:grid;gap:1px;min-width:0}.global-search-copy strong{font-size:11px;line-height:1.2}.global-search-copy small{color:var(--muted);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.global-search-trigger kbd{margin-left:auto;padding:3px 7px;border:1px solid var(--c353);border-bottom-width:2px;border-radius:5px;background:var(--c44);color:var(--c354);font:10px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
     .workspace-facts{display:flex;align-items:center;justify-content:flex-end;gap:8px;color:var(--muted);font-size:9px;white-space:nowrap}.workspace-fact{display:inline-flex;align-items:center;gap:5px}.workspace-fact:before{content:'';width:6px;height:6px;border-radius:50%;background:var(--c19)}.workspace-fact.warn:before{background:var(--orange)}.workspace-fact.bad:before{background:var(--red)}.workspace-fact strong{color:var(--c355);font-size:10px}
     .command-palette-backdrop{position:fixed;inset:0;z-index:60;display:none;align-items:flex-start;justify-content:center;padding:12vh 18px 24px;background:var(--c356);backdrop-filter:blur(3px)}.command-palette-backdrop.open{display:flex}.command-palette{width:min(640px,100%);overflow:hidden;border:1px solid var(--c357);border-radius:13px;background:var(--c2);box-shadow:0 22px 60px var(--c358)}.command-palette-head{display:flex;align-items:flex-start;gap:10px;padding:16px 18px 12px;border-bottom:1px solid var(--c359)}.command-palette-head-copy{min-width:0}.command-palette-head h2{margin:0;font-size:15px;line-height:1.25}.command-palette-head p{margin:4px 0 0;color:var(--muted);font-size:10px}.command-palette-close{margin-left:auto;min-width:56px}.command-search-wrap{position:relative;padding:12px 14px 10px}.command-search-wrap:before{content:'⌕';position:absolute;left:26px;top:20px;color:var(--c354);font-size:15px;z-index:1}.command-search{width:100%;height:40px;padding:6px 11px 6px 31px;border:1px solid var(--c360);border-radius:8px;background:var(--c159);color:var(--text);font-size:12px;outline:none}.command-search:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--c310);background:var(--c2)}.command-results{display:grid;gap:3px;max-height:min(420px,52vh);overflow:auto;padding:4px 8px 10px}.command-section-label{padding:8px 9px 4px;color:var(--c361);font-size:9px;font-weight:700;letter-spacing:.08em}.command-item{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:9px 10px;border:1px solid transparent;border-radius:8px;background:var(--c2);text-align:left;cursor:pointer}.command-item:hover,.command-item[aria-selected="true"]{border-color:var(--c362);background:var(--c363)}.command-item:focus-visible{outline:2px solid var(--c11);outline-offset:-1px}.command-item-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:var(--c364);color:var(--green);font-size:13px}.command-item-copy{display:grid;gap:2px;min-width:0}.command-item-copy strong{font-size:11px;color:var(--c365)}.command-item-copy span{color:var(--muted);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.command-item kbd{padding:3px 6px;border:1px solid var(--c170);border-radius:5px;background:var(--c44);color:var(--c366);font:9px ui-monospace,SFMono-Regular,Menlo,monospace}.command-empty{padding:28px 16px;color:var(--muted);font-size:11px;text-align:center}.command-palette-foot{display:flex;gap:12px;padding:10px 15px;border-top:1px solid var(--c359);background:var(--c159);color:var(--c361);font-size:9px}.command-palette-foot span{display:inline-flex;align-items:center;gap:4px}.command-palette-foot kbd{padding:1px 4px;border:1px solid var(--c367);border-radius:3px;background:var(--c2);font:9px ui-monospace,SFMono-Regular,Menlo,monospace}
     .north-star-target{display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:22px;padding-top:4px;border-top:1px dashed var(--c368);color:var(--muted);font-size:9px}.north-star-target .target-miss{color:var(--c369);font-weight:650}.north-star-card.target-miss{border-color:var(--c370);background:var(--c55)}.north-star-card.target-miss .north-star-bar span{background:linear-gradient(90deg,var(--c371),var(--c372))}
-    @media(max-width:1120px){.global-command-bar{grid-template-columns:minmax(240px,1fr)}.workspace-facts{grid-column:1/-1;justify-content:flex-start;padding:0 4px 2px}}
-    @media(max-width:720px){.global-command-bar{grid-template-columns:1fr;padding:8px}.workspace-facts{order:3}.global-search-trigger kbd{display:none}.command-palette-backdrop{padding:7vh 10px 14px}.command-palette-foot{flex-wrap:wrap;gap:7px}}
+    @media(max-width:1120px){.workspace-facts{justify-content:flex-start;padding:0 4px 2px}}
+    @media(max-width:720px){.global-search-trigger kbd{display:none}.command-palette-backdrop{padding:7vh 10px 14px}.command-palette-foot{flex-wrap:wrap;gap:7px}}
     body.palette-open{overflow:hidden}
     @media(prefers-reduced-motion:reduce){.global-search-trigger{transition:none}}
 
@@ -41,13 +40,6 @@ export const OPS_OBSERVABILITY_UX_STYLE = `
     body.ops-observability .detail-sections{background:color-mix(in srgb,var(--panel) 90%,var(--bg));}
     body.ops-observability .detail-sections[open]{box-shadow:var(--shadow-soft),0 8px 20px color-mix(in srgb,var(--text) 4%,transparent)}
     body.ops-observability .detail-sections>*:not(.detail-summary){background:var(--panel)}
-    /* Each module needs a visible hand-off from the page header. The previous
-       accessibility-only treatment hid this heading completely, leaving the
-       first data panel to carry the context on its own. */
-    body.ops-observability .view>.view-head>div:first-child{position:static;width:auto;height:auto;padding:0;margin:0;overflow:visible;clip-path:none;white-space:normal}
-    body.ops-observability .view>.view-head{display:flex;align-items:flex-end;gap:16px;min-height:46px;margin:0;padding:0 0 12px;border-bottom:1px solid color-mix(in srgb,var(--text) 10%,transparent)}
-    body.ops-observability .view>.view-head .eyebrow{color:var(--green)}
-    body.ops-observability .view>.view-head .right{margin-left:auto}
     body.ops-observability .rules-head,body.ops-observability .metric-head,body.ops-observability .template-head{background:color-mix(in srgb,var(--bg) 76%,var(--panel));border-color:color-mix(in srgb,var(--text) 10%,transparent)}
     body.ops-observability .rule-row,body.ops-observability .metric-row,body.ops-observability .template-row{background:var(--panel);transition:background-color .14s ease,box-shadow .14s ease}
     body.ops-observability .rule-row:hover,body.ops-observability .metric-row:hover,body.ops-observability .template-row:hover{background:color-mix(in srgb,var(--green) 4%,var(--panel));box-shadow:inset 3px 0 0 color-mix(in srgb,var(--green) 55%,transparent)}
@@ -55,9 +47,6 @@ export const OPS_OBSERVABILITY_UX_STYLE = `
     body.ops-observability .table-panel,body.ops-observability .strategy-card,body.ops-observability .template-list{overflow:hidden}
     body.ops-observability .table-title{background:color-mix(in srgb,var(--bg) 55%,var(--panel));padding-top:16px;padding-bottom:13px}
     body.ops-observability .table-title h2{font-size:16px}
-    body.ops-observability .view-head{padding-bottom:2px}
-    body.ops-observability .view-head h2{font-weight:760}
-    body.ops-observability .workspace-toolbar{box-shadow:0 4px 14px color-mix(in srgb,var(--text) 4%,transparent)}
     body.ops-observability .nav-group{padding-top:4px}
     body.ops-observability .nav-group+.nav-group{margin-top:14px}
     body.ops-observability .nav-section-toggle{letter-spacing:.015em}
@@ -74,17 +63,20 @@ export const OPS_OBSERVABILITY_SCRIPT_UX = `
       const commandItems=[
         {view:'overview',label:'当前态势',hint:'生产影响、北极星指标与待办',icon:'▦',group:'运行'},
         {view:'investigate',label:'事故调查',hint:'异常、证据、影响范围与根因假设',icon:'⌕',group:'运行'},
-        {view:'alerts',label:'告警策略',hint:'指标、日志、拨测与通知路由',icon:'◫',group:'运行'},
+        {view:'alerts/center',label:'告警中心',hint:'处置队列与 MTTA / MTTR',icon:'◫',group:'运行'},
         {view:'traces',label:'链路追踪',hint:'Agent run、会话与工具调用证据',icon:'⌁',group:'运行'},
         {view:'service-levels',label:'SLO 与错误预算',hint:'用户旅程可靠性与燃烧率',icon:'◒',group:'可靠性'},
         {view:'operator-metrics',label:'运营指标',hint:'DAU、对话、Agent Run 与 token',icon:'◔',group:'数据'},
+        {view:'signals',label:'观测查询',hint:'指标与日志查询、指标字典',icon:'⌕',group:'数据'},
+        {view:'signals/panels',label:'看板',hint:'自定义面板、模板与大屏',icon:'▦',group:'数据'},
         {view:'data-health',label:'数据健康',hint:'关键业务数据新鲜度与接入状态',icon:'◉',group:'数据'},
         {view:'database',label:'数据库',hint:'中心 PG 运行状态与只读资产',icon:'▥',group:'数据'},
         {view:'skill-loop',label:'Skill 数据闭环',hint:'采集、反馈、审核与发布回流',icon:'↻',group:'学习'},
         {view:'evolution',label:'每日自我进化',hint:'候选证据与质量闸门',icon:'✦',group:'学习'},
         {view:'tenants',label:'租户管理',hint:'团队接入、探针 token 轮换与停启用',icon:'⧉',group:'设置'},
-        {view:'model-pool',label:'模型池',hint:'模型目标健康、路由优先级与替换',icon:'◈',group:'设置'},
-        {view:'platform',label:'系统设置',hint:'评估器、Canary 与全局运行配置',icon:'⚙',group:'设置'}
+        {view:'platform/model-pool',label:'模型池',hint:'模型目标健康、路由优先级与替换',icon:'◈',group:'设置'},
+        {view:'platform',label:'平台配置',hint:'评估器、Canary、自愈与日志签名',icon:'⚙',group:'设置'},
+        {view:'alerts/rules',label:'告警策略',hint:'指标、日志、拨测阈值与启停',icon:'◫',group:'设置'}
       ];
       const commandState={open:false,query:'',selected:0,returnFocus:null,inertTargets:[],entityItems:[],searchSequence:0,searchTimer:null,searchLoading:false};
       function commandMatches(item){const query=commandState.query.trim().toLocaleLowerCase();return !query||(item.label+' '+item.hint+' '+item.group).toLocaleLowerCase().includes(query)}
@@ -98,7 +90,7 @@ export const OPS_OBSERVABILITY_SCRIPT_UX = `
       function commandPaletteFocusable(){const palette=$('commandPaletteBackdrop');if(!palette)return[];return Array.from(palette.querySelectorAll('button:not([disabled]),input:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])')).filter(node=>!node.hidden&&(!node.getClientRects||node.getClientRects().length||node.offsetParent!==null))}
       function commandPaletteContains(node,palette){return Boolean(node&&palette&&(palette===node||(palette.contains&&palette.contains(node))))}
       function setCommandPalette(open){const backdrop=$('commandPaletteBackdrop');const input=$('commandPaletteSearch');if(!backdrop)return;if(commandState.open===open)return;commandState.open=open;const trigger=$('globalSearchTrigger');backdrop.classList.toggle('open',open);backdrop.setAttribute('aria-hidden',String(!open));document.body.classList.toggle('palette-open',open);setPaletteInert(open);if(open){commandState.returnFocus=document.activeElement&&document.activeElement.closest?document.activeElement:null;commandState.query='';commandState.entityItems=[];commandState.searchLoading=false;if(input)input.value='';const bySource=commandItems.findIndex(item=>item.view===state.viewSource);const currentIndex=bySource>=0?bySource:commandItems.findIndex(item=>item.view===state.view);commandState.selected=currentIndex>=0?currentIndex:0;renderCommandResults();setTimeout(()=>{if(input)input.focus()},0)}else{commandState.searchSequence++;if(commandState.searchTimer)clearTimeout(commandState.searchTimer);commandState.entityItems=[];commandState.searchLoading=false;if(input)input.blur();const restore=commandState.returnFocus&&document.body.contains(commandState.returnFocus)?commandState.returnFocus:trigger;if(restore&&restore.focus)restore.focus();commandState.returnFocus=null;}}
-      function updateGlobalContext(o){const current=commandItems.find(item=>item.view===state.viewSource)||commandItems.find(item=>item.view===state.view);const view=$('globalViewFact');if(view)view.textContent=current?'当前 · '+current.label:'当前视图';if(!o)return;const active=(o.incidents||[]).filter(item=>['open','acknowledged','silenced'].includes(item.status));const critical=active.filter(item=>item.severity==='critical').length;const incidents=$('globalIncidentFact');if(incidents){incidents.textContent=active.length?(active.length+' 个进行中'+(critical?' · '+critical+' 严重':'')):'无进行中事故';incidents.classList.toggle('bad',critical>0);incidents.classList.toggle('warn',active.length>0&&critical===0)}const freshness=$('globalFreshnessFact');if(freshness){freshness.textContent=o.alerting&&o.alerting.lastCheckedAt?'评估 '+when(o.alerting.lastCheckedAt):'等待评估';freshness.classList.toggle('warn',o.alerting&&o.alerting.status==='stale')}}
+      function updateGlobalContext(o){if(!o)return;const active=(o.incidents||[]).filter(item=>['open','acknowledged','silenced'].includes(item.status));const critical=active.filter(item=>item.severity==='critical').length;const incidents=$('globalIncidentFact');if(incidents){incidents.textContent=active.length?(active.length+' 个进行中'+(critical?' · '+critical+' 严重':'')):'无进行中事故';incidents.classList.toggle('bad',critical>0);incidents.classList.toggle('warn',active.length>0&&critical===0)}}
       const uxBaseSetView=setView;
       setView=function(requested,updateHash=true){uxBaseSetView(requested,updateHash);updateGlobalContext(state.overview)};
       const quickSearch=$('globalSearchTrigger');if(quickSearch){quickSearch.addEventListener('click',()=>setCommandPalette(true));quickSearch.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();setCommandPalette(true)}})}

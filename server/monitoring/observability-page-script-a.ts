@@ -14,7 +14,7 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
       // 旧 hash（#model-pool、#metrics…）继续可达并被规范化为层级地址。
       const viewAliases = {metrics:['alerts','metrics'],rules:['alerts','rules'],channels:['alerts','channels'],strategies:['alerts','strategies'],silence:['alerts','silence'],'accounts':['platform','accounts'],objects:['alerts','objects'],object:['alerts','objects'],'alert-objects':['alerts','objects'],growth:['operator-metrics'],'agent-traces':['traces','agent'],'session-traces':['traces','session'],'model-pool':['platform','model-pool'],settings:['platform','general'],'platform-settings':['platform','general'],'skill-flywheel':['skill-loop'],'skill-governance':['skill-loop'],learning:['skill-loop'],skills:['skill-loop'],postgres:['database'],'postgresql':['database']};
       // 每个拆分视图的子模块清单；首项是该视图裸 hash（#alerts 等）的默认落地页。
-      const viewModuleChildren = {platform:['general','model-pool','probing','logs','heal','accounts'],alerts:['rules','strategies','center','metrics','objects','channels','silence'],signals:['metrics','logs','promql','panels','quality','catalog','tokens'],traces:['runs','agent','session'],devices:['list','register'],tenants:['list','create']};
+      const viewModuleChildren = {platform:['general','model-pool','probing','logs','heal','accounts'],alerts:['center','rules','strategies','metrics','objects','channels','silence'],signals:['metrics','logs','promql','panels','quality','catalog','tokens'],traces:['runs','agent','session'],devices:['list','register'],tenants:['list','create']};
       // 侧栏高亮回退：同一视图容器上的多个侧栏按钮（模型池 / 系统设置）按子模块区分；
       // 值必须与侧栏按钮的 data-view 一致。
       const moduleNavKey = {'platform/model-pool':'model-pool','platform/general':'platform','platform/probing':'platform','platform/logs':'platform','platform/heal':'platform'};
@@ -165,7 +165,7 @@ export const OPS_OBSERVABILITY_SCRIPT_A = `    (() => {
       // 且会校验租户存在（组员模式走 x-rdk-obs-tenant 头，不经过这里）。
       function adminTenantQuery(){try{const me=obsAuthState.me;const tenant=obsActiveTenant();return me&&me.admin&&tenant?'&tenant='+encodeURIComponent(tenant):''}catch{return ''}}
       function updateViewHeader(source,name){const meta=viewMeta[source]||viewMeta[name]||viewMeta.overview;[['pageKicker',meta[0]],['pageTitle',meta[1]],['pageIntro',meta[2]]].forEach(item=>{const node=$(item[0]);if(node)node.textContent=item[1]});document.title='d-obs · '+meta[1]}
-      const navGroupByView={overview:'primary','operator-metrics':'primary','signals/panels':'primary',investigate:'core',alerts:'core',traces:'core',signals:'data','data-health':'data',database:'data','skill-loop':'learning',evolution:'learning',platform:'advanced','service-levels':'core'};
+      const navGroupByView={overview:'primary','operator-metrics':'primary','signals/panels':'primary',investigate:'core','alerts/center':'core',alerts:'core',traces:'core',signals:'data','signals/quality':'data','service-levels':'data',devices:'infra','data-health':'infra',database:'infra','skill-loop':'learning',evolution:'learning',platform:'advanced',tenants:'advanced','alerts/rules':'alertconfig','alerts/strategies':'alertconfig','alerts/metrics':'alertconfig','alerts/objects':'alertconfig','alerts/channels':'alertconfig','alerts/silence':'alertconfig'};
       // 多级收起菜单的统一徽章层：分组收起时把组内关键计数提升到分组头，
       // 展开后组内 tab 上的计数继续可见；两个位置由同一份状态驱动，避免漂移。
       function navBadgeValue(id){const node=$(id);if(!node||node.hidden)return 0;const value=Number(node.textContent);return Number.isFinite(value)?value:0}

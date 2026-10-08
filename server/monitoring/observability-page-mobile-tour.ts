@@ -21,7 +21,7 @@ export const OPS_OBSERVABILITY_MOBILE_TOUR_STYLE = `
       /* 折叠态：主 tab 由脚本搬进 .nav-primary（display:contents 在 <details> 上
          布局不生效，Chrome 已知行为），组容器整体隐藏。 */
       body.ops-observability .module-tabs:not(.mobile-expanded) .nav-group{display:none}
-      body.ops-observability .module-tabs:not(.mobile-expanded) .nav-primary{display:flex;flex-wrap:nowrap;gap:0}
+      body.ops-observability .module-tabs:not(.mobile-expanded) .nav-primary{display:flex;flex:1 1 auto;min-width:0;flex-wrap:nowrap;gap:0}
       body.ops-observability .module-tabs:not(.mobile-expanded) .module-tab:not(.mobile-primary){display:none}
       body.ops-observability .module-tab{flex:1 1 0;min-width:0;height:56px;flex-direction:column;justify-content:center;gap:3px;padding:6px 2px;border-radius:9px;font-size:10px;line-height:1.1;text-align:center;white-space:nowrap;overflow:hidden}
       body.ops-observability .module-tab:before{width:auto;margin:0;font-size:17px}
