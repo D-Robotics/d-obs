@@ -49,6 +49,12 @@ export interface OperatorMetrics {
     completionTokens: number;
     totalTokens: number;
   };
+  /**
+   * All-time registered accounts (migration imports included).  Null when the
+   * central store is unavailable so the page can degrade to "—" instead of
+   * showing a misleading zero.
+   */
+  totalAccounts: number | null;
   sources: {
     accounts: string;
     activity: string;
@@ -111,6 +117,16 @@ export async function getOperatorMetrics(daysInput = 30): Promise<OperatorMetric
     } catch {
       accounts = emptyResult();
     }
+  }
+
+  // 全量注册账号累计：与 flywheel metrics-store 的 totalAccounts 同口径
+  // （count(*) 含迁移导入），窗口切换不影响该值。查询失败降级为 null。
+  let totalAccounts: number | null = null;
+  try {
+    const accountTotal = await pool.query('select count(*)::int total from public.credit_account');
+    totalAccounts = number(accountTotal.rows[0]?.total);
+  } catch {
+    totalAccounts = null;
   }
 
   // One row per run_id prevents retries/backfills from inflating cost and run
@@ -310,8 +326,9 @@ export async function getOperatorMetrics(daysInput = 30): Promise<OperatorMetric
     dispatch,
     modelTokens,
     totals,
+    totalAccounts,
     sources: {
-      accounts: accountSource,
+      accounts: `${accountSource}；用户总数为 credit_account 全量累计（含迁移导入）`,
       activity: 'conversation_turns + studio_daily_usage（稳定账号聚合）',
       tokens: 'agent_run_records（按 run_id 取最新记录后汇总）',
       dispatch: dispatch.configured

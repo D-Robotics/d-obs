@@ -571,6 +571,7 @@ test('运营指标折线图：日序列渲染 SVG 折线与数据点，系列切
         activeUsersPeak: 1060,
       },
       sources: {},
+      totalAccounts: 4620,
       daily,
     },
   };
@@ -581,6 +582,8 @@ test('运营指标折线图：日序列渲染 SVG 折线与数据点，系列切
   assert.ok(root, 'operatorMetricsContent 容器应存在');
   render(root!);
   const text = h.text(root);
+  assert.ok(text.includes('用户总数'), '应渲染用户总数卡片');
+  assert.ok(text.includes('4,620'), '用户总数应渲染全量累计值');
   assert.ok(text.includes('每日 token 消耗趋势'), '默认系列应为 token 消耗');
   const chart = h.all(root).find((n) => String(n.attrs?.['class'] ?? '').includes('omc-chart-svg'));
   assert.ok(chart, '应渲染折线图 SVG');
@@ -597,6 +600,16 @@ test('运营指标折线图：日序列渲染 SVG 折线与数据点，系列切
   await (userButton as StubNode).dispatch('click');
   const textAfter = h.text(root);
   assert.ok(textAfter.includes('每日 新增用户趋势'), '切换后标题应为新增用户');
+
+  // 旧 payload 缺 totalAccounts：如实显示 —，不冒充 0。
+  (obs.setObsState as (p: Record<string, unknown>) => unknown)({
+    operatorMetrics: { metrics: { ...metricsFixture.metrics, totalAccounts: undefined } },
+  });
+  render(root!);
+  const totalCard = h.byClass(root, 'operator-metrics-kpi').find((n) => (n.children ?? []).some((c) => (c as { textContent?: string }).textContent === '用户总数'));
+  assert.ok(totalCard, '缺 totalAccounts 时仍应渲染用户总数卡片');
+  const totalValue = (totalCard as StubNode).children.find((c) => c.classList && c.classList.contains('value'));
+  assert.equal((totalValue as { textContent?: string } | undefined)?.textContent, '—', '缺 totalAccounts 应显示 — 而非 0');
   assert.equal(h.innerHTMLWrites.length, 0);
 });
 

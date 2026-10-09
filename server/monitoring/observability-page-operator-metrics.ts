@@ -4,7 +4,7 @@ export const OPS_OBSERVABILITY_OPERATOR_METRICS_STYLE = `
     .operator-metrics-toolbar .segmented button{min-height:30px;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--c2);color:var(--muted);font-size:10px;cursor:pointer}
     .operator-metrics-toolbar .segmented button.active{border-color:var(--c79);background:var(--c12);color:var(--green);font-weight:650}
     .operator-metrics-toolbar .segmented button:focus-visible{outline:2px solid var(--c11);outline-offset:1px}
-    .operator-metrics-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:12px}
+    .operator-metrics-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:12px}
     .operator-metrics-kpi{min-width:0;padding:14px 15px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
     .operator-metrics-kpi .label{color:var(--muted);font-size:10px}
     .operator-metrics-kpi .value{margin-top:5px;color:var(--text);font-size:23px;font-weight:700;letter-spacing:-.02em}
@@ -81,10 +81,12 @@ export const OPS_OBSERVABILITY_SCRIPT_OPERATOR_METRICS = `
         [7,30,90].forEach(days=>{const button=add(segmented,'button',days===operatorMetricNumber(metrics.windowDays)?'active':'',days+' 天');button.type='button';button.addEventListener('click',()=>loadOperatorMetrics(false,days))});
         toolbar.appendChild(segmented);root.appendChild(toolbar);
         const totals=metrics.totals||{};
+        const totalAccounts=metrics.totalAccounts;
         const kpis=make('div','operator-metrics-kpis');
         const cards=[
           ['token','Moss token 消耗',operatorMetricFmt(totals.totalTokens),'Prompt '+operatorMetricFmt(totals.promptTokens)+' · Completion '+operatorMetricFmt(totals.completionTokens)],
           ['user','新增用户',operatorMetricFmt(totals.newAccounts),'窗口总计 · 日峰值 '+operatorMetricFmt(Math.max(...rows.map(row=>operatorMetricNumber(row.newAccounts)),0))],
+          ['user','用户总数',totalAccounts==null?'—':operatorMetricFmt(totalAccounts),'全量注册账号累计（含迁移导入）· 不随窗口切换变化'],
           ['conversation','对话次数',operatorMetricFmt(totals.conversations),'当前选定窗口总计'],
           ['run','Agent Run',operatorMetricFmt(totals.runs),'当前选定窗口总计'],
           ['','日活峰值',operatorMetricFmt(totals.activeUsersPeak),'当前选定窗口 DAU 峰值'],
