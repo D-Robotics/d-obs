@@ -18,7 +18,7 @@ export const OPS_OBSERVABILITY_SCRIPT_COPILOT = `
         if(ref.startsWith('incident:')){setView('overview');setTimeout(()=>{const node=$('incidentWorkbench');if(node)node.scrollIntoView({behavior:'smooth',block:'start'})},0);return}
         if(ref.startsWith('check:')){goToOverviewTarget('rules',{category:'all',status:'all'});return}
         if(ref.startsWith('slo:')){setView('service-levels');return}
-        if(ref.startsWith('trace:')){setView('agent-traces');return}
+        if(ref.startsWith('trace:')){setView('traces');return}
       }
       function goToOverviewTarget(target,options){
         if(target==='rules'&&options){state.category=options.category||'all';state.statusFilter=options.status||'all';document.querySelectorAll('[data-category]').forEach(item=>item.classList.toggle('active',item.dataset.category===state.category));document.querySelectorAll('[data-status]').forEach(item=>item.classList.toggle('active',item.dataset.status===state.statusFilter));setView('rules');if(typeof renderRules==='function')renderRules();window.scrollTo({top:0,behavior:'smooth'});return}
