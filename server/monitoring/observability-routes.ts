@@ -219,6 +219,28 @@ export function createOpsObservabilityRouter(): Router {
 
   // ---- 公开状态页（只读、无身份信息；数据库不可用时降级为「暂不可用」页） ----
 
+  // Production nginx handles external tools before the generic /dobs proxy. Reaching
+  // Express means that integration is absent (for example in standalone dev),
+  // not that a dashboard query succeeded. Explain the missing dependency and
+  // offer an explicit return path without silently showing another dashboard.
+  const externalToolFallback = (req: Request, res: Response): void => {
+    res.setHeader('Cache-Control', 'no-store');
+    const prometheus = /^\/(?:dobs\/)?prometheus(?:\/|$)/.test(req.path);
+    const label = prometheus ? 'Prometheus' : 'Grafana';
+    if (/^\/(?:dobs\/)?(?:grafana|prometheus)$/.test(req.path)) {
+      res.redirect(307, prometheus ? 'prometheus/' : 'grafana/');
+      return;
+    }
+    const parentDepth = req.path.split('/').filter(Boolean).length - (req.path.endsWith('/') ? 0 : 1);
+    const workbench = '../'.repeat(parentDepth) + 'ops-observability';
+    const view = prometheus ? 'signals/promql' : 'signals/panels';
+    res.status(503).type('html').send(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${label} 尚未接入 · d-obs</title>
+<style>body{margin:0;padding:24px;min-height:100vh;box-sizing:border-box;display:grid;place-items:center;background:#f5f6f7;color:#17252a;font:14px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}main{max-width:540px;padding:32px;border:1px solid #dfe5e7;border-radius:16px;background:#fff;box-shadow:0 12px 32px #17252a0c}h1{font-size:24px;line-height:1.3;margin:8px 0 16px}p{color:#52616b}small{color:#9a3412}a{display:inline-block;padding:8px 14px;border-radius:8px;color:#fff;background:#9a3412;text-decoration:none}@media(prefers-color-scheme:dark){body{background:#171a1f;color:#e6ebef}main{background:#22262d;border-color:#3d4650}p{color:#b2bdc7}small{color:#fcaa78}}</style></head>
+<body><main><small>d-obs · 外部观测工具</small><h1>${label} 尚未接入当前环境</h1><p>此环境的 ${label} 界面暂不可用，请联系平台管理员完成接入。</p><p>可以返回工作台查看平台内的指标、日志和自定义看板。</p><a href="${workbench}#${view}">返回可观测工作台</a></main></body></html>`);
+  };
+  router.get(['/grafana', '/grafana/*', '/dobs/grafana', '/dobs/grafana/*', '/prometheus', '/prometheus/*', '/dobs/prometheus', '/dobs/prometheus/*'], externalToolFallback);
+
   router.get('/status', async (_req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');
     try {

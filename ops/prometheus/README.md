@@ -31,6 +31,13 @@ SSO/运营管理员权限。Prometheus 仍只监听 `127.0.0.1:9090`，不能绕
 
 如果暂时不走线上入口，Grafana 或内部运维工具仍可通过本机 `127.0.0.1:9090` 查询。
 
+Grafana 的 `/api/ds/query` 返回 400 且错误包含 `127.0.0.1:9090` 连接拒绝时，先检查
+`docker inspect d-obs-prometheus` 与容器日志。人工停止的容器不会被 `unless-stopped`
+自动拉起；确认配置、挂载与端口正常后，用 `docker start d-obs-prometheus` 恢复已有
+容器，并验证 `/dobs/prometheus/-/ready`、抓取目标和 Grafana 查询。VictoriaMetrics
+查询返回 200 不代表采集健康：Prometheus 停止期间 `remote_write` 同样会断流，必须
+核对最新样本时间，不能只改数据源来掩盖采集停止。
+
 Prometheus 按两个数据域抓取四类数据源：云侧的 d-obs OTLP/AI 指标、服务器上的
 node-exporter、RDK Studio 私有 OTLP gateway 的 collector 自监控指标，以及端侧的
 `/edge-metrics` 设备身份/心跳/最新样本。端侧 exporter 默认只接受服务器回环抓取，若
@@ -56,8 +63,20 @@ RDK 板端使用仓库中的 `tools/edge-agent.mjs` 和
 弱网样本先落本地 outbox，恢复后补传。云端应用仍使用 OTLP traces/metrics/logs，所有信号
 可用 `robot`、`device`、`site`、`firmware` 等受控资源标签关联，但不会和云侧主机指标混在
 同一组查询结果里。
-如果给 `/metrics` 设置 `RDK_OBSERVABILITY_METRICS_TOKEN`，需要同时在 scrape 配置里增加
-`authorization` header，并避免把 token 提交到仓库。
+生产环境必须配置专用 `RDK_OBSERVABILITY_METRICS_TOKEN`：`NODE_ENV=production` 时，
+未配置令牌会对 `/metrics` 和 `/metrics/business` 返回 401。令牌只授予指标读取权限，
+不要用运营管理员令牌替代，也不要关闭鉴权。
+
+将同一专用令牌写入应用的 `/etc/d-obs.env`（root 所有、0600），以及主机上的
+`/opt/d-obs/prometheus/rules/.metrics-token`（容器 UID 65534 所有、0400）。后者通过
+已有 rules 目录只读挂载，供示例配置的 `authorization.credentials_file` 读取，
+文件名不匹配规则文件的 `*.yml`。令牌不写入 YAML 或仓库；该本地路径已被 Git 忽略。
+若容器采用其他 UID，需要按实际运行身份设置文件所有者。
+
+配置后重启 d-obs，并先运行 `promtool check config`，再 reload Prometheus。
+验证无令牌请求仍为 401、有令牌请求为 200，且 d-obs、业务指标和 edge 抓取目标均为 up。
+`/edge-metrics` 未配置独立 `RDK_OBSERVABILITY_EDGE_METRICS_TOKEN` 时复用指标令牌；
+若配置了独立令牌，应为 edge job 引用相应的独立凭据文件。
 
 Prometheus 同时把样本 `remote_write` 到 `ops/storage/victoria-metrics/` 定义的
 VictoriaMetrics Cluster。生产部署使用两个 `vmstorage` 副本（90 天保留，复制因子 2），

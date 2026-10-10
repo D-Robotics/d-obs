@@ -414,11 +414,20 @@ export function registerSignalsRoutes(router: Router): void {
         res.status(501).json({ ok: false, error: 'prometheus_not_configured' });
         return;
       }
-      const query = queryText(req.query as Record<string, unknown>, 'query', 2000) ?? '';
-      if (!query || !/^[a-zA-Z0-9_{}()[\]|,!=<>+\-*/\s"'.:@]+$/.test(query)) {
+      const rawQuery = req.query.query;
+      // PromQL syntax belongs to Prometheus. The query is URL-encoded, never
+      // executed as a shell command; preserve regex matchers, escapes and UTF-8
+      // labels and normal whitespace; reject oversized input and other controls.
+      if (
+        typeof rawQuery !== 'string' ||
+        rawQuery.length > 2_000 ||
+        /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(rawQuery) ||
+        !rawQuery.trim()
+      ) {
         res.status(400).json({ ok: false, error: 'invalid_promql' });
         return;
       }
+      const query = rawQuery.trim();
       const minutes = queryInteger(req.query as Record<string, unknown>, 'minutes', 240, 5, 20_160);
       const end = Date.now() / 1000;
       const start = end - minutes * 60;
@@ -428,15 +437,20 @@ export function registerSignalsRoutes(router: Router): void {
       try {
         const url = `${base}/api/v1/query_range?query=${encodeURIComponent(query)}&start=${start.toFixed(0)}&end=${end.toFixed(0)}&step=${step}`;
         const response = await fetch(url, { signal: controller.signal, headers: { accept: 'application/json' } });
-        if (!response.ok) {
+        const payload = await response.json().catch(() => null) as {
+          status?: string;
+          errorType?: string;
+          data?: { result?: Array<{ metric?: Record<string, unknown>; values?: Array<[number, string]> }> };
+        } | null;
+        if (response.status === 400 || (payload?.status === 'error' && payload.errorType === 'bad_data')) {
+          res.status(400).json({ ok: false, error: 'invalid_promql' });
+          return;
+        }
+        if (!response.ok || payload?.status !== 'success' || !Array.isArray(payload.data?.result)) {
           res.status(502).json({ ok: false, error: 'prometheus_query_failed' });
           return;
         }
-        const payload = await response.json() as {
-          status?: string;
-          data?: { result?: Array<{ metric?: Record<string, unknown>; values?: Array<[number, string]> }> };
-        };
-        const series = (payload.data?.result ?? []).slice(0, 24).map((row) => {
+        const series = payload.data.result.slice(0, 24).map((row) => {
           const labels = { ...(row.metric ?? {}) };
           delete (labels as Record<string, unknown>).__name__;
           return {

@@ -28,6 +28,22 @@ scrape_configs:
           platform: cloud
     metrics_path: /metrics
     scrape_timeout: 10s
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/rules/.metrics-token
+
+  - job_name: d-obs-business
+    static_configs:
+      - targets: ['127.0.0.1:18093']
+        labels:
+          plane: cloud
+          signal_source: business
+          platform: cloud
+    metrics_path: /metrics/business
+    scrape_timeout: 10s
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/rules/.metrics-token
 
   # Edge device identity/heartbeat/latest-sample metrics are a separate data
   # domain even though the registry lives in the cloud-side d-obs process.
@@ -40,6 +56,9 @@ scrape_configs:
           platform: robot
     metrics_path: /edge-metrics
     scrape_timeout: 10s
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/rules/.metrics-token
 
   # Linux host health for the RDK Studio server. The exporter is bound to
   # localhost and is only reachable by this Prometheus instance.

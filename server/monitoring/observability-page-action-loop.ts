@@ -7,7 +7,7 @@
  * the server-side approval and remediation gates.
  */
 export const OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT = `
-      state.actionLoop={actions:[],stats:[],loading:false,loaded:false,error:'',mutationError:'',busyId:''};
+      state.actionLoop={actions:[],stats:[],loading:false,loaded:false,error:'',mutationError:'',busyId:'',accessDenied:false};
       const ACTION_LOOP_STATUS_LABELS={pending_approval:'待审批',approved:'已批准',completed:'已记录',denied:'已拒绝',executing:'执行中',succeeded:'已验证',failed:'执行失败',verification_failed:'验证未通过'};
       const ACTION_LOOP_TYPE_LABELS={investigate:'调查',observe:'观察',escalate:'升级',remediate:'白名单处置'};
       const ACTION_LOOP_REF_PATTERN=/^(summary|incident|check|event|slo|trace):[A-Za-z0-9._:-]{1,160}$/;
@@ -15,8 +15,9 @@ export const OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT = `
       function actionLoopStatusLabel(status){return ACTION_LOOP_STATUS_LABELS[String(status||'')]||'待确认'}
       function actionLoopTypeLabel(type){return ACTION_LOOP_TYPE_LABELS[String(type||'')]||'行动'}
       function actionLoopActionList(){return Array.isArray(state.actionLoop&&state.actionLoop.actions)?state.actionLoop.actions:[]}
-      function actionLoopFriendlyError(value){const message=String(value&&value.message||value||'action_loop_failed');return friendlyError(message)||'行动暂时不可用，请稍后重试'}
-      function actionLoopRequest(path,options){const requestOptions=options||{};const method=String(requestOptions.method||'GET').toUpperCase();const headers=method==='GET'?(typeof contextRequestHeaders==='function'?contextRequestHeaders():apiHeaders(false)):apiHeaders(true);return fetch(base+path,Object.assign({credentials:'same-origin',headers},requestOptions)).then(async response=>{if(response.status===401||response.status===403){if(!sessionStorage.getItem('d_obs_admin_token')&&!sessionStorage.getItem('d_obs_sso_session'))renderAccess();throw new Error('not_authorized')}const data=await response.json().catch(()=>({}));const acceptedAsync=response.status===202&&data.action; if(!response.ok||(!data.ok&&!acceptedAsync))throw new Error(data.error||data.message||('HTTP '+response.status));return data})}
+      function actionLoopFriendlyError(value){const message=String(value&&value.message||value||'action_loop_failed');if(message==='not_authorized'&&opsAdminToken&&!opsSsoSession&&!(obsAuthState.me&&obsAuthState.me.user))return '行动队列需要 SSO 运营账号身份；管理 token 可继续查看指标和告警，请通过账号登录后重试';return friendlyError(message)||'行动暂时不可用，请稍后重试'}
+      function actionLoopReadUnavailable(){return Boolean(state.actionLoop&&state.actionLoop.accessDenied)}
+      function actionLoopRequest(path,options){const requestOptions=options||{};const method=String(requestOptions.method||'GET').toUpperCase();const headers=method==='GET'?(typeof contextRequestHeaders==='function'?contextRequestHeaders():apiHeaders(false)):apiHeaders(true);return fetch(base+path,Object.assign({credentials:'same-origin',headers},requestOptions)).then(async response=>{if(response.status===401){renderAccess();throw new Error('not_authorized')}const data=await response.json().catch(()=>({}));if(response.status===403){state.actionLoop.accessDenied=true;throw new Error(data.error||'not_authorized')}const acceptedAsync=response.status===202&&data.action; if(!response.ok||(!data.ok&&!acceptedAsync))throw new Error(data.error||data.message||('HTTP '+response.status));state.actionLoop.accessDenied=false;return data})}
       function actionLoopPlaybook(playbookId){const rem=state.remediation;return rem&&Array.isArray(rem.playbooks)?rem.playbooks.find(item=>item.id===playbookId):null}
       function actionLoopEvidenceButton(parent,ref,o){const value=String(ref||'').trim();if(!ACTION_LOOP_REF_PATTERN.test(value))return;const button=add(parent,'button','action-loop-ref',value);button.type='button';button.title='打开证据 '+value;button.addEventListener('click',()=>{if(typeof navigateCopilotEvidence==='function')navigateCopilotEvidence(value,o||state.overview)});return button}
       function actionLoopMeta(parent,label,value){if(value===null||value===undefined||String(value)==='')return;const node=add(parent,'span','',label+' '+String(value));node.title=String(value);return node}
@@ -26,6 +27,7 @@ export const OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT = `
 
       async function loadActionLoop(force){
         if(!state.actionLoop||state.actionLoop.loading)return;
+        if(!force&&actionLoopReadUnavailable())return;
         if(!force&&state.actionLoop.loaded)return;
         state.actionLoop.loading=true;state.actionLoop.error='';renderActionLoopMount();
         try{const data=await actionLoopRequest('/api/ops/observability/actions?limit=20');state.actionLoop.actions=Array.isArray(data.actions)?data.actions:[];state.actionLoop.stats=Array.isArray(data.stats)?data.stats:[];state.actionLoop.loaded=true}
@@ -109,7 +111,7 @@ export const OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT = `
       const actionLoopBaseRenderOverview=renderOverview;
       renderOverview=function(){actionLoopBaseRenderOverview();const root=$('overviewContent');if(!root||!state.overview)return;const legacy=root.querySelector('.action-queue');if(legacy)legacy.remove();if(actionLoopScopedMode())return;if(Array.isArray(state.actions)){state.actionLoop.actions=state.actions;state.actionLoop.error='';state.actionLoop.loaded=true}let mount=$('actionLoopMount');if(!mount||mount.parentNode!==root){mount=make('div');mount.id='actionLoopMount';const focus=root.querySelector('.unified-focus');if(focus)root.insertBefore(mount,focus);else root.appendChild(mount)}renderActionLoopMount();if(!state.actionLoop.loaded&&!state.actionLoop.loading)void loadActionLoop(false)};
       const actionLoopBaseLoadAll=loadAll;
-      loadAll=async function(manual){if(state.actionLoop)state.actionLoop.loaded=false;const result=await actionLoopBaseLoadAll(manual);if(!actionLoopScopedMode())void loadActionLoop(Boolean(manual));return result};
+      loadAll=async function(manual){if(state.actionLoop){state.actionLoop.loaded=false;if(manual)state.actionLoop.accessDenied=false}const result=await actionLoopBaseLoadAll(manual);if(!actionLoopScopedMode()&&!actionLoopReadUnavailable())void loadActionLoop(Boolean(manual));return result};
 
       function actionLoopCopilotRefs(item,analysis){const allowed=new Set((analysis&&analysis.evidenceIndex||[]).map(value=>String(value&&value.ref||'')));return (Array.isArray(item&&item.evidenceRefs)?item.evidenceRefs:[]).map(value=>String(value||'').trim()).filter(value=>ACTION_LOOP_REF_PATTERN.test(value)&&allowed.has(value)).slice(0,32)}
       function actionLoopCandidatePlaybooks(item){const all=state.remediation&&Array.isArray(state.remediation.playbooks)?state.remediation.playbooks:[];const refs=Array.isArray(item&&item.evidenceRefs)?item.evidenceRefs:[];const keys=refs.filter(ref=>String(ref).startsWith('check:')).map(ref=>String(ref).slice(6));const matching=all.filter(playbook=>keys.some(key=>Array.isArray(playbook.appliesTo)&&playbook.appliesTo.includes(key)));return matching.length?matching:all}

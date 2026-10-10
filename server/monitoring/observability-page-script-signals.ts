@@ -41,6 +41,8 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         const legend=make('div','signals-legend');usable.forEach((item,index)=>{const entry=make('span');const swatch=make('span','swatch');swatch.style.background=SIGNALS_CHART_COLORS[index%SIGNALS_CHART_COLORS.length];entry.appendChild(swatch);entry.appendChild(document.createTextNode(item.name+(item.points.length?(' ('+item.points.length+')'):'')));legend.appendChild(entry)});container.appendChild(legend)}
 
       // ============ 指标查询 ============
+      async function readSignalsResponse(response){const data=await response.json().catch(()=>null);if(!response.ok||!data||!data.ok){const error=new Error(data&&(data.error||data.message)||('HTTP '+response.status));error.status=response.status;throw error}return data}
+      function signalsLoadError(error){if(error&&error.status===401)return '登录会话已失效，请重新登录';if(error&&error.status===403)return '当前身份没有访问权限，请使用运营账号';if(error&&error.message==='central_store_disabled')return '观测存储未启用，请联系管理员';if(error&&error.status===404)return '查询服务未接入当前环境';return '数据读取失败，请稍后重试'}
       state.signalMetricNames=state.signalMetricNames||[];
       async function loadSignalMetricNames(){try{const response=await fetch(base+'/api/ops/observability/metrics/series?limit=500',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);if(response.ok&&data&&data.ok){state.signalMetricNames=[...new Set((data.series||[]).map(item=>item.metric))].sort();const list=$('signalMetricList');if(list){list.replaceChildren();state.signalMetricNames.forEach(name=>{const option=make('option');option.value=name;list.appendChild(option)})}const input=$('signalMetricInput');if(input&&!input.value&&state.signalMetricNames.length)input.value=state.signalMetricNames[0]}}catch{}}
       async function runSignalsMetricQuery(){const metric=String(($('signalMetricInput')||{}).value||'').trim();const minutes=Number(($('signalMinutes')||{}).value||240);const target=$('signalsMetricChart');if(!target)return;if(!metric){toast('请先输入指标名',false);return}target.replaceChildren();const loading=make('div','signals-empty','正在查询 '+metric+' …');target.appendChild(loading);
@@ -149,7 +151,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           let queryParams='/api/ops/observability/metrics/query?metric='+encodeURIComponent(panel.metric)+'&points=120&minutes='+encodeURIComponent(String(minutes));
           if(activeRange)queryParams+='&fromMs='+encodeURIComponent(String(activeRange.fromMs))+'&toMs='+encodeURIComponent(String(activeRange.toMs));
           const serviceFilter=(board.spec.filters&&board.spec.filters.service)||'';
-          fetch(base+queryParams,{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data=>{const series=(data&&data.ok?data.series:[]).filter(item=>!serviceFilter||String((item.labels||{}).service||'')===serviceFilter).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));renderBoardChart(chartWrap,series,minutes,panel)}).catch(()=>{chartWrap.replaceChildren();chartWrap.appendChild(make('div','signals-empty','加载失败'))})});
+          fetch(base+queryParams,{headers:apiHeaders(false),credentials:'same-origin'}).then(readSignalsResponse).then(data=>{const series=(data.series||[]).filter(item=>!serviceFilter||String((item.labels||{}).service||'')===serviceFilter).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));renderBoardChart(chartWrap,series,minutes,panel)}).catch(error=>{chartWrap.replaceChildren();const failed=add(chartWrap,'div','signals-empty');failed.setAttribute('role','alert');add(failed,'span','',signalsLoadError(error));const retry=add(failed,'button','btn','重试');retry.type='button';retry.addEventListener('click',renderBoardPanels)})});
         target.ondragover=event=>event.preventDefault();
         target.ondrop=event=>{event.preventDefault();const dropBoard=currentBoard();if(!dropBoard)return;const from=state.boardDragIndex;if(from<0||from>=dropBoard.spec.panels.length-1)return;moveBoardPanel(from,dropBoard.spec.panels.length-1,true)}}
       function openPanelModal(existing,index){const board=currentBoard();if(!board){toast('请先创建看板',false);return}
@@ -177,19 +179,19 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           let url='/api/ops/observability/metrics/query?metric='+encodeURIComponent(draft.metric)+'&points=60&minutes='+encodeURIComponent(String(minutes));
           if(activeRange)url+='&fromMs='+encodeURIComponent(String(activeRange.fromMs))+'&toMs='+encodeURIComponent(String(activeRange.toMs));
           const serviceFilter=(board.spec.filters&&board.spec.filters.service)||'';
-          fetch(base+url,{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data=>{if(seq!==previewSeq)return;previewWrap.replaceChildren();
-            const series=(data&&data.ok?data.series:[]).filter(item=>!serviceFilter||String((item.labels||{}).service||'')===serviceFilter).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));
+          fetch(base+url,{headers:apiHeaders(false),credentials:'same-origin'}).then(readSignalsResponse).then(data=>{if(seq!==previewSeq)return;previewWrap.replaceChildren();
+            const series=(data.series||[]).filter(item=>!serviceFilter||String((item.labels||{}).service||'')===serviceFilter).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));
             if(!series.length){previewWrap.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}
-            renderBoardChart(previewWrap,series,minutes,draft)}).catch(()=>{if(seq===previewSeq){previewWrap.replaceChildren();previewWrap.appendChild(make('div','signals-empty','预览加载失败'))}})}
+            renderBoardChart(previewWrap,series,minutes,draft)}).catch(error=>{if(seq===previewSeq){previewWrap.replaceChildren();const failed=add(previewWrap,'div','signals-empty','预览加载失败：'+signalsLoadError(error));failed.setAttribute('role','alert')}})}
         function schedulePreview(){if(previewTimer)clearTimeout(previewTimer);previewTimer=setTimeout(renderPreview,400)}
         [titleInput,metricInput,warnInput,critInput].forEach(el=>el.addEventListener('input',schedulePreview));
         [windowSelect,chartSelect,widthSelect].forEach(el=>el.addEventListener('change',schedulePreview));
         if(existing&&existing.metric)renderPreview();else previewWrap.appendChild(make('div','signals-empty','填写指标名后此处实时预览'));
         let libraryRecords=[];
         async function refreshLibrary(){libSelect.replaceChildren();const loading=make('option');loading.value='';loading.textContent='加载中…';libSelect.appendChild(loading);
-          try{const r=await fetch(base+'/api/ops/observability/library/panels',{headers:apiHeaders(false),credentials:'same-origin'});const d=await r.json().catch(()=>null);libSelect.replaceChildren();libraryRecords=(d&&d.ok?d.panels:[])||[];
+          try{const r=await fetch(base+'/api/ops/observability/library/panels',{headers:apiHeaders(false),credentials:'same-origin'});const d=await readSignalsResponse(r);libSelect.replaceChildren();libraryRecords=d.panels||[];
             if(!libraryRecords.length){const option=make('option');option.value='';option.textContent='（库面板为空）';libSelect.appendChild(option);return}
-            libraryRecords.forEach(record=>{const option=make('option');option.value=record.id;option.textContent=record.panel.title+' · '+record.panel.metric;libSelect.appendChild(option)})}catch{libSelect.replaceChildren();const option=make('option');option.value='';option.textContent='（库面板读取失败）';libSelect.appendChild(option)}}
+            libraryRecords.forEach(record=>{const option=make('option');option.value=record.id;option.textContent=record.panel.title+' · '+record.panel.metric;libSelect.appendChild(option)})}catch(error){libSelect.replaceChildren();const option=make('option');option.value='';option.textContent='（库面板读取失败：'+signalsLoadError(error)+'）';libSelect.appendChild(option)}}
         useBtn.addEventListener('click',()=>{const record=libraryRecords.find(item=>item.id===libSelect.value);if(!record){toast('请选择一个库面板',false);return}
           titleInput.value=record.panel.title;metricInput.value=record.panel.metric;windowSelect.value=String(record.panel.windowMinutes||0);chartSelect.value=record.panel.chart;warnInput.value=record.panel.warnValue!=null?String(record.panel.warnValue):'';critInput.value=record.panel.critValue!=null?String(record.panel.critValue):'';widthSelect.value=String(record.panel.width||1);schedulePreview();toast('已从库面板填入')});
         const linkBtn=add(libRow,'button','btn','链接');linkBtn.type='button';linkBtn.title='插入此库面板并保持联动：更新库面板会同步到所有引用它的看板';linkBtn.addEventListener('click',()=>{const record=libraryRecords.find(item=>item.id===libSelect.value);if(!record){toast('请选择一个库面板',false);return}
@@ -339,7 +341,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
           if(spec.metric&&spec.plane==='otlp'){
             const loading=make('div','signals-empty','正在查询平台内指标 '+spec.metric+' …');target.appendChild(loading);
             const params='/api/ops/observability/metrics/query?metric='+encodeURIComponent(spec.metric)+'&minutes='+encodeURIComponent(String(spec.windowMinutes||240))+'&points=240';
-            fetch(base+params,{headers:apiHeaders(false),credentials:'same-origin'}).then(r=>r.json()).then(data2=>{loading.remove();const series=(data2&&data2.ok?data2.series:[]).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));if(!series.length){target.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}renderNlChart(series,spec.windowMinutes||240)}).catch(()=>{loading.textContent='平台内指标查询失败'})}
+            fetch(base+params,{headers:apiHeaders(false),credentials:'same-origin'}).then(readSignalsResponse).then(data2=>{loading.remove();const series=(data2.series||[]).map(item=>({name:item.metric+' '+JSON.stringify(item.labels||{}),points:item.points||[]}));if(!series.length){target.appendChild(make('div','signals-empty','所选范围内没有数据点'));return}renderNlChart(series,spec.windowMinutes||240)}).catch(error=>{loading.textContent='平台内指标查询失败：'+signalsLoadError(error);loading.setAttribute('role','alert')})}
           if(!spec.metric){target.appendChild(make('div','signals-empty','未能定位到具体指标；试试「指标字典」页签，或在下方直接输入指标名。'))}
         }catch{target.replaceChildren();target.appendChild(make('div','signals-empty','智能查询失败，请检查网络'))}}
       async function loadMetricCatalog(){const target=$('metricCatalogContent');if(!target)return;try{const response=await fetch(base+'/api/ops/observability/metrics/catalog',{headers:apiHeaders(false),credentials:'same-origin'});const data=await response.json().catch(()=>null);target.replaceChildren();if(!response.ok||!data||!data.ok){target.appendChild(make('div','signals-empty','指标字典读取失败'));return}
@@ -391,6 +393,7 @@ export const OPS_OBSERVABILITY_SCRIPT_SIGNALS =
         bind('boardImportFile','change',event=>{const file=event.target.files&&event.target.files[0];if(file)importBoardFile(file)});
         bind('registerDeviceBtn','click',registerDeviceFlow);
         bind('nlQueryBtn','click',runNlQuery);
+        bind('promqlNativeLink','click',event=>{if(opsAdminToken&&!opsSsoSession&&!(obsAuthState.me&&obsAuthState.me.user)){event.preventDefault();toast('Prometheus 原生界面需要 SSO 运营账号登录；当前管理 token 可继续使用本页 PromQL 查询',false)}});
         bind('nlQueryInput','keydown',event=>{if(event.key==='Enter')runNlQuery()});
         bind('ingestTokenIssueBtn','click',issueIngestTokenFlow);
         bind('selftestMetricBtn','click',sendSelfTestMetric);

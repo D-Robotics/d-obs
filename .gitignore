@@ -4,5 +4,6 @@ output/
 *.log
 .env
 .env.*
+ops/prometheus/rules/.metrics-token
 dist-server-build/
 node_modules
