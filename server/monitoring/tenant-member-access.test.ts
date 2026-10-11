@@ -636,6 +636,7 @@ async function runWorkbenchScript(options: {
 }> {
   const { Script, createContext } = await import('node:vm');
   const { OPS_TENANT_SCOPE_JS } = await import('./observability-page-tenant-scope.js');
+  const { OPS_OBSERVABILITY_SCRIPT_UI } = await import('./observability-page-ui.js');
   const { OPS_OBSERVABILITY_SCRIPT_A } = await import('./observability-page-script-a.js');
   const { OPS_OBSERVABILITY_SCRIPT_TENANTS } = await import('./observability-page-tenants.js');
   const { OPS_OBSERVABILITY_SCRIPT_B } = await import('./observability-page-script-b.js');
@@ -789,6 +790,7 @@ async function runWorkbenchScript(options: {
   // 顺序与 observability-page.ts 的拼接保持一致（归属片段在最前）。
   const fullScript = [
     OPS_TENANT_SCOPE_JS,
+    OPS_OBSERVABILITY_SCRIPT_UI,
     OPS_OBSERVABILITY_SCRIPT_A,
     OPS_OBSERVABILITY_SCRIPT_TENANTS,
     OPS_OBSERVABILITY_SCRIPT_B,

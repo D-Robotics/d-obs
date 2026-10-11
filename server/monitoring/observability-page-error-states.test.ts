@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 
 import { OPS_OBSERVABILITY_SCRIPT_A } from './observability-page-script-a.js';
+import { OPS_OBSERVABILITY_SCRIPT_UI } from './observability-page-ui.js';
 import { OPS_OBSERVABILITY_SCRIPT_B } from './observability-page-script-b.js';
 import { OPS_OBSERVABILITY_SCRIPT_SIGNALS } from './observability-page-script-signals.js';
 import { OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT } from './observability-page-action-loop.js';
@@ -73,7 +74,7 @@ function setup(options: { token?: boolean; cookieUser?: boolean; includeBaseLoad
     globalThis.obs={state,obsAuthState,obsLoadMe,applyAuthMode,loadIncidentCenter,renderBoardPanels,openPanelModal,runNlQuery,loadActionLoop,loadAll,actionLoopRequest};
   `;
   context.onAccessScreen = () => { accessScreens += 1; };
-  vm.runInContext(`${OPS_OBSERVABILITY_SCRIPT_A}\n${baseLoader}\n${OPS_OBSERVABILITY_SCRIPT_SIGNALS}\n${OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT}\n${hook}})();`, context);
+  vm.runInContext(`${OPS_OBSERVABILITY_SCRIPT_UI}\n${OPS_OBSERVABILITY_SCRIPT_A}\n${baseLoader}\n${OPS_OBSERVABILITY_SCRIPT_SIGNALS}\n${OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT}\n${hook}})();`, context);
   const obs = context.obs as {
     state: Record<string, any>;
     obsAuthState: { me: Json | null };

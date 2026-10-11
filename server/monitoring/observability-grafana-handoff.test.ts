@@ -4,13 +4,15 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 
 import { OPS_OBSERVABILITY_SCRIPT_A } from './observability-page-script-a.js';
+import { OPS_OBSERVABILITY_SCRIPT_UI } from './observability-page-ui.js';
 
 type Reply = { status: number; error?: string; invalidJson?: boolean };
 
 function setup(options: { href?: string; popupBlocked?: boolean } = {}) {
   const href = options.href ?? '/dobs/grafana/';
   const attrs: Record<string, string> = { href };
-  const toast = { textContent: '', className: '' };
+  // 桩需覆盖 OpsUI.toast 用到的最小接口（class 判定、播报语义、悬停暂停绑定）。
+  const toast = { textContent: '', className: '', addEventListener() {}, classList: { contains: () => false }, setAttribute() {}, removeAttribute() {} };
   const openCalls: Array<{ url: string; target: string }> = [];
   const navigations: string[] = [];
   const sameTabNavigations: string[] = [];
@@ -69,7 +71,7 @@ function setup(options: { href?: string; popupBlocked?: boolean } = {}) {
     URL,
   });
   // SCRIPT_A 是主 IIFE 的开头片段；闭合并导出实际函数，避免复制实现。
-  vm.runInContext(`${OPS_OBSERVABILITY_SCRIPT_A}\n globalThis.initHandoff=initGrafanaLink;})();`, context);
+  vm.runInContext(`${OPS_OBSERVABILITY_SCRIPT_UI}\n${OPS_OBSERVABILITY_SCRIPT_A}\n globalThis.initHandoff=initGrafanaLink;})();`, context);
   (context.initHandoff as () => void)();
   return {
     attrs, toast, popup, openCalls, fetchCalls, navigations, sameTabNavigations, order,
