@@ -1,4 +1,8 @@
-export const OPS_OBSERVABILITY_TRACES_STYLE = `
+import { OPS_OBSERVABILITY_TRACE_CONTENT_STYLE } from './observability-page-trace-content-style.js';
+import { OPS_OBSERVABILITY_TRACE_WORKSPACE_STYLE } from './observability-page-trace-workspace-style.js';
+import { OPS_OBSERVABILITY_TRACE_DENSITY_STYLE } from './observability-page-trace-density-style.js';
+
+export const OPS_OBSERVABILITY_TRACES_STYLE = OPS_OBSERVABILITY_TRACE_CONTENT_STYLE + `
     .trace-native-hero{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 18px;border-left:4px solid var(--c198);background:linear-gradient(100deg,var(--c237),var(--c2))}.trace-native-hero h2{margin:2px 0 0;font-size:16px}.trace-native-hero p{margin:3px 0 0;max-width:800px;color:var(--muted);font-size:11px;line-height:1.45}.trace-hero-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.trace-privacy{padding:6px 10px;border-radius:999px;background:var(--c238);color:var(--green);font-size:11px;font-weight:700;white-space:nowrap}
     .trace-mode-switch{display:inline-flex;flex:0 0 auto;align-self:center;gap:0;padding:2px;border:1px solid var(--line);border-radius:999px;background:var(--c2)}.trace-mode-switch .ic-tab{min-height:28px}.trace-mode-switch .ic-tab.is-active{background:var(--c242);border-color:transparent;color:var(--green);font-weight:600}
     .trace-stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;margin:0;overflow:hidden}.trace-stat{min-width:0;padding:14px 18px;border-right:1px solid var(--line)}.trace-stat:last-child{border-right:0}.trace-stat.critical strong{color:var(--red)}.trace-stat.warning strong{color:var(--orange)}.trace-stat span{display:block;color:var(--muted);font-size:11px}.trace-stat strong{display:block;margin-top:4px;overflow:hidden;color:var(--c240);font-size:20px;text-overflow:ellipsis;white-space:nowrap}.trace-stat small{display:block;margin-top:2px;color:var(--muted);font-size:10px}
@@ -18,5 +22,39 @@ export const OPS_OBSERVABILITY_TRACES_STYLE = `
     @media(max-width:1100px){.trace-stat:nth-child(3){border-right:0}.trace-stat:nth-child(-n+3){border-bottom:1px solid var(--line)}}
     @media(max-width:760px){.trace-toolbar{display:grid;grid-template-columns:100px minmax(0,1fr);gap:10px}.trace-search{min-width:0}.trace-toolbar .search{min-width:0}.trace-filters{grid-column:1/-1}.trace-count{grid-column:1/-1;margin:0;text-align:left}.trace-list-note{align-items:flex-start;flex-wrap:wrap;gap:4px}.trace-stat{padding:12px}.trace-detail{right:8px;bottom:8px;top:68px;width:calc(100vw - 16px);max-height:calc(100vh - 76px)}}
     @media(max-width:480px){.trace-stat:nth-child(3){border-right:1px solid var(--line)}.trace-stat:nth-child(2n){border-right:0}.trace-stat:nth-child(-n+4){border-bottom:1px solid var(--line)}.trace-filters{grid-template-columns:repeat(4,minmax(0,1fr))}.trace-stats .trace-stat strong{font-size:21px}.trace-stats .trace-stat small{font-size:10px}}
+    /* The shared run/session detail must win over later generic .panel positioning. */
+    body.ops-observability #nativeTraceDetail.trace-detail{position:fixed;inset:88px 24px 20px 248px;width:auto;max-width:none;max-height:none;min-width:0;overflow:auto;scrollbar-gutter:stable;padding:0;background:var(--c2);box-sizing:border-box}
+    body.ops-observability #nativeTraceDetail:has(>.trace-coverage-notice){display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-template-rows:max-content max-content max-content max-content minmax(max-content,1fr) max-content;grid-template-areas:"head head" "coverage coverage" "facts facts" "waterfall context" "waterfall evidence" "advanced advanced";align-content:start}
+    body.ops-observability #nativeTraceDetail>*{min-width:0}
+    body.ops-observability #nativeTraceDetail>.trace-detail-head{grid-area:head;align-items:center;padding:12px 18px}
+    body.ops-observability #nativeTraceDetail>.trace-detail-head .copilot-kicker{display:none}
+    body.ops-observability #nativeTraceDetail:has(>.trace-coverage-notice)>.trace-detail-head p{display:none}
+    body.ops-observability #nativeTraceDetail .trace-detail-title{margin:0;font-size:16px}
+    body.ops-observability #nativeTraceDetail>.trace-coverage-notice{grid-area:coverage;margin:12px 16px 0;padding:9px 12px}
+    body.ops-observability #nativeTraceDetail>.trace-coverage-notice.healthy p{margin-top:3px}
+    body.ops-observability #nativeTraceDetail>.trace-detail-facts{grid-area:facts;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;padding:12px 16px}
+    body.ops-observability #nativeTraceDetail .trace-detail-fact{padding:6px 10px;border-radius:0;border-left:1px solid var(--line);background:transparent}
+    body.ops-observability #nativeTraceDetail .trace-detail-fact:nth-child(4n+1){border-left:0}
+    body.ops-observability #nativeTraceDetail .trace-detail-fact strong{white-space:normal;overflow-wrap:anywhere;margin-top:1px;color:var(--text)}
+    body.ops-observability #nativeTraceDetail>.trace-context{grid-area:context;align-self:start;margin:14px 16px 12px 0}
+    body.ops-observability #nativeTraceDetail .trace-context-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    body.ops-observability #nativeTraceDetail .trace-context-item strong{white-space:normal;overflow-wrap:anywhere;color:var(--text)}
+    body.ops-observability #nativeTraceDetail .trace-context-summary{color:var(--text)}
+    body.ops-observability #nativeTraceDetail .trace-span-attributes summary{color:var(--muted)}
+    body.ops-observability #nativeTraceDetail>.trace-detail-section{align-self:start;margin:0;padding:14px 16px}
+    body.ops-observability #nativeTraceDetail>.trace-detail-section:not(:has(.trace-evidence-sources)){grid-area:waterfall;border-right:1px solid var(--line)}
+    body.ops-observability #nativeTraceDetail>.trace-detail-section:has(.trace-evidence-sources){grid-area:evidence}
+    body.ops-observability #nativeTraceDetail .trace-evidence-sources{grid-template-columns:repeat(2,minmax(0,1fr))}
+    body.ops-observability #nativeTraceDetail .trace-span-row{grid-template-columns:minmax(200px,.7fr) minmax(0,1.3fr);padding:8px 10px}
+    body.ops-observability #nativeTraceDetail .trace-span-track{min-height:30px}
+    body.ops-observability #nativeTraceDetail .trace-span-track>small{font-size:10px;line-height:1.2}
+    body.ops-observability #nativeTraceDetail .trace-section-head{align-items:flex-start;flex-wrap:wrap;gap:4px 12px}
+    body.ops-observability #nativeTraceDetail .trace-section-head span{max-width:100%;text-align:left}
+    body.ops-observability #nativeTraceDetail .trace-attribute-grid strong,body.ops-observability #nativeTraceDetail .trace-evidence-item small,body.ops-observability #nativeTraceDetail .trace-evidence-item p{white-space:normal;overflow-wrap:anywhere}
+    body.ops-observability #nativeTraceDetail>.trace-advanced{grid-area:advanced}
+    @media(min-width:1700px){body.ops-observability #nativeTraceDetail>.trace-detail-facts{grid-template-columns:repeat(8,minmax(0,1fr))}body.ops-observability #nativeTraceDetail .trace-detail-fact:nth-child(5){border-left:1px solid var(--line)}}
+    @media(max-width:1280px){body.ops-observability #nativeTraceDetail:has(>.trace-coverage-notice){grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-auto-rows:max-content;grid-template-areas:"head" "coverage" "facts" "waterfall" "context" "evidence" "advanced"}body.ops-observability #nativeTraceDetail>.trace-context{margin:0 16px 14px}body.ops-observability #nativeTraceDetail .trace-context-grid,body.ops-observability #nativeTraceDetail .trace-evidence-sources{grid-template-columns:repeat(4,minmax(0,1fr))}body.ops-observability #nativeTraceDetail>.trace-detail-section:not(:has(.trace-evidence-sources)){border-right:0}}
+    @media(min-width:721px) and (max-width:900px){body.ops-observability #nativeTraceDetail.trace-detail{left:216px;right:16px}}
+    @media(max-width:720px){body.ops-observability #nativeTraceDetail.trace-detail{inset:68px 8px calc(76px + env(safe-area-inset-bottom)) 8px}body.ops-observability #nativeTraceDetail>.trace-detail-facts,body.ops-observability #nativeTraceDetail .trace-context-grid,body.ops-observability #nativeTraceDetail .trace-evidence-sources{grid-template-columns:repeat(2,minmax(0,1fr))}body.ops-observability #nativeTraceDetail .trace-detail-fact:nth-child(2n+1){border-left:0}body.ops-observability #nativeTraceDetail>.trace-detail-head{padding:10px 12px}body.ops-observability #nativeTraceDetail .trace-span-row{grid-template-columns:minmax(0,1fr)}body.ops-observability #nativeTraceDetail .trace-span-label strong{white-space:normal;overflow-wrap:anywhere}body.ops-observability #nativeTraceDetail>.trace-detail-section{padding:12px}body.ops-observability #nativeTraceDetail>.trace-coverage-notice{margin:10px 12px 0;border-radius:8px}body.ops-observability #nativeTraceDetail>.trace-detail-facts{padding:10px 12px}body.ops-observability #nativeTraceDetail .trace-detail-title{font-size:14px}}
     @media(prefers-reduced-motion:reduce){.trace-row-openable{transition:none}}
-`;
+` + OPS_OBSERVABILITY_TRACE_WORKSPACE_STYLE + OPS_OBSERVABILITY_TRACE_DENSITY_STYLE;

@@ -7,7 +7,7 @@ import type {
 import { resolveStudioTraceStoreEnvironment } from '../observability/studio-trace-store.js';
 
 type PgResult = { rows: Array<Record<string, unknown>> };
-type PgPool = { query: (text: string, params?: unknown[]) => Promise<PgResult> };
+type PgPool = { query: (text: string, params?: unknown[]) => Promise<PgResult>; end?(): Promise<void>; on?(event: 'error', listener: (error: Error) => void): void };
 
 function databaseUrl(): string {
   return String(process.env.RDK_CHAT_CREDITS_DB_URL ?? '').trim();
@@ -21,8 +21,10 @@ async function pool(): Promise<PgPool> {
   if (!connectionString) throw new Error('public observability database is not configured');
   if (!poolReady) {
     poolReady = import('pg' as string).then((module) => {
-      const Pool = (module.default as { Pool: new (config: { connectionString: string; max: number }) => PgPool }).Pool;
-      return new Pool({ connectionString, max: 2 });
+      const Pool = (module.default as { Pool: new (config: { connectionString: string; max: number; connectionTimeoutMillis: number; statement_timeout: number; lock_timeout: number }) => PgPool }).Pool;
+      const p = new Pool({ connectionString, max: 2, connectionTimeoutMillis: 3_000, statement_timeout: 3_000, lock_timeout: 3_000 });
+      p.on?.('error', () => console.warn('[public-observability-quality] idle PostgreSQL connection failed'));
+      return p;
     }).catch((error) => {
       poolReady = null;
       throw error;
@@ -31,7 +33,7 @@ async function pool(): Promise<PgPool> {
   return poolReady;
 }
 
-async function ensureSchema(p: PgPool): Promise<void> {
+export async function ensurePublicObservabilityQualitySchema(p: PgPool): Promise<void> {
   await p.query(`
     create table if not exists public.studio_public_observability_scores (
       score_id text primary key,
@@ -101,10 +103,11 @@ async function ensureSchema(p: PgPool): Promise<void> {
   `);
 }
 
-async function database(): Promise<PgPool> {
+async function database(schemaInitialized = false): Promise<PgPool> {
   const p = await pool();
+  if (schemaInitialized) return p;
   if (!schemaReady) {
-    schemaReady = ensureSchema(p).catch((error) => {
+    schemaReady = ensurePublicObservabilityQualitySchema(p).catch((error) => {
       schemaReady = null;
       throw error;
     });
@@ -117,9 +120,9 @@ function environment(): string {
   return resolveStudioTraceStoreEnvironment();
 }
 
-export async function persistPublicObservabilityScore(score: PublicObservabilityScoreRecord): Promise<void> {
+export async function persistPublicObservabilityScore(score: PublicObservabilityScoreRecord, transaction?: PgPool): Promise<void> {
   if (!databaseUrl()) return;
-  const p = await database();
+  const p = transaction ?? await database();
   await p.query(
     `insert into public.studio_public_observability_scores
        (score_id, account_scope_id, environment, run_id, name, value, data_type, source, comment,
@@ -136,9 +139,10 @@ export async function persistPublicObservabilityScore(score: PublicObservability
 
 export async function persistPublicObservabilityEvaluation(
   evaluation: PublicObservabilityEvaluationRecord,
+  transaction?: PgPool,
 ): Promise<void> {
   if (!databaseUrl()) return;
-  const p = await database();
+  const p = transaction ?? await database();
   await p.query(
     `insert into public.studio_public_observability_evaluations
        (evaluation_id, account_scope_id, environment, run_id, name, value, evaluator, dataset,
@@ -151,9 +155,9 @@ export async function persistPublicObservabilityEvaluation(
   );
 }
 
-export async function persistPublicObservabilityFeedback(feedback: PublicObservabilityFeedbackRecord): Promise<void> {
+export async function persistPublicObservabilityFeedback(feedback: PublicObservabilityFeedbackRecord, transaction?: PgPool): Promise<void> {
   if (!databaseUrl()) return;
-  const p = await database();
+  const p = transaction ?? await database();
   await p.query(
     `insert into public.studio_public_observability_feedback
        (feedback_id, account_scope_id, environment, run_id, kind, message_id, comment,
@@ -186,13 +190,15 @@ function metadata(value: unknown): Record<string, PublicObservabilityScalar> {
 export async function loadPublicObservabilityQuality(input: {
   owner: string;
   runId: string;
+  /** Per-entity index initialized dependent quality tables before creating this read view. */
+  schemaInitialized?: boolean;
 }): Promise<{
   scores: PublicObservabilityScoreRecord[];
   feedback: PublicObservabilityFeedbackRecord[];
   evaluations: PublicObservabilityEvaluationRecord[];
 }> {
   if (!databaseUrl()) return { scores: [], feedback: [], evaluations: [] };
-  const p = await database();
+  const p = await database(input.schemaInitialized);
   const env = environment();
   const [scores, feedback, evaluations] = await Promise.all([
     p.query(
@@ -267,4 +273,11 @@ export async function loadPublicObservabilityQuality(input: {
       createdAt: rowTime(row.created_at),
     })),
   };
+}
+
+
+export async function closePublicObservabilityQualityStoreForTest(): Promise<void> {
+  if (poolReady) await (await poolReady).end?.();
+  poolReady = null;
+  schemaReady = null;
 }

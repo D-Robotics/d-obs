@@ -9,14 +9,14 @@ import type { PublicObservabilityObjectProfile } from '../../shared/public-obser
 import type { TelemetryDeletionTombstone } from '../observability/governance-deletion.js';
 
 /**
- * The public observability store is intentionally a bounded process cache.
- * Trace and quality rows are projected to their durable stores, while this
- * repository owns the low-latency metadata/index cache used by the API.
+ * Public observability exposes a bounded local projection plus a PostgreSQL
+ * entity index when configured. Legacy snapshots describe only the local cache;
+ * shared authority is always read/written per run or profile in PG transactions.
  */
 export const PUBLIC_OBSERVABILITY_PERSISTENCE_MODE = 'process-memory-cache' as const;
 export const PUBLIC_OBSERVABILITY_SNAPSHOT_SCHEMA = 'rdk.public.observability.snapshot.v1' as const;
 
-export type PublicObservabilityPersistenceMode = typeof PUBLIC_OBSERVABILITY_PERSISTENCE_MODE;
+export type PublicObservabilityPersistenceMode = typeof PUBLIC_OBSERVABILITY_PERSISTENCE_MODE | 'postgres-entity-index';
 
 export interface PublicObservabilityPersistenceLimits {
   maxRuns: number;
@@ -30,7 +30,7 @@ export interface PublicObservabilityPersistenceLimits {
 
 export interface PublicObservabilityPersistenceStatus {
   mode: PublicObservabilityPersistenceMode;
-  authoritative: 'process-cache';
+  authoritative: 'process-cache' | 'postgres';
   durableProjections: readonly ['studio-trace-store', 'public-observability-quality-store'];
   degraded: boolean;
   cache: {

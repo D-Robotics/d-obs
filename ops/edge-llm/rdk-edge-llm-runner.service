@@ -1,0 +1,31 @@
+# Example: prepare the dedicated user, files and Node.js 22 before installation.
+# See docs/edge-llm.md. Starting this unit never deploys a model automatically.
+[Unit]
+Description=RDK X5 CPU text-model runner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rdk-edge-llm
+Group=rdk-edge-llm
+WorkingDirectory=/opt/rdk-edge-llm
+Environment=RDK_EDGE_LLM_CONFIG=/etc/rdk-edge-llm/runner.json
+Environment=RDK_EDGE_LLM_TOKEN_FILE=/etc/rdk-edge-llm/token
+Environment=RDK_EDGE_LLM_STATE_DIR=/var/lib/rdk-edge-llm
+Environment=RDK_EDGE_LLM_PORT=8876
+ExecStart=/usr/bin/node /opt/rdk-edge-llm/edge-llm-runner.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rdk-edge-llm
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

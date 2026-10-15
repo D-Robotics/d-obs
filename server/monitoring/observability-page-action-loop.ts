@@ -24,6 +24,7 @@ export const OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT = `
       // If the host cannot present a confirmation dialog, fail closed instead
       // of silently authorizing a potentially mutating action.
       function actionLoopConfirm(message){return typeof window.confirm==='function'&&window.confirm(message)}
+      function actionLoopRegressionError(error){const code=String(error&&error.message||error);const messages={action_regression_verified_outcome_required:'尚未取得独立验收结果，暂不能加入回归集。',action_regression_exact_run_required:'缺少对应处置的真实运行回执，请先检查结果。',action_regression_result_changed:'案例与当前证据不一致，请重新核对结果。',action_regression_corrupt_case:'案例证据校验未通过，请重新核对结果。'};return messages[code]||actionLoopFriendlyError(error)}
 
       async function loadActionLoop(force){
         if(!state.actionLoop||state.actionLoop.loading)return;
@@ -40,7 +41,7 @@ export const OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT = `
         if(button){button.disabled=true;button.setAttribute('aria-busy','true')}
         state.actionLoop.busyId=action.id;renderActionLoopMount();
         try{const data=await actionLoopRequest('/api/ops/observability/actions/'+encodeURIComponent(action.id)+path,{method:'POST',body:JSON.stringify(body||{})});state.actionLoop.mutationError='';const next=data.action;const status=next&&next.status?actionLoopStatusLabel(next.status):'已更新';toast(path==='/verify'?(next&&next.status==='succeeded'?'行动验证通过':'行动已复核，等待下一次真实检查'):status);await loadActionLoop(true)}
-        catch(error){const message='行动未更新：'+actionLoopFriendlyError(error);state.actionLoop.mutationError=message;toast(message,false)}
+        catch(error){const message='行动未更新：'+(path==='/regression'?actionLoopRegressionError(error):actionLoopFriendlyError(error));state.actionLoop.mutationError=message;toast(message,false)}
         finally{state.actionLoop.busyId='';if(button&&button.isConnected){button.disabled=false;button.removeAttribute('aria-busy')}renderActionLoopMount();const alert=$('actionLoopMutationError');if(alert){alert.focus()}}
       }
 
@@ -57,12 +58,31 @@ export const OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT = `
           const verify=add(controls,'button','btn primary',busy?'检查中…':'检查真实结果');verify.type='button';verify.disabled=busy;verify.addEventListener('click',()=>runActionLoopMutation(action,'/verify',{},verify));
         }else if(action.status==='verification_failed'){
           const retry=add(controls,'button','btn primary','基于相同证据重新提案');retry.type='button';retry.disabled=busy;retry.title='复制原行动的证据与剧本，创建一条新提案（仍需双人审批）';retry.addEventListener('click',()=>actionLoopRepropose(action,retry));
-          const regression=add(controls,'button','btn danger','加入回归集');regression.type='button';regression.disabled=busy;regression.addEventListener('click',()=>runActionLoopMutation(action,'/regression',{marker:'regression-suite:observability-action'},regression));
+          actionLoopRegressionControls(controls,action,busy);
         }else if(action.status==='succeeded'||action.status==='failed'){
-          if(action.regressionMarker)add(controls,'span','action-created','已加入回归集 · '+action.regressionMarker);
-          else{const regression=add(controls,'button','btn','加入回归集');regression.type='button';regression.disabled=busy;regression.addEventListener('click',()=>runActionLoopMutation(action,'/regression',{marker:'regression-suite:observability-action'},regression))}
+          actionLoopRegressionControls(controls,action,busy);
         }
         return controls;
+      }
+
+      function actionLoopRegressionControls(controls,action,busy){
+        const marker=String(action.regressionMarker||'');
+        if(/^regression-case:case-[a-f0-9]{32}:[a-f0-9]{64}$/.test(marker)){
+          add(controls,'span','action-created','已加入回归集');
+          const download=add(controls,'button','btn','导出回归案例');download.type='button';download.disabled=busy;
+          download.addEventListener('click',async()=>{
+            if(download.disabled)return;download.disabled=true;download.setAttribute('aria-busy','true');
+            const scope=()=>JSON.stringify([typeof obsAuthState!=='undefined'&&obsAuthState.version,typeof obsAuthState!=='undefined'&&obsAuthState.me&&obsAuthState.me.user&&obsAuthState.me.user.id,typeof opsTenantMode!=='undefined'&&opsTenantMode,typeof opsMemberMode!=='undefined'&&opsMemberMode]);
+            const identity=scope();let url='';let link=null;
+            try{const data=await actionLoopRequest('/api/ops/observability/actions/'+encodeURIComponent(action.id)+'/regression');if(identity!==scope())return;const saved=data.regressionCase;if(!saved||!saved.snapshot||saved.snapshot.sourceActionId!==action.id)throw new Error('action_regression_corrupt_case');url=URL.createObjectURL(new Blob([JSON.stringify(saved,null,2)],{type:'application/json'}));link=make('a');link.href=url;link.download='observability-regression-'+action.id+'.json';link.hidden=true;document.body.appendChild(link);link.click();const completed=url;setTimeout(()=>URL.revokeObjectURL(completed),1000);url=''}
+            catch(error){if(identity===scope())toast('案例导出未完成：'+actionLoopRegressionError(error),false)}
+            finally{if(link)link.remove();if(url)URL.revokeObjectURL(url);download.disabled=false;download.removeAttribute('aria-busy')}
+          });return;
+        }
+        const verification=action.execution&&action.execution.verification;
+        const eligible=action.type==='remediate'&&['succeeded','verification_failed'].includes(action.status)&&action.execution&&action.execution.accepted&&action.execution.finishedAt&&verification&&verification.pending!==true&&Array.isArray(verification.checks)&&verification.checks.length>0;
+        const regression=add(controls,'button','btn',eligible?'加入回归集':'尚无独立验收结果');regression.type='button';regression.disabled=busy||!eligible;
+        if(eligible)regression.addEventListener('click',()=>runActionLoopMutation(action,'/regression',{},regression));
       }
 
       function renderActionLoopCard(action,o){
@@ -103,7 +123,15 @@ export const OPS_OBSERVABILITY_ACTION_LOOP_SCRIPT = `
         const note=make('div','action-loop-note');add(note,'strong','','安全说明');add(note,'span','', '模型不能提交命令；处置只接受服务端白名单剧本，执行成功也必须等待精确 remediation Run 的后置验证。');body.appendChild(note);panel.appendChild(body);return panel;
       }
 
-      function renderActionLoopMount(){const root=$('actionLoopMount');if(!root)return;root.replaceChildren(renderActionLoopPanel())}
+      function renderActionLoopMount(){
+        const root=$('actionLoopMount');if(!root)return;
+        const empty=!state.actionLoop.loading&&!state.actionLoop.error&&!state.actionLoop.mutationError&&!actionLoopActionList().length;
+        const previous=root.querySelector('details');const wasOpen=previous&&previous.open;
+        const panel=renderActionLoopPanel();
+        if(empty){const detail=make('details','detail-sections overview-supporting-detail');detail.id='actionLoopEmptyDetails';detail.open=Boolean(wasOpen);const summary=make('summary','detail-summary');add(summary,'strong','','行动闭环');add(summary,'span','','当前无待处理行动 · 查看流程与使用说明');detail.appendChild(summary);detail.appendChild(panel);root.replaceChildren(detail)}else root.replaceChildren(panel);
+        const destination=$(empty?'overviewSecondary':'overviewPrimary');
+        if(destination&&root.parentNode!==destination)destination.appendChild(root);
+      }
       // 租户/组员视图收敛到本租户只读 overview：行动闭环属于平台运营域
       // （/actions 对租户身份 403），不请求也不挂载；否则 403 会经
       // actionLoopRequest 的 renderAccess 把登录屏盖住整个工作台。

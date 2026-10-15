@@ -47,28 +47,31 @@ function parseRuleRows(raw: unknown): StrategyRuleInput[] {
     if (!isPlainObject(entry)) throw new Error('strategy_rule_invalid');
     const query = String(entry.query ?? '').trim();
     if (!query || query.length > 2000) throw new Error('strategy_rule_query_invalid');
-    const durationSeconds = Number(entry.durationSeconds);
-    if (!Number.isFinite(durationSeconds) || durationSeconds < 0 || durationSeconds > 86_400) {
+    const durationSeconds = entry.durationSeconds;
+    if (typeof durationSeconds !== 'number' || !Number.isFinite(durationSeconds) || durationSeconds < 0 || durationSeconds > 86_400) {
       throw new Error('strategy_rule_duration_invalid');
     }
     const comparator = String(entry.comparator ?? '');
     if (!(STRATEGY_COMPARATORS as readonly string[]).includes(comparator)) {
       throw new Error('strategy_rule_comparator_invalid');
     }
-    const threshold = Number(entry.threshold);
-    if (!Number.isFinite(threshold)) throw new Error('strategy_rule_threshold_invalid');
+    const threshold = entry.threshold;
+    if (typeof threshold !== 'number' || !Number.isFinite(threshold)) throw new Error('strategy_rule_threshold_invalid');
     const severity = String(entry.severity ?? '');
     if (!(STRATEGY_SEVERITIES as readonly string[]).includes(severity)) {
       throw new Error('strategy_rule_severity_invalid');
     }
-    const sendIntervalMinutes = Number(entry.sendIntervalMinutes ?? 0);
+    const sendIntervalMinutes = entry.sendIntervalMinutes === undefined ? 0 : entry.sendIntervalMinutes;
     if (
+      typeof sendIntervalMinutes !== 'number' ||
       !Number.isFinite(sendIntervalMinutes) ||
       sendIntervalMinutes < 0 ||
       sendIntervalMinutes > 1440
     ) {
       throw new Error('strategy_rule_interval_invalid');
     }
+    const noDataAlert = entry.noDataAlert === undefined ? false : entry.noDataAlert;
+    if (typeof noDataAlert !== 'boolean') throw new Error('strategy_rule_no_data_alert_invalid');
     return {
       query,
       durationSeconds: Math.floor(durationSeconds),
@@ -76,7 +79,7 @@ function parseRuleRows(raw: unknown): StrategyRuleInput[] {
       threshold,
       severity: severity as StrategyRuleInput['severity'],
       sendIntervalMinutes: Math.floor(sendIntervalMinutes),
-      noDataAlert: entry.noDataAlert === true,
+      noDataAlert,
     };
   });
 }
@@ -94,7 +97,8 @@ function parseStrategyBody(body: unknown): {
   const description = String(body.description ?? '')
     .trim()
     .slice(0, 300);
-  const enabled = body.enabled !== false;
+  const enabled = body.enabled === undefined ? true : body.enabled;
+  if (typeof enabled !== 'boolean') throw new Error('strategy_enabled_invalid');
   const notificationChannel = String(body.notificationChannel ?? 'default').trim();
   if (
     notificationChannel !== 'default' &&

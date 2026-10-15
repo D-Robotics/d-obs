@@ -21,7 +21,7 @@ export const OPS_OBSERVABILITY_UI_STYLE = `
     /* ---- OpsUI 组件层样式：sr-only 工具类、模态滚动锁、异步状态、焦点可见性 ---- */
     .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
     body.opsui-modal-open{overflow:hidden}
-    .toast{cursor:default}
+    .toast{cursor:default;pointer-events:none}
     .load-state{display:flex;align-items:flex-start;gap:12px;padding:16px}
     .load-state .load-state-icon{flex:none;box-sizing:border-box;width:22px;height:22px;border:2px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:opsui-spin .8s linear infinite}
     .load-state.error .load-state-icon{border:0;background:color-mix(in srgb,var(--danger,#b42318) 14%,transparent);color:var(--danger,#b42318);animation:none;font-size:14px;font-weight:700}

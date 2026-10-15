@@ -28,6 +28,7 @@ class Node {
   getAttribute(key: string) { return this.attrs[key] ?? null; }
   removeAttribute(key: string) { delete this.attrs[key]; }
   addEventListener(type: string, listener: typeof this.listeners[string][number]) { (this.listeners[type] ||= []).push(listener); }
+  focus() {}
   querySelector() { return null; }
   querySelectorAll() { return []; }
 }
@@ -54,6 +55,7 @@ function setup(options: { token?: boolean; cookieUser?: boolean; includeBaseLoad
       createElementNS: (_ns: string, tag: string) => new Node(tag),
       getElementById: (id: string) => ids.get(id) ?? null,
       querySelector: () => null, querySelectorAll: () => [],
+      addEventListener() {},
     },
     window: {},
     location: { pathname: '/dobs/ops-observability', href: 'https://example.test/dobs/ops-observability' },
@@ -123,19 +125,19 @@ for (const status of [403, 503]) {
     const grid = h.ids.get('signalsPanelGrid')!;
     assert.doesNotMatch(text(grid), /所选范围内没有数据点/);
     assert.ok(all(grid).some(node => node.attrs.role === 'alert'));
-    assert.match(text(grid), status === 403 ? /没有访问权限/ : /数据读取失败/);
+    assert.match(text(grid), status === 403 ? /没有访问权限/ : /OTLP 指标存储暂不可用/);
     const retry = all(grid).find(node => node.tagName === 'BUTTON' && node.textContent === '重试')!;
-    h.serve(() => response(200, { ok: true, series: [] }));
+    h.serve(path => response(200, path.endsWith('/boards') ? { ok: true, boards: [board] } : { ok: true, series: [] }));
     await retry.listeners.click[0]({ preventDefault() {} }); await settle();
     assert.match(text(grid), /所选范围内没有数据点/);
   });
 }
 
 test('面板编辑器预览与库面板503不能显示无数据/库面板为空', async () => {
-  const h = setup(); h.obs.state.boards = [board]; h.obs.state.currentBoardId = 'b1';
+  const h = setup(); h.obs.state.boards = [board]; h.obs.state.currentBoardId = 'b1'; h.obs.state.boardEditMode = true;
   h.serve(() => response(503, { ok: false, error: 'metrics_query_unavailable' }));
   h.obs.openPanelModal(board.spec.panels[0], 0); await settle();
-  assert.match(text(h.body), /预览加载失败/);
+  assert.match(text(h.body), /OTLP 指标存储暂不可用/);
   assert.match(text(h.body), /库面板读取失败/);
   assert.doesNotMatch(text(h.body), /所选范围内没有数据点|库面板为空/);
 });

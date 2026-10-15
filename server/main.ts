@@ -1,3 +1,4 @@
+import { disposeConfiguredCollectionWorkspaceService } from './monitoring/collection-workspace-routes.js';
 /**
  * d-obs standalone entry.
  *
@@ -15,10 +16,14 @@
  *    RDK_TENANT_REGISTRATION_TOKEN (x-registration-token, timing-safe,
  *    fail-closed: unset means the endpoint is disabled).
  */
+import { visionWorkshopJsonIngress } from './monitoring/vision-workshop-json-ingress.js';
+import { disposeConfiguredPlugins } from './monitoring/plugin-routes.js';
 import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import express from 'express';
 import { createOpsObservabilityRouter } from './monitoring/observability-routes.js';
+import { disposeConfiguredSshLogCollector } from './monitoring/ssh-log-routes.js';
+import { disposeConfiguredRdkLogCaptureService } from './monitoring/rdk-log-routes.js';
 import {
   parseExternalProbeReport,
   recordExternalProbeReport,
@@ -59,6 +64,7 @@ app.disable('x-powered-by');
 // server/trusted-proxy.ts。
 app.set('trust proxy', resolveTrustProxySetting());
 app.use(createHealthRouter());
+app.use(visionWorkshopJsonIngress());
 app.use(express.json({ limit: '2mb' }));
 
 function registrationTokenMatches(provided: unknown): boolean {
@@ -234,6 +240,10 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     grpcRuntime?.server.forceShutdown();
     server.close(async () => {
+      await disposeConfiguredPlugins().catch(() => undefined);
+      await disposeConfiguredCollectionWorkspaceService().catch(() => undefined);
+      await disposeConfiguredRdkLogCaptureService().catch(() => undefined);
+      await disposeConfiguredSshLogCollector().catch(() => undefined);
       // 退出前把异步指标队列刷完（有上限，防卡死退出）。
       await flushMetricQueueNow().catch(() => undefined);
       await flushSelfLogs().catch(() => undefined);

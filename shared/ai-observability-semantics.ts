@@ -56,7 +56,7 @@ const TEXT_ALIASES: Partial<Record<keyof AiSemanticAttributes, readonly string[]
   hostName: ['hostName', 'host.name', 'host.hostname'],
   firmwareVersion: ['firmwareVersion', 'firmware.version', 'rdk.firmware.version', 'device.firmware.version'],
   modelVersion: ['modelVersion', 'model.version', 'rdk.model.version', 'gen_ai.response.model.version'],
-  sessionRef: ['sessionRef', 'session.id', 'gen_ai.conversation.id', 'conversation.id'],
+  sessionRef: ['moss.session.id', 'rdk.session.id', 'sessionRef', 'session.id', 'gen_ai.conversation.id', 'conversation.id', 'sessionKey', 'sessionId'],
   objectType: ['objectType', 'rdk.object.type'],
   objectId: ['objectId', 'rdk.object.id'],
   objectName: ['objectName', 'rdk.object.name'],
@@ -95,6 +95,38 @@ function firstValue(input: Record<string, unknown>, keys: readonly string[]): un
   return undefined;
 }
 
+/** A declared conversation identity is usable only when every supplied alias agrees. */
+export function resolveAiSessionBinding(
+  attributes: Record<string, unknown> = {},
+  declaredSessionId?: unknown,
+): { sessionId?: string; conflict: boolean } {
+  const identifiers = new Set<string>();
+  const source = attributes && typeof attributes === 'object' && !Array.isArray(attributes) ? attributes : {};
+  // Moss's internal agent session key can differ from the client conversation.
+  // An explicit Studio binding identifies the canonical domain; never strip
+  // prefixes from the internal key to guess a client conversation ID.
+  const canonical = source['rdk.session.id'] !== undefined;
+  const aliases = (TEXT_ALIASES.sessionRef ?? []).filter(key =>
+    !canonical || (key !== 'moss.session.id' && key !== 'sessionKey'));
+  if (canonical) {
+    const internal = [source['moss.session.id'], source.sessionKey].filter(value => value !== undefined && value !== '');
+    if (internal.some(value => typeof scalar(value) !== 'string') ||
+      new Set(internal.map(value => String(scalar(value)).trim())).size > 1) return { conflict: true };
+  }
+  const supplied = [declaredSessionId, ...aliases.map(key => source[key])];
+  for (const suppliedId of supplied) {
+    const raw = scalar(suppliedId);
+    if (raw === undefined || raw === null || raw === '') continue;
+    if (typeof raw !== 'string' || !/^[A-Za-z0-9._:/-]{1,200}$/.test(raw.trim())) {
+      return { conflict: true };
+    }
+    identifiers.add(raw.trim());
+  }
+  if (identifiers.size > 1) return { conflict: true };
+  const sessionId = [...identifiers][0];
+  return { ...(sessionId ? { sessionId } : {}), conflict: false };
+}
+
 function finiteNumber(value: unknown): number | undefined {
   const parsed = Number(scalar(value));
   return Number.isFinite(parsed) ? Math.max(0, Math.min(1_000_000_000, parsed)) : undefined;
@@ -108,9 +140,10 @@ export function normalizeAiSemanticAttributes(
   const merged = { ...resource, ...value };
   const result: AiSemanticAttributes = {};
   for (const key of Object.keys(TEXT_ALIASES) as Array<keyof AiSemanticAttributes>) {
+    if (key === 'sessionRef') continue;
     const aliases = TEXT_ALIASES[key];
     if (!aliases) continue;
-    const resolved = text(firstValue(merged, aliases), key === 'sessionRef' ? 200 : 160);
+    const resolved = text(firstValue(merged, aliases));
     if (resolved) {
       if (key === 'external.kind') {
         const allowed: readonly AiObservabilitySpanKind[] = ['agent', 'generation', 'tool', 'retrieval', 'http', 'approval', 'custom'];
@@ -120,6 +153,8 @@ export function normalizeAiSemanticAttributes(
       }
     }
   }
+  const session = resolveAiSessionBinding(merged);
+  if (session.sessionId) result.sessionRef = session.sessionId;
   for (const key of ['inputTokens', 'outputTokens'] as const) {
     const resolved = finiteNumber(firstValue(merged, NUMBER_ALIASES[key]));
     if (resolved !== undefined) result[key] = resolved;
@@ -161,7 +196,5 @@ export function resolveAiRunId(attributes: Record<string, unknown>, traceId: str
     'moss.run.id',
     'rdk.run.id',
     'run.id',
-    'gen_ai.conversation.id',
-    'conversation.id',
   ]), 200) || traceId;
 }

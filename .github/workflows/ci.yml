@@ -8,6 +8,20 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dobs_test
+          POSTGRES_PASSWORD: dobs_test
+          POSTGRES_DB: dobs_arch_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dobs_test -d dobs_arch_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,6 +31,29 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Tool and plugin regressions
+        run: node --import tsx --test tools/*.test.mjs tools/*.test.mts plugins/rdk-camera-workshop/mcp/*.test.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install numerical fixture dependency
+        run: python3 -m pip install 'numpy>=1.24,<3'
+      - name: Python camera and release controller regressions
+        run: |
+          set -eu
+          for test_file in tools/*.test.py .codex/skills/d-obs-release/scripts/paired-release-controller.test.py; do
+            python3 -B "$test_file"
+          done
+      - name: PostgreSQL persistence and worker lease integration
+        env:
+          DOBS_TEST_DATABASE_URL: postgresql://dobs_test:dobs_test@127.0.0.1:5432/dobs_arch_test
+        run: >-
+          node --import tsx --test
+          server/monitoring/worker-lease-pg.integration.test.ts
+          server/monitoring/dashboard-boards-pg.integration.test.ts
+          server/public-api/public-observability-pg.integration.test.ts
+          server/observability/ai-ecosystem-metrics-pg.integration.test.ts
+          server/monitoring/platform-assistant-confirm-pg.integration.test.ts
       - run: npm run build
       - name: Dependency audit
         run: npm audit --omit=dev --audit-level=high

@@ -45,9 +45,9 @@ export type MetricRangeSeries = {
   points: Array<{ ts: number; value: number }>;
 };
 
-type Pool = {
-  query: (text: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
-};
+type MetricDb = { query: (text: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> };
+type MetricClient = MetricDb & { release(): void };
+type Pool = MetricDb & { connect(): Promise<MetricClient>; end(): Promise<void>; on(event: 'error', listener: (error: Error) => void): void };
 
 let poolReady: Promise<Pool> | null = null;
 async function pool(): Promise<Pool> {
@@ -56,9 +56,11 @@ async function pool(): Promise<Pool> {
   if (!poolReady) {
     poolReady = (async () => {
       const pgMod = (await import('pg' as string)) as {
-        default: { Pool: new (cfg: { connectionString: string; max?: number }) => Pool };
+        default: { Pool: new (cfg: { connectionString: string; max?: number; connectionTimeoutMillis?: number; statement_timeout?: number; lock_timeout?: number }) => Pool };
       };
-      return new pgMod.default.Pool({ connectionString, max: 2 });
+      const p = new pgMod.default.Pool({ connectionString, max: 2, connectionTimeoutMillis: 3_000, statement_timeout: 3_000, lock_timeout: 3_000 });
+      p.on('error', () => console.warn('[metrics-store] idle PostgreSQL connection failed'));
+      return p;
     })().catch((error) => {
       poolReady = null;
       throw error;
@@ -106,7 +108,8 @@ const CLEANUP_INTERVAL_MS = 30 * 60_000;
 let lastCleanupAt = 0;
 
 async function cleanupExpired(p: Pool): Promise<void> {
-  const days = Number(process.env.RDK_OBSERVABILITY_SIGNAL_RETENTION_DAYS ?? '');
+  const configured = String(process.env.RDK_OBSERVABILITY_SIGNAL_RETENTION_DAYS ?? '').trim();
+  const days = configured ? Number(configured) : Number.NaN;
   const retentionDays = Number.isFinite(days) ? Math.max(1, Math.min(365, Math.floor(days))) : 14;
   await p.query(
     `delete from public.studio_observability_metric_samples
@@ -133,90 +136,41 @@ export function maybeCleanupExpiredMetricSamples(): void {
     .catch(() => undefined);
 }
 
-// ===== 有界写队列：OTLP metrics 摄取不等 DB，按批异步落库 =====
-// 摄取路径 enqueue（满则丢弃并计数）；每 5s 或显式触发时按 owner 分组批量写。
-// DB 故障时批次回灌队首，超过容量丢最旧——语义与主流指标管线的 fire-and-forget
-// 一致：响应里的 partialSuccess 不再反映落库失败，丢失量通过 /metrics 的
-// dropped/depth 指标暴露。
-
-type QueuedPoint = { owner: string; point: PersistMetricPoint };
-
-const metricQueue: QueuedPoint[] = [];
+// Reception acknowledges only committed samples. The legacy enqueue name and
+// gauge functions remain compatible with both shared HTTP/gRPC ingestion paths.
 const METRIC_QUEUE_CAPACITY = 8_192;
-const METRIC_FLUSH_BATCH = 2_000;
-const METRIC_FLUSH_INTERVAL_MS = 5_000;
 let metricQueueDropped = 0;
-let metricFlushTimer: NodeJS.Timeout | null = null;
-let metricFlushing = false;
+let metricPendingPoints = 0;
+const metricWrites = new Set<Promise<number>>();
 
-export function enqueueMetricPoints(owner: string, points: PersistMetricPoint[]): number {
-  let dropped = 0;
-  for (const point of points) {
-    if (!Number.isFinite(point.value)) {
-      dropped += 1;
-      continue;
-    }
-    if (metricQueue.length >= METRIC_QUEUE_CAPACITY) {
-      metricQueue.shift();
-      metricQueueDropped += 1;
-      dropped += 1;
-    }
-    metricQueue.push({ owner, point });
+export async function enqueueMetricPoints(owner: string, points: PersistMetricPoint[]): Promise<number> {
+  if (!String(process.env.RDK_CHAT_CREDITS_DB_URL ?? '').trim()) {
+    metricQueueDropped += points.length;
+    return points.length;
   }
-  scheduleMetricFlush();
-  return dropped;
-}
-
-export function metricQueueDepth(): number {
-  return metricQueue.length;
-}
-
-export function metricQueueDroppedTotal(): number {
-  return metricQueueDropped;
-}
-
-async function flushMetricQueueOnce(): Promise<void> {
-  if (metricFlushing || !metricQueue.length) return;
-  metricFlushing = true;
-  const batch = metricQueue.splice(0, METRIC_FLUSH_BATCH);
-  try {
-    const byOwner = new Map<string, PersistMetricPoint[]>();
-    for (const item of batch) {
-      const current = byOwner.get(item.owner) ?? [];
-      current.push(item.point);
-      byOwner.set(item.owner, current);
-    }
-    for (const [owner, points] of byOwner) await persistMetricPoints(owner, points);
-  } catch {
-    // 写失败整批回灌队首（保序），容量不足丢最旧。
-    metricQueue.unshift(...batch);
-    while (metricQueue.length > METRIC_QUEUE_CAPACITY) {
-      metricQueue.shift();
-      metricQueueDropped += 1;
-    }
-  } finally {
-    metricFlushing = false;
+  const valid = points.filter(point => Number.isFinite(point.value) && Number.isFinite(point.timestampMs));
+  const invalid = points.length - valid.length;
+  if (metricPendingPoints + valid.length > METRIC_QUEUE_CAPACITY) {
+    metricQueueDropped += points.length;
+    return points.length;
   }
+  metricQueueDropped += invalid;
+  metricPendingPoints += valid.length;
+  const write = persistMetricPoints(owner, valid);
+  metricWrites.add(write);
+  try { await write; return invalid; }
+  finally { metricWrites.delete(write); metricPendingPoints -= valid.length; }
 }
 
-function scheduleMetricFlush(): void {
-  if (metricFlushTimer) return;
-  metricFlushTimer = setInterval(() => {
-    void flushMetricQueueOnce().catch(() => undefined);
-  }, METRIC_FLUSH_INTERVAL_MS);
-  metricFlushTimer.unref?.();
-}
-
-/** 优雅退出与测试用：把队列里的存量点刷到存储（失败保持入队，由调用方决定重试）。 */
-export async function flushMetricQueueNow(): Promise<void> {
-  for (let guard = 0; guard < 8 && metricQueue.length; guard += 1) {
-    await flushMetricQueueOnce();
-  }
-}
-
-export function resetAiEcosystemMetricQueueForTest(): void {
-  metricQueue.length = 0;
-  metricQueueDropped = 0;
+export function metricQueueDepth(): number { return metricPendingPoints; }
+export function metricQueueDroppedTotal(): number { return metricQueueDropped; }
+/** Wait for reception writes already in flight; failures are reported to their callers. */
+export async function flushMetricQueueNow(): Promise<void> { await Promise.all([...metricWrites]); }
+export function resetAiEcosystemMetricQueueForTest(): void { metricQueueDropped = 0; }
+export async function closeAiEcosystemMetricStoreForTest(): Promise<void> {
+  if (poolReady) await (await poolReady).end();
+  poolReady = null;
+  schemaReady = null;
 }
 
 export async function persistMetricPoints(owner: string, points: PersistMetricPoint[]): Promise<number> {
@@ -224,6 +178,9 @@ export async function persistMetricPoints(owner: string, points: PersistMetricPo
   const p = await pool();
   await ensureSchema(p);
   maybeCleanupExpiredMetricSamples();
+  const db = await p.connect();
+  try {
+  await db.query('begin');
   // 先为出现过的 (metric, labels) 解析/创建 series_id，再分块批量 upsert 样本。
   const seriesCache = new Map<string, number>();
   const samples: Array<{ seriesId: number; tsMs: number; value: number }> = [];
@@ -233,7 +190,7 @@ export async function persistMetricPoints(owner: string, points: PersistMetricPo
     const cacheKey = `${point.name}\u0000${fp}`;
     let seriesId = seriesCache.get(cacheKey);
     if (seriesId === undefined) {
-      const result = await p.query(
+      const result = await db.query(
         `insert into public.studio_observability_metric_series (owner, metric, labels, fingerprint)
          values ($1, $2, $3::jsonb, $4)
          on conflict (owner, metric, fingerprint) do update set metric = excluded.metric
@@ -241,7 +198,7 @@ export async function persistMetricPoints(owner: string, points: PersistMetricPo
         [owner, point.name, JSON.stringify(point.labels), fp],
       );
       seriesId = Number(result.rows[0]?.series_id);
-      if (!Number.isFinite(seriesId)) continue;
+      if (!Number.isFinite(seriesId)) throw new Error('metric_series_unavailable');
       seriesCache.set(cacheKey, seriesId);
     }
     samples.push({ seriesId, tsMs: Math.trunc(point.timestampMs), value: point.value });
@@ -262,14 +219,17 @@ export async function persistMetricPoints(owner: string, points: PersistMetricPo
       values.push(`($${base + 1}, $${base + 2}, $${base + 3})`);
       params.push(sample.seriesId, sample.tsMs, sample.value);
     });
-    await p.query(
+    await db.query(
       `insert into public.studio_observability_metric_samples (series_id, ts_ms, value)
        values ${values.join(',')}
        on conflict (series_id, ts_ms) do update set value = excluded.value`,
       params,
     );
   }
+  await db.query('commit');
   return samples.length;
+  } catch (error) { await db.query('rollback'); throw error; }
+  finally { db.release(); }
 }
 
 function parseLabels(value: unknown): Record<string, unknown> {

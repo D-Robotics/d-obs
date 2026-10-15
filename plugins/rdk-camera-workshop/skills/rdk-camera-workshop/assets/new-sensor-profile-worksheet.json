@@ -1,0 +1,128 @@
+{
+  "kind": "camera-adaptation-worksheet",
+  "schemaVersion": 1,
+  "executable": false,
+  "purpose": "资料与证据工作表；不是可加载的 adapter/profile/SDK 配置。未知项保持 null。",
+  "task": {
+    "title": null,
+    "goal": null,
+    "scene": null,
+    "initialState": null,
+    "experimentId": null
+  },
+  "identity": {
+    "board": null,
+    "boardRevision": null,
+    "moduleVendor": null,
+    "moduleRevision": null,
+    "sensorVendor": null,
+    "sensorModel": null,
+    "osVersion": null,
+    "kernelBspVersion": null,
+    "sdkHeadersVersion": null,
+    "runtimeLibraryVersion": null,
+    "nativeAbiVersion": null,
+    "cameraPackages": []
+  },
+  "electrical": {
+    "connectorAndPinoutEvidence": null,
+    "supplyAndIoVoltageEvidence": null,
+    "resetPowerdownEvidence": null,
+    "controlBusAndAddressEvidence": null,
+    "laneOrderEvidence": null
+  },
+  "mode": {
+    "profileId": null,
+    "profileSourceAndHash": null,
+    "width": null,
+    "height": null,
+    "linearOrHdr": null,
+    "laneCount": null,
+    "laneRate": null,
+    "settle": null,
+    "settleUnitOrSdkDefinition": null,
+    "csiHost": null,
+    "phyProtocol": null,
+    "virtualChannel": null,
+    "bayer": null,
+    "bitDepth": null,
+    "packing": null,
+    "stride": null,
+    "rawBlackWhiteLevelEvidence": null,
+    "outputColorimetryEvidence": null
+  },
+  "timing": {
+    "referenceClockSource": null,
+    "referenceClockHz": null,
+    "pllAndLineFrameTimingEvidence": null,
+    "expectedFps": null,
+    "sdkFrameIdAndTimestampSemanticsEvidence": null,
+    "boundedObservationEvidence": null
+  },
+  "driver": {
+    "status": null,
+    "sourceVersionAndHash": null,
+    "matchingSdkBuildEvidence": null,
+    "isolatedTestEvidence": null,
+    "hardwareEvidence": null
+  },
+  "adapter": {
+    "targetId": null,
+    "implementedOperations": [],
+    "configurationScope": [],
+    "qualifiedRulesEvidence": null,
+    "restorationEvidence": null
+  },
+  "recovery": {
+    "savedOriginalTuningHash": null,
+    "savedOriginalLibrarySha256": null,
+    "configurationScope": [],
+    "scopeLayoutHash": null,
+    "restoreResponsibility": null,
+    "responsibilityEvidence": null,
+    "observedRecoveryOriginalHash": null,
+    "matchedSavedBaselineId": null,
+    "matchedAiRunId": null,
+    "configurationRestoreStatus": null,
+    "cleanupStatus": null,
+    "streamVerificationStatus": null,
+    "freshFrameEvidence": null,
+    "finalStateEvidence": []
+  },
+  "sources": [],
+  "claims": [],
+  "unresolved": [],
+  "recordTemplates": {
+    "source": {
+      "id": null,
+      "kind": null,
+      "reference": null,
+      "version": null,
+      "sha256": null,
+      "checkedAt": null,
+      "verificationStatus": null
+    },
+    "claim": {
+      "fieldPath": null,
+      "classification": null,
+      "value": null,
+      "sourceIds": [],
+      "verificationStatus": null,
+      "notes": null
+    },
+    "cameraPackage": {
+      "name": null,
+      "version": null,
+      "sourceIds": []
+    }
+  },
+  "fieldGuide": {
+    "task.initialState": "记录目标板上的真实起点，例如尚未点亮、已点亮未调优或已有调优；未知保持 null。",
+    "sources": "按 recordTemplates.source 追加实际资料或运行证据；kind 区分官方/厂商文档、安装头文件、运行回执和用户报告。reference 使用公开资料名、URL或制品ID，不含凭据或私有路径。sha256 只填写实际计算值。",
+    "verificationStatus": "工作表内的核查结论，例如未核查、已核对、冲突、待实机；不能以资料已核对代替硬件/画质通过。",
+    "claims.classification": "分别填写 fact（来源支持的事实）、configuration（配置声明）、measurement（实际测量）或 hypothesis（待验证假设），不可互相升级。",
+    "identity.cameraPackages": "按 recordTemplates.cameraPackage 填写实际安装的相机/多媒体/ROS相关包版本及来源，不能只记系统镜像版本。",
+    "recovery": "记录本次原始hash、scope/layout和模块或效果库恢复责任；observedRecoveryOriginalHash只来自实际facts.recoveryOriginalHash。只有与已保存original/baseline明确匹配才选恢复目标。配置恢复、清理与新帧验证分别记录；未知保持null，不默认为成功。",
+    "recordTemplates": "仅说明待填记录形状，不是已存在的证据或可调用API；整份工作表不可执行、不可注册为profile，也不授予范围或硬件权限。"
+  }
+}

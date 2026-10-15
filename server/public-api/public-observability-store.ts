@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { configuredPublicObservabilityIndex, type IndexDb } from './public-observability-pg-index.js';
+import { resolveAiSessionBinding } from '../../shared/ai-observability-semantics.js';
 import {
   getStudioTraceSpansForRun,
   persistStudioTraceSpans,
@@ -498,26 +500,109 @@ function pickRunStatus(current: PublicObservabilityRunStatus, next?: PublicObser
   return current;
 }
 
-class PublicObservabilityStore implements PublicObservabilityRepository {
+export class PublicObservabilityStore implements PublicObservabilityRepository {
   private readonly runs = new Map<string, StoredRun>();
   private readonly idempotency = new Map<string, string>();
   private readonly objectProfiles = new Map<string, StoredObjectProfile>();
   private readonly governanceTombstones: TelemetryDeletionTombstone[] = [];
   private quarantineAllTelemetry = false;
+  private persistenceHealthy = false;
+  constructor(private readonly transaction?: IndexDb, private readonly projectionOnly = false) {}
+
+  private snapshotEnvelope(runs: PublicObservabilitySnapshotRun[], objectProfiles: StoredObjectProfile[] = []): PublicObservabilitySnapshot {
+    return { schema: PUBLIC_OBSERVABILITY_SNAPSHOT_SCHEMA, generatedAt: Date.now(), persistenceMode: PUBLIC_OBSERVABILITY_PERSISTENCE_MODE,
+      runs, objectProfiles, tombstones: this.governanceTombstones, quarantineAllTelemetry: this.quarantineAllTelemetry };
+  }
+
+  /** Called before public/operational index reads; configured DB outages fail closed. */
+  async refreshOwnerIndex(owner: string): Promise<PublicObservabilityStore> {
+    if (this.transaction || this.projectionOnly) return this;
+    const index = configuredPublicObservabilityIndex();
+    if (!index) return this;
+    try {
+      const current = await index.loadOwner(owner, LOW_SENSITIVITY_RETENTION_MS);
+      for (const run of [...this.runs.values()]) if (owner === '*' || run.owner === owner) this.deleteCachedRun(run.runId);
+      for (const [key, profile] of this.objectProfiles) if (owner === '*' || profile.owner === owner) this.objectProfiles.delete(key);
+      this.importSnapshot(this.snapshotEnvelope(current.runs, current.profiles));
+      this.persistenceHealthy = true;
+      // A concurrent owner refresh may evict entries from the bounded process
+      // cache. Each request reads its own immutable projection after this await.
+      const view = new PublicObservabilityStore(undefined, true);
+      view.importSnapshot(this.snapshotEnvelope(current.runs, current.profiles));
+      view.persistenceHealthy = true;
+      return view;
+    } catch (error) { this.persistenceHealthy = false; throw error; }
+  }
+
+  private async refreshRunIndex(owner: string, runId: string): Promise<PublicObservabilityStore> {
+    if (this.transaction || this.projectionOnly) return this;
+    const index = configuredPublicObservabilityIndex();
+    if (!index) return this;
+    try {
+      const run = await index.loadRun(owner, runId);
+      const view = new PublicObservabilityStore(undefined, true);
+      view.importSnapshot(this.snapshotEnvelope(run ? [run] : []));
+      view.persistenceHealthy = true;
+      this.persistenceHealthy = true;
+      return view;
+    } catch(error) { this.persistenceHealthy = false; throw error; }
+  }
+
+  private async durableRun<T>(owner: string, keyId: string, runId: string, idempotencyKey: string | undefined,
+    mutate: (store: PublicObservabilityStore, runId: string, replayed: boolean) => Promise<T>, accountScopeId?: string): Promise<T> {
+    const index = configuredPublicObservabilityIndex();
+    if (!index) throw new Error('public observability index is not configured');
+    try {
+      const outcome = await index.mutateRun({ owner, keyId, runId, idempotencyKey, accountScopeId }, async (existing, resolvedRunId, db, replayed) => {
+        const isolated = new PublicObservabilityStore(db);
+        isolated.importSnapshot(this.snapshotEnvelope(existing ? [existing] : []));
+        const result = await mutate(isolated, resolvedRunId, replayed);
+        const snapshot = isolated.exportSnapshot().runs.find(item => item.run.runId === resolvedRunId);
+        if (!snapshot) throw new Error('observability_run_deleted');
+        return { result, snapshot };
+      });
+      this.deleteCachedRun(outcome.snapshot.run.runId);
+      this.importSnapshot(this.snapshotEnvelope([outcome.snapshot]));
+      this.persistenceHealthy = true;
+      return outcome.result;
+    } catch (error) {
+      this.persistenceHealthy = false;
+      if (error instanceof Error && /^observability_run_(owner|account)_conflict$/.test(error.message)) throw new PublicObservabilityConflictError();
+      throw error;
+    }
+  }
+
+  async persistObject(owner: string, objectId: string, input: PublicObservabilityObjectUpdateInput): Promise<PublicObservabilityObjectDetail> {
+    const index = configuredPublicObservabilityIndex();
+    if (!index) return this.upsertObject(owner, objectId, input);
+    const team = cleanText(input.team, 120), objectType = cleanText(input.objectType, 120), normalizedId = cleanText(objectId, 200);
+    if (!owner || !team || !objectType || !normalizedId) throw new Error('owner, objectId, team and objectType are required.');
+    try {
+      await index.mutateProfile({ owner, team, objectType, objectId: normalizedId }, existing => {
+        const isolated = new PublicObservabilityStore();
+        isolated.importSnapshot(this.snapshotEnvelope([], existing ? [existing] : []));
+        isolated.upsertObject(owner, normalizedId, input);
+        return isolated.exportSnapshot().objectProfiles[0];
+      });
+      const view = await this.refreshOwnerIndex(owner);
+      const detail = view.getObject(owner, normalizedId, { team, objectType });
+      if (!detail) throw new Error('observability_object_deleted');
+      return detail;
+    } catch(error) { this.persistenceHealthy = false; throw error; }
+  }
+
 
   /**
-   * Persistence boundary: this object is a bounded process cache. Trace and
-   * quality payloads are projected to durable stores on write, but metadata
-   * and indexes are intentionally local for compatibility with the existing
-   * deployment. Callers that need restart/replica continuity can export a
-   * snapshot and import it into the next process during a rolling handoff.
+   * With PostgreSQL configured, per-run/profile transactions are authoritative
+   * and this bounded projection is refreshed before API reads. The process
+   * cache and explicit snapshots remain the no-database development fallback.
    */
   getPersistenceStatus(): PublicObservabilityPersistenceStatus {
     return {
-      mode: PUBLIC_OBSERVABILITY_PERSISTENCE_MODE,
-      authoritative: 'process-cache',
+      mode: configuredPublicObservabilityIndex() ? 'postgres-entity-index' : PUBLIC_OBSERVABILITY_PERSISTENCE_MODE,
+      authoritative: configuredPublicObservabilityIndex() ? 'postgres' : 'process-cache',
       durableProjections: ['studio-trace-store', 'public-observability-quality-store'],
-      degraded: true,
+      degraded: !configuredPublicObservabilityIndex()?.isHealthy() || !this.persistenceHealthy,
       cache: {
         runs: this.runs.size,
         objectProfiles: this.objectProfiles.size,
@@ -682,6 +767,12 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
       run.scoreCount = run.scores.length;
       run.feedbackCount = run.feedback.length;
       run.evaluationCount = run.evaluations.length;
+      // Fragment trace/session selectors can only be checked after restoring
+      // the bounded spans; a backup must not resurrect a non-root fragment.
+      if (this.quarantineAllTelemetry || this.governanceTombstones.some(tombstone => this.tombstoneMatchesRun(tombstone, run))) {
+        skippedRuns += 1;
+        continue;
+      }
       this.upsertStoredRun(run);
       if (run.idempotencyKey) this.idempotency.set(`${run.keyId}:${run.idempotencyKey}`, run.runId);
       importedRuns += 1;
@@ -766,8 +857,8 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
       tombstone.accountScopeId === run.owner &&
       (!tombstone.userId || tombstone.userId === run.owner) &&
       (!tombstone.runId || tombstone.runId === run.runId) &&
-      (!tombstone.traceId || tombstone.traceId === run.traceId) &&
-      (!tombstone.sessionId || tombstone.sessionId === run.sessionRef) &&
+      (!tombstone.traceId || tombstone.traceId === run.traceId || [...run.spans.values()].some(span => span.traceId === tombstone.traceId)) &&
+      (!tombstone.sessionId || tombstone.sessionId === run.sessionRef || [...run.spans.values()].some(span => span.attributes.sessionRef === tombstone.sessionId)) &&
       !tombstone.grantId
     );
   }
@@ -890,6 +981,10 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     run: StoredRun,
     input: Partial<Pick<PublicObservabilityRunCreateInput, 'team' | 'objectType' | 'objectId' | 'objectName' | 'objectVersion' | 'projectId' | 'environment' | 'service' | 'release' | 'name' | 'sessionRef' | 'metadata'>>,
   ): void {
+    const session = resolveAiSessionBinding(input.metadata, input.sessionRef);
+    if (session.conflict || (run.sessionRef && session.sessionId && run.sessionRef !== session.sessionId)) {
+      throw new PublicObservabilityConflictError('observability_session_conflict: run already binds another conversation');
+    }
     if (input.team !== undefined) {
       const team = cleanText(input.team, 120);
       if (team) run.team = team;
@@ -930,10 +1025,7 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
       const name = cleanText(input.name, 120);
       if (name) run.name = name;
     }
-    if (input.sessionRef !== undefined) {
-      const sessionRef = cleanText(input.sessionRef, 200);
-      if (sessionRef) run.sessionRef = sessionRef;
-    }
+    if (session.sessionId) run.sessionRef = session.sessionId;
     if (input.metadata) run.metadata = { ...run.metadata, ...normalizeScalarMap(input.metadata, PUBLIC_OBSERVABILITY_RUN_METADATA_KEYS) };
   }
 
@@ -1017,7 +1109,7 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
 
   private async hydrateQuality(run: StoredRun): Promise<void> {
     try {
-      const quality = await loadPublicObservabilityQuality({ owner: run.owner, runId: run.runId });
+      const quality = await loadPublicObservabilityQuality({ owner: run.owner, runId: run.runId, schemaInitialized: this.projectionOnly });
       if (quality.scores.length) run.scores = quality.scores.slice(-MAX_SCORES_PER_RUN);
       if (quality.feedback.length) run.feedback = quality.feedback.slice(-MAX_FEEDBACK_PER_RUN);
       if (quality.evaluations.length) run.evaluations = quality.evaluations.slice(-MAX_EVALUATIONS_PER_RUN);
@@ -1033,6 +1125,14 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     const normalizedOwner = cleanText(owner, 256);
     const normalizedKeyId = cleanText(keyId, 96);
     if (!normalizedOwner || !normalizedKeyId) throw new Error('owner and keyId are required.');
+    if (!this.transaction && configuredPublicObservabilityIndex()) {
+      const runId = cleanText(input.runId, 200) || `obs_${crypto.randomUUID().replace(/-/g, '')}`;
+      return this.durableRun(normalizedOwner, normalizedKeyId, runId, cleanText(input.idempotencyKey, 256) || undefined,
+        async (isolated, resolvedRunId, replayed) => {
+          if (replayed) { const run = isolated.runs.get(resolvedRunId); if (run) return { run: isolated.publicRun(run), replayed: true }; }
+          return isolated.createRun(normalizedOwner, normalizedKeyId, { ...input, runId: resolvedRunId });
+        });
+    }
     const idempotencyKey = cleanText(input.idempotencyKey, 256);
     if (idempotencyKey) {
       const hit = this.idempotency.get(`${normalizedKeyId}:${idempotencyKey}`);
@@ -1065,6 +1165,8 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     const normalizedKeyId = cleanText(keyId, 96);
     const runId = cleanText(input.runId, 200);
     if (!normalizedOwner || !normalizedKeyId || !runId) throw new Error('owner, keyId and runId are required.');
+    if (!this.transaction && configuredPublicObservabilityIndex()) return this.durableRun(normalizedOwner, normalizedKeyId, runId, undefined,
+      (isolated) => isolated.ensureRun(normalizedOwner, normalizedKeyId, input));
     const existing = this.runs.get(runId);
     if (existing) {
       if (existing.owner !== normalizedOwner) throw new PublicObservabilityConflictError();
@@ -1080,12 +1182,33 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     return this.publicRun(run);
   }
 
-  async appendSpans(input: PublicObservabilitySpanBatchInput & { run?: Partial<PublicObservabilityRunCreateInput> }): Promise<{ run: PublicObservabilityRunRecord; spans: PublicObservabilitySpanRecord[] }> {
+  async appendSpans(input: PublicObservabilitySpanBatchInput & { run?: Partial<PublicObservabilityRunCreateInput> }): Promise<{ run: PublicObservabilityRunRecord; spans: PublicObservabilitySpanRecord[]; created: boolean }> {
     const owner = cleanText(input.owner, 256);
     const keyId = cleanText(input.keyId, 96);
     const runId = cleanText(input.runId, 200);
     if (!owner || !keyId || !runId) throw new Error('owner, keyId and runId are required.');
+    if (!this.transaction && configuredPublicObservabilityIndex()) return this.durableRun(owner, keyId, runId, undefined,
+      (isolated) => isolated.appendSpans(input), cleanText(input.accountScopeId ?? '', 256) || undefined);
     let run = this.runs.get(runId);
+    const created = !run;
+    if (run && run.owner !== owner) throw new PublicObservabilityConflictError();
+    const sessionIds = new Set<string>(run?.sessionRef ? [run.sessionRef] : []);
+    const incomingSession = resolveAiSessionBinding(input.run?.metadata, input.run?.sessionRef);
+    if (incomingSession.conflict) {
+      throw new PublicObservabilityConflictError('observability_session_conflict: conversation identifiers disagree');
+    }
+    if (incomingSession.sessionId) sessionIds.add(incomingSession.sessionId);
+    for (const span of input.spans.slice(0, 64)) {
+      const binding = resolveAiSessionBinding(span?.attributes);
+      if (binding.conflict) {
+        throw new PublicObservabilityConflictError('observability_session_conflict: conversation identifiers disagree');
+      }
+      if (binding.sessionId) sessionIds.add(binding.sessionId);
+    }
+    if (sessionIds.size > 1) {
+      throw new PublicObservabilityConflictError('observability_session_conflict: run already binds another conversation');
+    }
+    const sessionId = [...sessionIds][0];
     if (!run) {
       run = this.createStoredRun(owner, keyId, {
         runId,
@@ -1100,7 +1223,7 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
         objectVersion: cleanText(input.run?.objectVersion, 120) || undefined,
         release: cleanText(input.run?.release, 120) || undefined,
         name: cleanText(input.run?.name, 120) || runId,
-        sessionRef: cleanText(input.run?.sessionRef, 200) || undefined,
+        sessionRef: sessionId,
         metadata: normalizeScalarMap(input.run?.metadata),
         status: normalizeStatus(input.run?.status),
       });
@@ -1110,6 +1233,7 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     if (input.run) {
       this.mergeRunMetadata(run, input.run);
     }
+    if (sessionId) run.sessionRef = sessionId;
     const normalizedSpans: PublicObservabilitySpanRecord[] = [];
     for (const raw of input.spans.slice(0, 64)) {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
@@ -1117,7 +1241,7 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
       const span: PublicObservabilitySpanRecord = {
         schema: PUBLIC_OBSERVABILITY_SPAN_SCHEMA,
         runId,
-        traceId: run.traceId,
+        traceId: cleanText(row.traceId, 32) || run.traceId,
         spanId: cleanText(row.spanId, 16) || randomSpanId(),
         ...(cleanText(row.parentSpanId, 16) ? { parentSpanId: cleanText(row.parentSpanId, 16) } : {}),
         source: normalizeSource(row.source, 'server'),
@@ -1165,7 +1289,7 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
         run.completedAt = input.completedAt ?? Date.now();
       }
       run.updatedAt = Date.now();
-      return { run: this.publicRun(run), spans: [] };
+      return { run: this.publicRun(run), spans: [], created };
     }
     await this.persistAndStoreSpans(
       run,
@@ -1182,7 +1306,7 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
       run.status = 'running';
     }
     run.updatedAt = Date.now();
-    return { run: this.publicRun(run), spans: uniqueSpans };
+    return { run: this.publicRun(run), spans: uniqueSpans, created };
   }
 
   private matchingRuns(owner: string, options: PublicObservabilityRunFilter = {}): StoredRun[] {
@@ -1693,6 +1817,8 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
   }
 
   async getRun(owner: string, runId: string): Promise<PublicObservabilityRunRecord | null> {
+    const view = await this.refreshRunIndex(owner, runId);
+    if (view !== this) return view.getRun(owner, runId);
     this.pruneExpiredRuns();
     const normalizedOwner = cleanText(owner, 256);
     const normalizedRunId = cleanText(runId, 200);
@@ -1700,6 +1826,7 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     const existing = this.runs.get(normalizedRunId);
     if (existing) {
       if (existing.owner !== normalizedOwner) return null;
+      if (this.projectionOnly) await this.hydrateQuality(existing);
       return this.publicRun(existing);
     }
     const trace = await this.getTrace(normalizedOwner, normalizedRunId, 256);
@@ -1742,6 +1869,8 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
   }
 
   async getTrace(owner: string, runId: string, limit = 256): Promise<PublicObservabilitySpanRecord[] | null> {
+    const view = await this.refreshRunIndex(owner, runId);
+    if (view !== this) return view.getTrace(owner, runId, limit);
     this.pruneExpiredRuns();
     const normalizedOwner = cleanText(owner, 256);
     const normalizedRunId = cleanText(runId, 200);
@@ -1755,7 +1884,7 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
         .slice(0, Math.max(1, Math.min(256, Math.floor(limit))))
         .map((span) => ({ ...span, attributes: { ...span.attributes } }));
     }
-    const stored = await getStudioTraceSpansForRun({ runId: normalizedRunId, ownerUserId: normalizedOwner, limit });
+    const stored = await getStudioTraceSpansForRun({ runId: normalizedRunId, ownerUserId: normalizedOwner, limit, schemaInitialized: this.projectionOnly });
     if (!stored) return null;
     const publicSpans = stored
       .map(publicSpanFromStudioSpan)
@@ -1831,6 +1960,8 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
   }
 
   async recordScore(input: PublicObservabilityScoreInput): Promise<PublicObservabilityScoreRecord> {
+    if (!this.transaction && configuredPublicObservabilityIndex()) return this.durableRun(cleanText(input.owner, 256), '', cleanText(input.runId, 200), undefined,
+      (isolated) => isolated.recordScore(input));
     const run = this.runs.get(cleanText(input.runId, 200));
     if (!run) throw new Error('run not found');
     if (!run.owner || run.owner !== cleanText(input.owner, 256)) throw new Error('run not found');
@@ -1854,14 +1985,16 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
       metadata: normalizeScalarMap(input.metadata, new Set(['model', 'provider', 'route', 'experiment', 'variant', 'groundTruthRef'])),
       createdAt: Date.now(),
     };
+    await persistPublicObservabilityScore(score, this.transaction);
     run.scores = [...run.scores, score].slice(-MAX_SCORES_PER_RUN);
     run.scoreCount = run.scores.length;
     run.updatedAt = score.createdAt;
-    await persistPublicObservabilityScore(score).catch(() => undefined);
     return score;
   }
 
   async recordEvaluation(input: PublicObservabilityEvaluationInput): Promise<PublicObservabilityEvaluationRecord> {
+    if (!this.transaction && configuredPublicObservabilityIndex()) return this.durableRun(cleanText(input.owner, 256), '', cleanText(input.runId, 200), undefined,
+      (isolated) => isolated.recordEvaluation(input));
     const run = this.runs.get(cleanText(input.runId, 200));
     if (!run) throw new Error('run not found');
     if (!run.owner || run.owner !== cleanText(input.owner, 256)) throw new Error('run not found');
@@ -1883,21 +2016,25 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
       metadata: normalizeScalarMap(input.metadata, new Set(['model', 'provider', 'route', 'experiment', 'variant', 'groundTruthRef'])),
       createdAt: Date.now(),
     };
+    await persistPublicObservabilityEvaluation(evaluation, this.transaction);
     run.evaluations = [...run.evaluations, evaluation].slice(-MAX_EVALUATIONS_PER_RUN);
     run.evaluationCount = run.evaluations.length;
     run.updatedAt = evaluation.createdAt;
-    await persistPublicObservabilityEvaluation(evaluation).catch(() => undefined);
     return evaluation;
   }
 
   async getEvaluations(owner: string, runId: string): Promise<PublicObservabilityEvaluationRecord[]> {
+    const view = await this.refreshRunIndex(owner, runId);
+    if (view !== this) return view.getEvaluations(owner, runId);
     const run = this.runs.get(cleanText(runId, 200));
     if (!run || run.owner !== cleanText(owner, 256)) return [];
-    if (!run.evaluations.length) await this.hydrateQuality(run);
+    if (this.projectionOnly || !run.evaluations.length) await this.hydrateQuality(run);
     return run.evaluations.slice(-MAX_EVALUATIONS_PER_RUN).map((item) => ({ ...item, metadata: { ...item.metadata } }));
   }
 
   async recordFeedback(input: PublicObservabilityFeedbackInput): Promise<PublicObservabilityFeedbackRecord> {
+    if (!this.transaction && configuredPublicObservabilityIndex()) return this.durableRun(cleanText(input.owner, 256), '', cleanText(input.runId, 200), undefined,
+      (isolated) => isolated.recordFeedback(input));
     const run = this.runs.get(cleanText(input.runId, 200));
     if (!run) throw new Error('run not found');
     if (!run.owner || run.owner !== cleanText(input.owner, 256)) throw new Error('run not found');
@@ -1913,10 +2050,10 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
       ...(cleanText(input.timeline, 24_000) ? { timeline: cleanText(input.timeline, 24_000) } : {}),
       createdAt: Date.now(),
     };
+    await persistPublicObservabilityFeedback(feedback, this.transaction);
     run.feedback = [...run.feedback, feedback].slice(-MAX_FEEDBACK_PER_RUN);
     run.feedbackCount = run.feedback.length;
     run.updatedAt = feedback.createdAt;
-    await persistPublicObservabilityFeedback(feedback).catch(() => undefined);
     return feedback;
   }
 
@@ -1926,6 +2063,13 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     accountScopeId?: string,
   ): Promise<void> {
     if (!spans.length) return;
+    const persisted = await persistStudioTraceSpans({
+      spans, ownerUserId: run.owner, runId: run.runId,
+      ...(run.sessionRef ? { sessionId: run.sessionRef } : {}),
+      ...(accountScopeId ? { accountScopeId } : {}),
+      ...(this.transaction ? { pool: this.transaction, schemaInitialized: true } : {}),
+    });
+    if (configuredPublicObservabilityIndex() && !persisted) throw new Error('observability_span_persistence_failed');
     for (const span of spans) {
       const publicSpan = publicSpanFromStudioSpan(span);
       const key = `${publicSpan.traceId}:${publicSpan.spanId}`;
@@ -1934,12 +2078,6 @@ class PublicObservabilityStore implements PublicObservabilityRepository {
     run.status = run.status === 'queued' ? 'running' : run.status;
     run.updatedAt = Date.now();
     this.updateRunStats(run);
-    await persistStudioTraceSpans({
-      spans,
-      ownerUserId: run.owner,
-      runId: run.runId,
-      ...(accountScopeId ? { accountScopeId } : {}),
-    }).catch(() => undefined);
   }
 
   private publicRun(run: StoredRun): PublicObservabilityRunRecord {

@@ -1,0 +1,238 @@
+{
+  "releaseId": "architecture-hardening-20261012-6f20758749",
+  "baseRelease": "/opt/d-obs/releases/assistant-query-fix-20261012-38db0c798e",
+  "workerBaseRelease": "/opt/d-obs/releases/opsui-components-20261011-20261011-233355",
+  "sourceHead": "c3ef3ce9940e19cfa57b678b6ccfb3ab1941a746",
+  "scope": [
+    "PG public entity authority and durability acknowledgement",
+    "worker dedicated session lease and loss stop",
+    "explicit operation registry and trace lifecycle",
+    "actor-bound exact mutation confirmation and single-use claims"
+  ],
+  "crossHostHA": "deferred by user",
+  "dependenciesChanged": false,
+  "operationIds": [
+    "DELETE /api/ops/observability/boards/:boardId",
+    "DELETE /api/ops/observability/library/panels/:panelId",
+    "DELETE /api/ops/observability/maintenance-windows/:windowId",
+    "DELETE /api/ops/observability/object-registry",
+    "DELETE /api/ops/observability/strategies/:strategyId",
+    "DELETE /api/ops/observability/tenants/:tenantId/members/:ssoUserId",
+    "GET /api/ops/observability/access",
+    "GET /api/ops/observability/account-activity",
+    "GET /api/ops/observability/account-activity/events",
+    "GET /api/ops/observability/actions",
+    "GET /api/ops/observability/actions/:id",
+    "GET /api/ops/observability/boards",
+    "GET /api/ops/observability/boards/:boardId/export/grafana",
+    "GET /api/ops/observability/config",
+    "GET /api/ops/observability/copilot/status",
+    "GET /api/ops/observability/database",
+    "GET /api/ops/observability/database/tables/:tableName",
+    "GET /api/ops/observability/devices",
+    "GET /api/ops/observability/devices/:deviceId/commands",
+    "GET /api/ops/observability/devices/:deviceId/samples",
+    "GET /api/ops/observability/events/:eventId",
+    "GET /api/ops/observability/incidents",
+    "GET /api/ops/observability/incidents/:alertKey/correlate",
+    "GET /api/ops/observability/incidents/summary",
+    "GET /api/ops/observability/ingest-tokens",
+    "GET /api/ops/observability/learning",
+    "GET /api/ops/observability/library/panels",
+    "GET /api/ops/observability/logs",
+    "GET /api/ops/observability/logs/facets",
+    "GET /api/ops/observability/maintenance-windows",
+    "GET /api/ops/observability/metrics/anomalies",
+    "GET /api/ops/observability/metrics/catalog",
+    "GET /api/ops/observability/metrics/query",
+    "GET /api/ops/observability/metrics/series",
+    "GET /api/ops/observability/model-pool",
+    "GET /api/ops/observability/model-prices",
+    "GET /api/ops/observability/object-bindings",
+    "GET /api/ops/observability/object-registry",
+    "GET /api/ops/observability/objects",
+    "GET /api/ops/observability/objects/:objectId",
+    "GET /api/ops/observability/operator-metrics",
+    "GET /api/ops/observability/overview",
+    "GET /api/ops/observability/prom/query",
+    "GET /api/ops/observability/quality/summary",
+    "GET /api/ops/observability/rdk-logs/capabilities",
+    "GET /api/ops/observability/rdk-logs/captures",
+    "GET /api/ops/observability/rdk-logs/captures/:id",
+    "GET /api/ops/observability/rdk-logs/captures/:id/bundle",
+    "GET /api/ops/observability/rdk-logs/captures/:id/evidence",
+    "GET /api/ops/observability/rdk-logs/profiles",
+    "GET /api/ops/observability/rdk-logs/targets",
+    "GET /api/ops/observability/remediation",
+    "GET /api/ops/observability/runs/:locator",
+    "GET /api/ops/observability/runs/iteration-cycle",
+    "GET /api/ops/observability/search",
+    "GET /api/ops/observability/sessions",
+    "GET /api/ops/observability/ssh-logs/sessions",
+    "GET /api/ops/observability/ssh-logs/sessions/:id",
+    "GET /api/ops/observability/ssh-logs/sessions/:id/export",
+    "GET /api/ops/observability/ssh-logs/targets",
+    "GET /api/ops/observability/strategies",
+    "GET /api/ops/observability/tenants",
+    "GET /api/ops/observability/tenants/:tenantId/members",
+    "PATCH /api/ops/observability/object-registry",
+    "POST /api/ops/observability/actions",
+    "POST /api/ops/observability/actions/:id/complete",
+    "POST /api/ops/observability/actions/:id/decision",
+    "POST /api/ops/observability/actions/:id/execute",
+    "POST /api/ops/observability/actions/:id/regression",
+    "POST /api/ops/observability/actions/:id/repropose",
+    "POST /api/ops/observability/actions/:id/verify",
+    "POST /api/ops/observability/actions/evidence-proof",
+    "POST /api/ops/observability/boards",
+    "POST /api/ops/observability/boards/from-nl",
+    "POST /api/ops/observability/boards/import",
+    "POST /api/ops/observability/copilot/analysis",
+    "POST /api/ops/observability/devices",
+    "POST /api/ops/observability/devices/:deviceId/commands",
+    "POST /api/ops/observability/devices/:deviceId/status",
+    "POST /api/ops/observability/devices/:deviceId/token",
+    "POST /api/ops/observability/incidents/:incidentKey/actions",
+    "POST /api/ops/observability/ingest-tokens",
+    "POST /api/ops/observability/ingest-tokens/:tokenId/revoke",
+    "POST /api/ops/observability/ingest-tokens/:tokenId/rotate",
+    "POST /api/ops/observability/library/panels",
+    "POST /api/ops/observability/maintenance-windows",
+    "POST /api/ops/observability/model-pool/cleanup",
+    "POST /api/ops/observability/model-pool/probe",
+    "POST /api/ops/observability/model-pool/rollback",
+    "POST /api/ops/observability/nl-query",
+    "POST /api/ops/observability/object-registry",
+    "POST /api/ops/observability/rdk-logs/captures",
+    "POST /api/ops/observability/rdk-logs/captures/:id/analysis",
+    "POST /api/ops/observability/rdk-logs/captures/:id/markers",
+    "POST /api/ops/observability/rdk-logs/captures/:id/stop",
+    "POST /api/ops/observability/rdk-logs/plan",
+    "POST /api/ops/observability/rdk-logs/targets/:id/probe",
+    "POST /api/ops/observability/run-checks",
+    "POST /api/ops/observability/selftest/log",
+    "POST /api/ops/observability/selftest/metric",
+    "POST /api/ops/observability/ssh-logs/sessions",
+    "POST /api/ops/observability/ssh-logs/sessions/:id/stop",
+    "POST /api/ops/observability/strategies",
+    "POST /api/ops/observability/tenants",
+    "POST /api/ops/observability/tenants/:tenantId/members",
+    "POST /api/ops/observability/tenants/:tenantId/members/:ssoUserId/role",
+    "POST /api/ops/observability/tenants/:tenantId/status",
+    "POST /api/ops/observability/tenants/:tenantId/token",
+    "POST /api/ops/observability/test-notification",
+    "PUT /api/ops/observability/boards/:boardId",
+    "PUT /api/ops/observability/config",
+    "PUT /api/ops/observability/model-pool/replace",
+    "PUT /api/ops/observability/model-pool/routing",
+    "PUT /api/ops/observability/model-prices/:model",
+    "PUT /api/ops/observability/object-bindings",
+    "PUT /api/ops/observability/strategies/:strategyId"
+  ],
+  "files": {
+    "tools/public-observability-index-schema.sql": {
+      "sha256": "5f8f68238a8083b0443ad530bc6087bf3e0664db9c55bdea07eb0181115a6439",
+      "baselineSha256": null
+    },
+    "server/public-api/public-observability-repository.js": {
+      "sha256": "d296898287246b111ccec793b9a4ba74fd3ebcee2e98f4b2c4e600044a0cc946",
+      "baselineSha256": "4ef68d60d05d7a634501e7f8f6b8f7dc537535a5470513683bd353c4658824f9"
+    },
+    "server/public-api/public-observability-store.js": {
+      "sha256": "dda5a22dea78165088c479b3546692e64280d9eadff347183719c486ef3dc40c",
+      "baselineSha256": "9670fc976ae1034ccebf5072b67306df544b7c7189bd8cc7e570ca2524372fb5"
+    },
+    "server/public-api/public-observability-quality-store.js": {
+      "sha256": "3466983c7085ccf1f5e52475c603a2c2499f98431cc22132f5dd1172b891faf9",
+      "baselineSha256": "2008cd586aaf0aa360b41013cd6bc7f2d2ce0715a278b69840308c894d8ceb4d"
+    },
+    "server/public-api/public-observability-routes.js": {
+      "sha256": "85598147ea1222509db1ae28f6c042bf3a3c5f151f02a2d7e4d972435219b576",
+      "baselineSha256": "6c4763df1ad3631a675d8432c1b6d3797f374575d85416354411ba3baffdad3c"
+    },
+    "server/public-api/public-observability-pg-index.js": {
+      "sha256": "a299c651da08436c2587869b5d4e49adad45ada31d9dd68d5f577dd2a031fa34",
+      "baselineSha256": null
+    },
+    "server/observability/studio-trace-store.js": {
+      "sha256": "bf34db8f6f7edd81945aa0c47176a517450a7186a8f46d249dc61ee1715b054f",
+      "baselineSha256": "53afde21752285bbea826c8af62bd9f2ef3fc3fa5819637d68d72d6c23421fed"
+    },
+    "server/observability/platform-assistant.js": {
+      "sha256": "2e4bf0b9f586bfbe21b5af191b69417fac570ea0a85861186e529a9eadff1072",
+      "baselineSha256": "c9b56028ce31206c0e2bcd1bd32404dd6deb1f0894c07dcc9ed1d1e70d494aad"
+    },
+    "server/observability/governance-postgres-runtime.js": {
+      "sha256": "be5ad04ee2cd9385e081f5814529e9e3127715b12f69ff29b0cfc16b267af045",
+      "baselineSha256": "356f85a9ab9f72e871fa89b497ae046574fa72058074fe99d7134b66ccdd2ddb"
+    },
+    "server/observability/ai-ecosystem-routes.js": {
+      "sha256": "04924c6fb78526eaf74f097426cbb59feaaf191b66740b76b4977c2076f50cba",
+      "baselineSha256": "ef881ddc1be113805863d70e8bcec7c6020f57b12ce161d00a91c50c5f1b17b5"
+    },
+    "server/observability/ai-ecosystem-metrics-store.js": {
+      "sha256": "a2e9e39bc7e0ea4c4e8d74bb7e80d30d98457a90ddf396d79d3d77aa099fed7f",
+      "baselineSha256": "8db9ff40c678387b27eaf7a26f01bb73ca6a93370af6862d86fd94b57e849d4f"
+    },
+    "server/monitoring/postgres-dashboard-store.js": {
+      "sha256": "38ae54ad24eb00ee01ec248d027a5e076643a34761e65e1e89f5efd0e8021d58",
+      "baselineSha256": "d339afbd539a148e3409f886cabeb2290a9676b2f1238f9ba5c760a8eccf75b6"
+    },
+    "server/monitoring/platform-operation-metadata.js": {
+      "sha256": "7fa9d14971482a9cc3e33dd95b3e2163ed3d5da2d6d2358b0cb84d3f3f7bbe93",
+      "baselineSha256": "d5974dfbd69824545ca4c3024ab1ba1a8e72c4a1a5dd7032f6494e062b376e09"
+    },
+    "server/monitoring/platform-assistant-routes.js": {
+      "sha256": "698edc467e6ad20de9fe156c0bd85b97b29a8bcf7c3456a0566098c231945b10",
+      "baselineSha256": "6778a280faa2b9ef3bd2994e7bef6e1298dbbce336824c0d6c97e26ca0501af2"
+    },
+    "server/monitoring/observability-insight-routes.js": {
+      "sha256": "cd8321db73ac90abe5e011a85706b55d3ee4aeeae582662663203e346b891c5f",
+      "baselineSha256": "3d51e2c073404d76bcaffb6676161745825a20017e777a010a47cc8ba53a44c3"
+    },
+    "server/monitoring/platform-operations.js": {
+      "sha256": "f5093ed402e2a4243aa6a9c516fa1e4458a82b679b70afe2ebbfa618b8a280b9",
+      "baselineSha256": "d2cf1ca3a1cdda26ff373d419011b87ad9bb35e5203d4316f560073f3668ab22"
+    },
+    "server/monitoring/observability-page-script-c.js": {
+      "sha256": "1148ede5b430225964ca9d21c65c6628b084b19cfc162214feae635d43bf2f57",
+      "baselineSha256": "81690ad5dd8488115bd9445f520c4c125a1f4189810ef854484fafbd74d200cc"
+    },
+    "server/monitoring/platform-assistant-authorization.js": {
+      "sha256": "ba2428cf7ae0ad7524deb5ccd32388a9af0953f0fe8dd6d003aee0e65ba66b31",
+      "baselineSha256": null
+    },
+    "server/monitoring/observability-page-trace-lifecycle.js": {
+      "sha256": "ae51bbba7a7b413cc588c39233d6c759d5f06370767198536d7b43e3fcd070d5",
+      "baselineSha256": null
+    },
+    "server/monitoring/studio-alert-worker.js": {
+      "sha256": "b326fc65618c7a745929d41a821b0ec7bde11b65b9257428ab27c3652c39b872",
+      "baselineSha256": "5f8ddc9200dc8cba094084ecc5f30b293aec1dfe71291dd6a6b86de88bce5859"
+    },
+    "server/monitoring/worker-lease.js": {
+      "sha256": "4cff186bff91d6734c13725e865324d94a4ef88562f50a8bb1f886763470bc34",
+      "baselineSha256": "6ecd048bd447da0e55a1120fae97e05716122b56d07473795124ce235254d0ae"
+    },
+    "server/monitoring/observability-routes.js": {
+      "sha256": "810714be4890b3f60f4f41dd87ae4f1ae6dd82e1228d507d25265dbc49903673",
+      "baselineSha256": "58f350faab7e2fd18d1b3e8e18f65623fbf3450226512e6f271cf2cd506ecb0b"
+    },
+    "server/monitoring/observability-page-assistant.js": {
+      "sha256": "a805e50c5806f7f98aaba81811466a3be6be3845d6cad29bb467550d9403cae1",
+      "baselineSha256": "99e54601bf02c114d76d8765fa0752dfc75e3177593066c2845d3c0fb2939c2d"
+    },
+    "server/monitoring/observability-page-script-traces.js": {
+      "sha256": "361e978ba8c65407ac7388beca980d3adf1da12edb23779540498fecb0c07139",
+      "baselineSha256": "00d791b32fe7f9f2e56c0d276c7d84e9f541e76cf09325ce85d75665f99e763d"
+    },
+    "server/monitoring/observability-page-script-native-sessions.js": {
+      "sha256": "a0b73c1dbff785594ac419e3b7f492efc625213942e2d8f9aa4fc77187b6020f",
+      "baselineSha256": "aef31734782115270aac2e903b47a9e64c2e14e0c2d2eec456726e1a102df7f2"
+    },
+    "ops/db-panel-allowlist.txt": {
+      "sha256": "1e8142462226b68fedbd8b9bf8a7abf0819401a9587d12afdaf182e26b806725",
+      "baselineSha256": "0b2763db0b8fdc01b5fbf6db318f495794fc80060ad36b062c281df60dc4044c"
+    }
+  }
+}

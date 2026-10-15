@@ -95,13 +95,32 @@ export class PostgresTelemetryRetentionWorker {
     }
     try {
       const result = await within(
-        this.db.query(
-          `select low_sensitivity_deleted, payload_deleted
-           from public.cleanup_expired_studio_telemetry(
-             $1, $2, to_timestamp($3 / 1000.0)
-           )`,
-          [accountScopeId, partition.environment, now],
-        ),
+        (async () => {
+          const retention = await this.db.query(
+            `select low_sensitivity_deleted, payload_deleted
+             from public.cleanup_expired_studio_telemetry(
+               $1, $2, to_timestamp($3 / 1000.0)
+             )`,
+            [accountScopeId, partition.environment, now],
+          );
+          // Conversation bodies expire independently of 35-day span metadata.
+          // Keep the deadline as evidence that a body existed and has expired.
+          const cleared = await this.db.query(
+            `update public.studio_trace_spans set content = null
+             where account_scope_id = $1 and environment = $2
+               and content is not null
+               and coalesce(content_expires_at,
+                 to_timestamp(start_time_ms / 1000.0) + interval '7 days'
+               ) <= to_timestamp($3 / 1000.0)
+             returning span_id`,
+            [accountScopeId, partition.environment, now],
+          );
+          const counts = retentionCounts(retention);
+          return { rows: [{
+              low_sensitivity_deleted: counts.lowSensitivityDeleted,
+              payload_deleted: counts.payloadDeleted + (cleared.rowCount ?? cleared.rows.length),
+          }] };
+        })(),
         this.operationTimeoutMs,
       );
       const counts = retentionCounts(result);

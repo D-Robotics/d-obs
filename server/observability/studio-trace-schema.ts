@@ -17,6 +17,8 @@ create table if not exists public.studio_trace_spans (
   status text not null check (status in ('ok', 'error')),
   status_message text null,
   attributes jsonb not null default '{}'::jsonb,
+  content jsonb null,
+  content_expires_at timestamptz null,
   created_at timestamptz not null default now(),
   account_scope_id text not null,
   environment text not null default 'production'
@@ -80,6 +82,8 @@ alter table public.studio_trace_spans add column if not exists canonical_hash te
 alter table public.studio_trace_spans add column if not exists batch_id text null;
 alter table public.studio_trace_spans add column if not exists received_at timestamptz not null default now();
 alter table public.studio_trace_spans add column if not exists governance_expires_at timestamptz null;
+alter table public.studio_trace_spans add column if not exists content jsonb null;
+alter table public.studio_trace_spans add column if not exists content_expires_at timestamptz null;
 
 update public.studio_trace_spans set account_scope_id = owner_user_id where account_scope_id is null;
 update public.studio_trace_spans
@@ -184,6 +188,10 @@ create index if not exists studio_trace_spans_retention_v2_idx
   on public.studio_trace_spans (received_at);
 create index if not exists studio_trace_spans_scope_governance_expiry_idx
   on public.studio_trace_spans (account_scope_id, environment, governance_expires_at);
+
+create index if not exists studio_trace_spans_content_expiry_idx
+  on public.studio_trace_spans (account_scope_id, environment, content_expires_at)
+  where content is not null;
 
 create table if not exists public.studio_trace_ingestion_receipts (
   account_scope_id text not null,

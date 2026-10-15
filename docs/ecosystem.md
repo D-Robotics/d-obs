@@ -4,6 +4,9 @@ d-obs 把 AI 观测数据收敛到 OpenTelemetry OTLP。应用可以使用 HTTP 
 或标准 OTLP/gRPC，Phoenix、Langfuse、OpenInference 以及其他兼容 OTLP 的 SDK 都可以复用
 同一条数据通道。
 
+平台操作通过工作台「AI 助手」或 `POST /api/ops/mcp` 完成；统一能力发现、执行、
+鉴权、模型配置与下载约定见 [平台 AI 助手](./platform-assistant.md)。
+
 ## 入口
 
 | 用途 | HTTP 入口 | 鉴权 |
@@ -121,6 +124,22 @@ curl -X POST http://127.0.0.1:47110/v1/traces \
 traces/metrics/logs 都会落库（metrics/logs/设备样本默认保留 14 天，可用
 `RDK_OBSERVABILITY_SIGNAL_RETENTION_DAYS` 调整），平台内"观测查询"视图可以直接
 画指标折线和查日志；Prometheus 抓取继续提供无限期的历史与 PromQL 查询。
+
+配置中心 PG 时，HTTP JSON、HTTP protobuf 和 gRPC 指标入口在样本事务提交后才
+确认接受；同一系列与时间戳的重试做 upsert。写入失败返回 HTTP 503 或 gRPC
+`UNAVAILABLE`，SDK/Collector 应重试。进程内最多同时写入 8,192 个指标点，超出预算
+以 `partialSuccess.rejectedDataPoints` 明确拒绝。未配置 PG 的开发模式仍可预览
+`/metrics` 当前 gauge，但整批指标点均标记 rejected，不承诺接收后的重启恢复。
+指标写入不再使用“先响应、后刷内存队列”的方式。
+OTLP JSON/gRPC 的整数纳秒字符串先用整数除法转换成毫秒，避免相邻 1ms 样本因浮点
+精度坍缩成相同 upsert 键。Traces 仍逐 trace 做尾采样，再把同 Run、同 scopeRef 的保留
+片段合批提交，逐 span 的 trace/parent/session 引用会保留。
+
+
+公共 API 的 Run、对象资料和幂等索引同样使用 PG 逐实体事务，详情和目录读取会
+刷新共享索引。无库时 capabilities 明确标记 `process-memory-cache` 和 `degraded: true`。
+这些保证覆盖进程重启与两个服务实例访问同一 PG；跨主机 HA 另见部署方案。
+
 
 标准 OpenTelemetry SDK 打开 logs 导出即可（`OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` 等
 环境变量与 traces/metrics 同形）；任何支持 OTLP 的日志 SDK 指向 `/v1/logs` 即可。

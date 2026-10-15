@@ -1,0 +1,23 @@
+{
+  "version": "1.2.0",
+  "author": { "name": "D-Robotics", "email": "13500790262@163.com" },
+  "displayName": { "zh": "地瓜相机调试助手", "en": "RDK Camera Workshop" },
+  "profession": { "zh": "RDK 相机接入与 ISP 调试工程师", "en": "RDK Camera Bringup and ISP Engineer" },
+  "description": "D-Robotics RDK camera bringup, version troubleshooting and ISP workflow assistant. Requires a user-managed d-obs camera service. 相机点亮、MIPI、USB、ISP 调试与恢复。",
+  "displayDescription": {
+    "zh": "协助核对相机资料与系统版本，完成已适配相机点亮、采图、控制与画质排障，使用时需连接自有服务。",
+    "en": "Checks camera documentation and OS/SDK versions, brings up supported cameras and guides capture, control and image-quality troubleshooting through your own d-obs service."
+  },
+  "categoryId": "02-Engineering",
+  "keywords": ["D-Robotics", "地瓜机器人", "RDK", "相机点亮", "相机调试", "camera", "bringup", "ISP", "MIPI", "USB", "IMX415", "X5"],
+  "tags": [
+    { "zh": "RDK 相机点亮", "en": "RDK Camera Bringup" },
+    { "zh": "ISP 画质调试", "en": "ISP Tuning" },
+    { "zh": "MIPI USB 排障", "en": "MIPI USB Troubleshooting" }
+  ],
+  "quickPrompts": [
+    { "zh": "先检查相机服务连接，列出实际设备与点亮前提。", "en": "Check my camera service, list actual devices and bringup prerequisites." },
+    { "zh": "核对 X5 IMX415 的系统和 SDK 版本，定位 MIPI 无法出图的原因。", "en": "Check X5 IMX415 OS and SDK versions and diagnose missing MIPI frames." },
+    { "zh": "依据 Tuning guide 排查雾感和彩噪，保存真实前后图和参数恢复证据。", "en": "Use the tuning guide to investigate haze and chroma noise, preserving before/after images and parameter recovery evidence." }
+  ]
+}

@@ -12,6 +12,8 @@
  * RDK_CHAT_CREDITS_DB_URL 时本模块不可用、调用即返回 false,不影响桌面默认路径。
  */
 import { resolveStudioDeploymentProfile } from './studio-deployment.js';
+import { resolveStudioTraceStoreEnvironment } from './observability/studio-trace-store.js';
+import type { StudioDeploymentEnvironment } from '../shared/studio-observability.js';
 import { reportConversationTurnToCentral } from './central-telemetry-http-client.js';
 import {
   buildTelemetrySourceId,
@@ -89,6 +91,9 @@ async function ensureSchema(p: Pool): Promise<void> {
       // sso_user_name 会碰撞,不能做隔离/恢复键)。自愈加列;老行为 null(不参与隔离,self-gating)。
       await p.query(`alter table public.conversation_turns add column if not exists session_id text`);
       await p.query(`alter table public.conversation_turns add column if not exists sso_user_id text`);
+      // 旧归档保持 null；不能凭相邻时间或会话猜测具体 Run 和环境。
+      await p.query(`alter table public.conversation_turns add column if not exists run_id text`);
+      await p.query(`alter table public.conversation_turns add column if not exists environment text`);
       await p.query(`alter table public.conversation_turns add column if not exists source_id text`);
       await p.query(`alter table public.conversation_turns add column if not exists app_version text`);
       await p.query(
@@ -97,6 +102,8 @@ async function ensureSchema(p: Pool): Promise<void> {
       );
       await p.query(`create index if not exists conversation_turns_sso_user_id_idx on public.conversation_turns (sso_user_id) where sso_user_id is not null`);
       await p.query(`create index if not exists conversation_turns_session_id_idx on public.conversation_turns (session_id) where session_id is not null`);
+      await p.query(`create index if not exists conversation_turns_account_environment_run_idx on public.conversation_turns (sso_user_id, environment, run_id) where run_id is not null`);
+      await p.query(`create index if not exists conversation_turns_account_environment_session_idx on public.conversation_turns (sso_user_id, environment, session_id, recorded_at desc, id desc) where session_id is not null`);
       // 来源维度:区分 web-cloud / desktop / miniapp / web-self-host / local-dev。
       // 桌面对话经 HTTP 上报落库时带上;小程序由请求 surface 显式传入;其余按部署形态兜底。
       await p.query(`alter table public.conversation_turns add column if not exists client_type text`);
@@ -163,6 +170,10 @@ export type ConversationTurnCentralRow = {
   /** 稳定会话 id + SSO 用户 id(账号级同步/对话恢复的隔离键;可空,老行/未登录不参与隔离)。 */
   session_id?: string | null;
   sso_user_id?: string | null;
+  /** 本轮权威 Run id；旧归档可空，不通过会话或时间窗回填。 */
+  run_id?: string | null;
+  /** 仅供传输兼容；写入时以本进程解析的环境为准。 */
+  environment?: StudioDeploymentEnvironment | null;
   /** 来源形态:web-cloud / desktop / miniapp / web-self-host / local-dev。缺省按本进程部署形态兜底。 */
   client_type?: string | null;
   app_version?: string | null;
@@ -181,10 +192,12 @@ function stripNul(value: unknown): string | null {
 
 export async function insertConversationTurnCentral(row: ConversationTurnCentralRow): Promise<boolean> {
   const clientType = (row.client_type ?? '').toString().trim() || resolveStudioDeploymentProfile();
+  const environment = resolveStudioTraceStoreEnvironment();
+  const runId = stripNul(row.run_id)?.trim() || null;
   const appVersion = normalizeStudioTelemetryVersion(row.app_version);
   if (!isCentralTelemetryConfigured()) {
     // 无直连库:桌面/无库形态改道 HTTP 上报(带上来源形态);web-cloud 永不走这里(已配库)。
-    reportConversationTurnToCentral({ ...row, client_type: clientType, app_version: appVersion });
+    reportConversationTurnToCentral({ ...row, run_id: runId, environment, client_type: clientType, app_version: appVersion });
     // 旁路已安排，但本进程没有本地落库；HTTP 摄取路由据此回 503，避免伪装成已写入中心。
     return false;
   }
@@ -201,11 +214,13 @@ export async function insertConversationTurnCentral(row: ConversationTurnCentral
         row.user_message,
         row.assistant_message,
         row.outcome,
+        runId,
+        environment,
       ]);
     await p.query(
       `insert into public.conversation_turns
-         (source_id, recorded_at, sso_user_name, user_message, assistant_message, tools_used, channel, outcome, error_detail, session_id, sso_user_id, client_type, app_version)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         (source_id, recorded_at, sso_user_name, user_message, assistant_message, tools_used, channel, outcome, error_detail, session_id, sso_user_id, client_type, app_version, run_id, environment)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        on conflict (source_id) where source_id is not null do nothing`,
       [
         sourceId,
@@ -221,6 +236,8 @@ export async function insertConversationTurnCentral(row: ConversationTurnCentral
         (row.sso_user_id ?? '').toString().trim() || null,
         clientType || null,
         appVersion,
+        runId,
+        environment,
       ],
     );
     return true;

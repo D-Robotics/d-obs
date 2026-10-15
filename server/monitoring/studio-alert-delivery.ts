@@ -18,6 +18,7 @@ import { remediationDeepLink, remediationPlaybooksForRule } from './alert-remedi
 import { sanitizeOpsSummary } from './ops-event-store.js';
 import { tenantScopeFromAlertKey as tenantScopeFromAlertKeyPublic } from './observability-store.js';
 import type { AlertObservation, AlertTransition, AlertWorkerState } from './studio-alert-state.js';
+import type { AlertEvidence } from './studio-alert-evidence-types.js';
 
 type PgQueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number | null };
 type Pool = {
@@ -67,9 +68,46 @@ function transitionCardSpec(
 }
 
 /** 告警通知里的「查看看板」深链：看板解析 #alert=<key> 后直达该策略的告警详情。 */
-export function alertDetailDeepLink(config: AlertConfig, key: string): string {
+export function alertDetailDeepLink(config: AlertConfig, key: string, at?: string): string {
   const base = config.notification.dashboardUrl.split('#')[0];
-  return `${base}#alert=${encodeURIComponent(key)}`;
+  const time = at && Number.isFinite(Date.parse(at)) ? `&at=${encodeURIComponent(new Date(at).toISOString())}` : '';
+  return `${base}#alert=${encodeURIComponent(key)}${time}`;
+}
+
+function cardFact(value: string | null | undefined): string {
+  return (sanitizeOpsSummary(value ?? '', 120) || '未上报')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/[\\`*_\[\]()!#|]/g, '\\$&').replace(/[\r\n]+/g, ' ');
+}
+
+const CLIENT_LABELS: Record<string, string> = {
+  desktop: '桌面客户端', 'web-cloud': '网页（云端）',
+  'web-self-host': '网页（自托管）', miniapp: '小程序', 'local-dev': '本地开发',
+};
+
+/** Card and generic channels share one bounded projection of the same snapshot. */
+export function alertEvidenceFactLines(evidence?: AlertEvidence): string[] {
+  if (!evidence) return ['**关联信息** 未采集到账号、版本及客户端信息；可在详情查看可用证据。'];
+  if (evidence.applicability === 'infrastructure') return ['**账号 / 版本 / 客户端** 不适用（基础设施告警）'];
+  const lines = [`**影响范围** ${evidence.runCount} 个独立 run · ${evidence.eventCount} 条异常记录 · ${evidence.totalGroups} 组来源`];
+  for (const group of evidence.groups.slice(0, 4)) {
+    lines.push(`**SSO 账号** ${cardFact(group.accountId)}　|　**版本** ${cardFact(group.appVersion)}　|　**客户端** ${cardFact(group.clientType ? CLIENT_LABELS[group.clientType] ?? group.clientType : null)}`);
+    lines.push(`**功能模块** ${cardFact(group.module)}　|　${group.runCount} 个 run / ${group.failureCount} 次异常`);
+  }
+  if (!evidence.groups.length) lines.push('**SSO 账号 / 版本 / 客户端 / 功能模块** 未上报');
+  if (evidence.totalGroups > 4) lines.push(`卡片展示前 4 / ${evidence.totalGroups} 组，查看详情可核对更多来源与失败样本。`);
+  return lines;
+}
+
+function transitionEvidenceLines(transition: AlertTransition): string[] {
+  const lines = alertEvidenceFactLines(transition.evidence);
+  if (transition.evidenceUnavailable) lines.push('历史证据未保存，详情入口展示当前状态；请结合本卡片信息排查。');
+  return lines;
+}
+
+function transitionDetailLink(config: AlertConfig, transition: AlertTransition): string {
+  return alertDetailDeepLink(config, transition.key,
+    transition.evidence && !transition.evidenceUnavailable ? transition.at : undefined);
 }
 
 export function buildFeishuAlertCard(
@@ -114,6 +152,7 @@ export function buildFeishuAlertCard(
   const elements: Array<Record<string, unknown>> = [
     { tag: 'markdown', content: factLines.join('\n') },
     { tag: 'markdown', content: `**摘要** ${transition.summary}` },
+    { tag: 'markdown', content: transitionEvidenceLines(transition).join('\n') },
     { tag: 'hr' },
     {
       tag: 'markdown',
@@ -125,7 +164,7 @@ export function buildFeishuAlertCard(
       tag: 'button',
       text: { tag: 'plain_text', content: '查看看板' },
       type: 'default',
-      url: alertDetailDeepLink(config, transition.key),
+      url: transitionDetailLink(config, transition),
     },
   ];
   if (
@@ -177,19 +216,20 @@ function buildNotificationText(transition: AlertTransition, config: AlertConfig)
       transition.kind === 'resolved'
         ? '告警已恢复，可在看板确认事故状态。'
         : config.notification.actionGuide,
-    dashboardUrl: alertDetailDeepLink(config, transition.key),
+    dashboardUrl: transitionDetailLink(config, transition),
   };
   const template =
     transition.kind === 'resolved' && config.notification.recoveryTemplate
       ? config.notification.recoveryTemplate
       : config.notification.messageTemplate;
-  const rendered = template
+  const renderedTemplate = template
     .replace(
       /\{\{([a-zA-Z]+)\}\}/g,
       (_match, key: string) => values[key as keyof typeof values] ?? '',
     )
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  const rendered = `${renderedTemplate}\n${transitionEvidenceLines(transition).join('\n')}`;
   // 有白名单自愈剧本的规则，告警消息附带看板深链，运营一点即达自愈中心。
   if (
     (transition.kind === 'opened' || transition.kind === 'escalated') &&
@@ -385,16 +425,19 @@ export async function recordIncidentSnapshots(
     if (!keyState?.active) continue;
     await p.query(
       `insert into public.studio_alert_incidents
-         (alert_key, object_id, title, severity, status, summary, first_seen_at, last_seen_at, occurrence_count)
-       values ($1, $2, $3, $4, 'open', $5, $6, $7, 1)
+         (alert_key, object_id, title, severity, status, summary, first_seen_at, last_seen_at, occurrence_count, tenant_id)
+       values ($1, $2, $3, $4, 'open', $5, $6, $7, 1, $8)
        on conflict (alert_key) do update
          set title = excluded.title,
+             tenant_id = excluded.tenant_id,
              severity = excluded.severity,
              status = case when public.studio_alert_incidents.status = 'resolved'
                                 or (public.studio_alert_incidents.status = 'silenced'
                                     and coalesce(public.studio_alert_incidents.silence_until, now()) <= now())
                            then 'open' else public.studio_alert_incidents.status end,
              summary = excluded.summary,
+             first_seen_at = case when public.studio_alert_incidents.status = 'resolved'
+                                  then excluded.first_seen_at else public.studio_alert_incidents.first_seen_at end,
              last_seen_at = excluded.last_seen_at,
              object_id = coalesce(public.studio_alert_incidents.object_id, excluded.object_id),
              occurrence_count = public.studio_alert_incidents.occurrence_count + 1,
@@ -415,6 +458,7 @@ export async function recordIncidentSnapshots(
         sanitizeOpsSummary(observation.summary, 800),
         keyState.firstSeenAt ?? checkedAt,
         checkedAt,
+        tenantScopeFromAlertKeyPublic(observation.key),
       ],
     );
   }
@@ -510,15 +554,18 @@ export async function recordIncident(
   await p.query(
     `insert into public.studio_alert_incidents
        (alert_key, object_id, title, severity, status, summary, first_seen_at, last_seen_at, last_notified_at, occurrence_count, tenant_id)
-     values ($1, $7, $2, $3, 'open', $4, $5, $5, case when $6 then $5::timestamptz else null end, 1, $8)
+     values ($1, $7, $2, $3, 'open', $4, $9, $5, case when $6 then $5::timestamptz else null end, 1, $8)
      on conflict (alert_key) do update
        set title = excluded.title,
+           tenant_id = excluded.tenant_id,
            severity = excluded.severity,
            status = case when public.studio_alert_incidents.status = 'resolved'
                               or (public.studio_alert_incidents.status = 'silenced'
                                   and coalesce(public.studio_alert_incidents.silence_until, now()) <= now())
                          then 'open' else public.studio_alert_incidents.status end,
            summary = excluded.summary,
+           first_seen_at = case when public.studio_alert_incidents.status = 'resolved'
+                                then excluded.first_seen_at else public.studio_alert_incidents.first_seen_at end,
            last_seen_at = excluded.last_seen_at,
            last_notified_at = case when $6 then excluded.last_seen_at else public.studio_alert_incidents.last_notified_at end,
            resolved_at = case when public.studio_alert_incidents.status = 'resolved' then null else public.studio_alert_incidents.resolved_at end,
@@ -542,6 +589,7 @@ export async function recordIncident(
       // 租户归属由键命名空间推导（t.<tenant>.* → tenant；裸键 → platform），
       // 自定义策略等动态键的事故因此天然带租户身份。
       tenantScopeFromAlertKeyPublic(transition.key),
+      transition.firstSeenAt ?? transition.at,
     ],
   );
 }
@@ -777,7 +825,8 @@ export async function deliverTransition(
       transition.kind === 'resolved'
         ? '告警已恢复，可在看板确认事故状态。'
         : config.notification.actionGuide,
-    dashboardUrl: alertDetailDeepLink(config, transition.key),
+    dashboardUrl: transitionDetailLink(config, transition),
+    evidence: transition.evidence,
   };
   const result = await sendAlertWebhookWithRetry(
     url,

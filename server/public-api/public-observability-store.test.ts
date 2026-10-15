@@ -94,3 +94,16 @@ test('snapshot handoff carries deletion selectors and does not resurrect purged 
   assert.equal(result.skippedRuns, 1);
   assert.equal(await store.getRun('snapshot-tombstone-owner', restoredRunId), null);
 });
+
+test('snapshot restore cannot resurrect a tombstoned non-root trace or fragment session', async()=>{
+  const { PublicObservabilityStore }=await import('./public-observability-store.js');
+  const source=new PublicObservabilityStore(),owner='snapshot-fragment-owner',runId=`snapshot-fragment-${Date.now()}`;
+  await source.createRun(owner,'snapshot-fragment-key',{runId,traceId:'a'.repeat(32),projectId:'snapshot-project',environment:'test',service:'snapshot-service'});
+  await source.appendSpans({owner,keyId:'snapshot-fragment-key',runId,spans:[{traceId:'b'.repeat(32),spanId:'b'.repeat(16),startTime:Date.now(),endTime:Date.now()+1,attributes:{sessionRef:'snapshot-fragment-session'}}]});
+  for(const selector of [{traceId:'b'.repeat(32)},{sessionId:'snapshot-fragment-session'}]) {
+    const restored=new PublicObservabilityStore(),snapshot=source.exportSnapshot();
+    snapshot.tombstones=[{tombstoneId:'snapshot-fragment-tombstone',requestId:'snapshot-fragment-request',accountScopeId:owner,environment:'test',createdAt:Date.now(),...selector}];
+    assert.equal(restored.importSnapshot(snapshot).skippedRuns,1);
+    assert.equal(await restored.getRun(owner,runId),null);
+  }
+});

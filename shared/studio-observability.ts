@@ -1,3 +1,6 @@
+import { normalizeStudioTraceContent, type StudioTraceContent } from './studio-trace-content.js';
+import { resolveAiSessionBinding } from './ai-observability-semantics.js';
+
 /**
  * Studio-owned transport, resource, ingestion, and coverage contracts.
  * Canonical Moss span names and attributes remain owned by MOC upstream.
@@ -131,6 +134,8 @@ export interface StudioNormalizedTraceSpan {
   status: StudioOtelStatus;
   resource: StudioTraceResource;
   attributes: Record<string, string | number | boolean>;
+  /** Redacted native content, retained separately from low-sensitivity attributes. */
+  content?: StudioTraceContent;
   sampling: {
     decision: StudioSamplingDecision;
     policyVersion: string;
@@ -237,6 +242,7 @@ const SAFE_ATTRIBUTE_KEYS = new Set([
   'moss.observability.contract.version',
   'moss.run.id',
   'moss.session.id',
+  'rdk.session.id',
   'moss.turn.index',
   'moss.outcome',
   'moss.error.category',
@@ -385,7 +391,7 @@ function normalizeSafeAttributes(value: unknown): Record<string, string | number
   )) {
     if (!SAFE_ATTRIBUTE_KEYS.has(key)) continue;
     if (typeof raw === 'string') {
-      const normalized = text(raw);
+      const normalized = text(raw, ['moss.session.id', 'rdk.session.id', 'moss.run.id', 'sessionKey', 'runId'].includes(key) ? 200 : STUDIO_TRACE_ATTRIBUTE_MAX_LENGTH);
       if (normalized) result[key] = normalized;
     } else if (typeof raw === 'boolean') {
       result[key] = raw;
@@ -452,9 +458,17 @@ export function normalizeStudioTraceBatch(
     if (!runId && sourceSegment !== 'client') {
       return { ok: false, reason: 'missing_run_id', itemIndex };
     }
-    const sessionId = text(span.sessionId, 200);
+    const rawAttributes = span.attributes && typeof span.attributes === 'object' && !Array.isArray(span.attributes)
+      ? span.attributes as Record<string, unknown> : {};
+    const sessionBinding = resolveAiSessionBinding(rawAttributes, span.sessionId);
+    const sessionId = sessionBinding.sessionId;
+    const runAliasesConflict = ['moss.run.id', 'rdk.run.id', 'run.id', 'runId'].some(key =>
+      rawAttributes[key] !== undefined && rawAttributes[key] !== '' &&
+      (typeof rawAttributes[key] !== 'string' || rawAttributes[key].trim() !== runId));
     const clientOperationId = text(span.clientOperationId, 200);
     if (
+      sessionBinding.conflict || runAliasesConflict ||
+      (typeof span.runId === 'string' && span.runId.trim().length > 200) ||
       (runId && !OPAQUE_ID_RE.test(runId)) ||
       (sessionId && !OPAQUE_ID_RE.test(sessionId)) ||
       (clientOperationId && !OPAQUE_ID_RE.test(clientOperationId))
@@ -502,6 +516,7 @@ export function normalizeStudioTraceBatch(
     }
     const name = text(span.name, 100);
     if (!name) return { ok: false, reason: 'invalid_schema', itemIndex };
+    const content = normalizeStudioTraceContent(span.content);
     spans.push({
       traceId,
       spanId,
@@ -518,6 +533,7 @@ export function normalizeStudioTraceBatch(
       status,
       resource,
       attributes: normalizeSafeAttributes(span.attributes),
+      ...(content ? { content } : {}),
       sampling: {
         decision,
         policyVersion,

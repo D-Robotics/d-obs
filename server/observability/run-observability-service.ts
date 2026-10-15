@@ -6,6 +6,7 @@ import type {
   StudioTraceCoverageSegment,
   StudioTraceSurface,
 } from '../../shared/studio-observability.js';
+import { normalizeStudioTraceContent, type StudioTraceContent } from '../../shared/studio-trace-content.js';
 import { projectStudioTraceCoverage } from '../../shared/studio-trace-coverage.js';
 import {
   redactTelemetryPayload,
@@ -14,16 +15,20 @@ import {
 import {
   resolveObservabilityLocatorSecret,
   runDisplayRef,
+  scopedDisplayRef,
   verifyRunLocator,
   type ObservabilityAccessScope,
 } from './run-locator.js';
 import {
   PostgresStudioTraceReadAdapter,
   type StudioTraceReadAdapter,
+  type StudioReadTraceSpan,
   type TraceReadDb,
   type TraceReadResult,
 } from './trace-read-adapter.js';
 import { telemetryGovernanceProtectedReadsReady } from './governance-runtime-service.js';
+import { clientReportedStudioVersion } from '../telemetry-identity.js';
+import { readRunConversationContext, type RunConversationContext } from './run-conversation-context.js';
 
 type QueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number | null };
 export type RunObservabilityDb = TraceReadDb & {
@@ -70,6 +75,8 @@ export interface RunObservabilitySpanNode {
   sourceSegment: StudioNormalizedTraceSpan['sourceSegment'];
   attributes: Record<string, string | number | boolean>;
   orphan: boolean;
+  content: (StudioTraceContent & { availability: 'available' }) |
+    { availability: 'not_captured' | 'expired' | 'unavailable' };
 }
 
 export interface RunObservabilityTraceGroup {
@@ -104,6 +111,7 @@ export interface RunObservabilityCandidateSpan {
 
 export interface RunObservabilityDetail {
   schema: 'rdk.studio.run-observability.v1';
+  conversationContext: RunConversationContext;
   run: {
     runRef: string;
     environment: StudioDeploymentEnvironment;
@@ -222,6 +230,9 @@ function displayRef(
 ): string | null {
   const normalized = cleanText(value, 256);
   if (!normalized) return null;
+  if (kind === 'session' || kind === 'device') {
+    return scopedDisplayRef(kind, scope.accountScopeId, scope.environment, normalized);
+  }
   const digest = createHmac('sha256', createHash('sha256').update(refSecret()).digest())
     .update(`${kind}\0${scope.accountScopeId}\0${scope.environment}\0${normalized}`)
     .digest('hex')
@@ -250,7 +261,14 @@ function versionFrom(
   spans: StudioNormalizedTraceSpan[],
   key: 'studioVersion' | 'mossVersion' | 'mocVersion',
 ): string | null {
-  const fromSpan = spans.map((span) => cleanText(span.resource[key], 40)).find(Boolean);
+  // The unified store uses 0.0.0 for legacy resources that omitted versions.
+  // It must not override an actual Run producer version or turn missing MOC
+  // metadata into a reported incompatible contract (the list uses the same rule).
+  const reportedVersion = (value: unknown): string | null => {
+    const version = clientReportedStudioVersion(value);
+    return version === '0.0.0' ? null : version;
+  };
+  const fromSpan = spans.map((span) => reportedVersion(span.resource[key])).find(Boolean);
   if (fromSpan) return fromSpan;
   const factKey =
     key === 'studioVersion'
@@ -258,7 +276,7 @@ function versionFrom(
       : key === 'mossVersion'
         ? 'moss_version'
         : 'moc_version';
-  return cleanText(fact[factKey], 40) || null;
+  return reportedVersion(fact[factKey]);
 }
 
 function observedSegments(spans: StudioNormalizedTraceSpan[]): StudioTraceCoverageSegment[] {
@@ -383,9 +401,15 @@ function safeSummary(value: unknown): unknown | null {
   return result.ok ? result.value : null;
 }
 
+function canonicalSessionConflict(span: StudioReadTraceSpan, sessionId: string): boolean {
+  const canonical = span.canonicalSessionId || span.attributes['rdk.session.id'];
+  return Boolean(sessionId && canonical && canonical !== sessionId);
+}
+
 function mapTraceGroups(
   result: TraceReadResult,
   scope: { accountScopeId: string; environment: StudioDeploymentEnvironment },
+  sessionId: string,
 ): RunObservabilityTraceGroup[] {
   return result.fragments.map((fragment) => {
     const orderedSpans = [...fragment.spans].sort(
@@ -424,6 +448,7 @@ function mapTraceGroups(
                 ([key]) =>
                   key !== 'moss.run.id' &&
                   key !== 'moss.session.id' &&
+                  key !== 'rdk.session.id' &&
                   key !== 'moss.tool.call.id' &&
                   key !== 'rdk.client.operation.id',
               ),
@@ -452,6 +477,19 @@ function mapTraceGroups(
           sourceSegment: span.sourceSegment,
           attributes: attributes as Record<string, string | number | boolean>,
           orphan: missingParents.has(`${fragment.traceId}:${span.spanId}`),
+          content: (() => {
+            // Read-time redaction is defense in depth for legacy/malformed producers.
+            if (canonicalSessionConflict(span, sessionId) ||
+              fragment.integrity.some(issue => issue.code === 'identifier_conflict' && issue.spanId === span.spanId)) {
+              return { availability: 'unavailable' as const };
+            }
+            if (span.contentAvailability === 'expired') return { availability: 'expired' as const };
+            const content = normalizeStudioTraceContent(span.content);
+            return content ? { ...content, availability: 'available' as const } : {
+              availability: span.contentAvailability === 'unavailable'
+                ? 'unavailable' as const : 'not_captured' as const,
+            };
+          })(),
         };
       }),
       integrity: fragment.integrity.map((issue) => ({
@@ -755,6 +793,13 @@ export function createRunObservabilityService(deps: RunObservabilityServiceDepen
     const mocVersion = versionFrom(fact, spans, 'mocVersion');
     const observed = observedSegments(spans);
     const integrity = traceResult.fragments.flatMap((fragment) => fragment.integrity);
+    const sessionId = cleanText(fact.session_id, 200);
+    const sessionConflict = spans.some(span => canonicalSessionConflict(span, sessionId));
+    const conversationContext = await readRunConversationContext({
+      db: deps.db, scope, runId: verified.runId, sessionId,
+      startedAt: runStartIso, now: now(),
+      identifierConflict: sessionConflict || integrity.some(issue => issue.code === 'identifier_conflict'),
+    });
     const spanSamplingDecisions = new Set(spans.map((span) => span.sampling.decision));
     const samplingDecision = spanSamplingDecisions.has('retained')
       ? 'retained'
@@ -774,7 +819,7 @@ export function createRunObservabilityService(deps: RunObservabilityServiceDepen
       hasRunSummary: summaryResult.availability === 'available' && summaryResult.rows.length > 0,
       sampled: samplingDecision === 'dropped' ? false : undefined,
       queryFailed: !traceSettled.ok,
-      identifierConflict: integrity.some((issue) => issue.code === 'identifier_conflict'),
+      identifierConflict: sessionConflict || integrity.some((issue) => issue.code === 'identifier_conflict'),
       invalidParent: integrity.some((issue) => issue.code === 'orphan_parent'),
       multipleFragments: traceResult.fragments.length > 1,
       duplicateIdentity: integrity.some((issue) => issue.code === 'duplicate_identity'),
@@ -883,6 +928,7 @@ export function createRunObservabilityService(deps: RunObservabilityServiceDepen
       status: 'found',
       detail: {
         schema: 'rdk.studio.run-observability.v1',
+        conversationContext,
         run: {
           runRef,
           environment: scope.environment,
@@ -905,7 +951,7 @@ export function createRunObservabilityService(deps: RunObservabilityServiceDepen
           observedSegments: observed,
           truncated: traceResult.truncated,
         },
-        traces: mapTraceGroups(traceResult, scope),
+        traces: mapTraceGroups(traceResult, scope, sessionId),
         unboundCandidates: {
           basis: 'owner_and_time_window',
           spans: mapCandidateSpans(candidateResult.rows, scope, runStartMs),

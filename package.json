@@ -23,6 +23,7 @@
     "doctor": "node tools/d-obs-doctor.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test \"server/**/*.test.ts\"",
+    "test:vision-workshop": "node --import tsx --test server/monitoring/vision-workshop*.test.ts tools/vision-workshop-device-runner.test.mjs",
     "build": "tsc -p tsconfig.json --outDir dist --noEmit false && cp server/observability/otlp-trace.proto server/observability/otlp-metrics.proto server/observability/otlp-logs.proto dist/server/observability/",
     "build:clean": "rm -rf dist && npm run build",
     "smoke:otlp": "node tools/otlp-load-smoke.mjs"

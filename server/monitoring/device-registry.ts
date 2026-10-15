@@ -562,15 +562,18 @@ export async function claimDeviceCommands(deviceId: string, limit = 10): Promise
     [deviceId],
   );
   const claimable = await p.query(
-    `update public.studio_device_commands
-     set status = 'delivered', delivered_at = now()
-     where id in (
+    `with claimable as (
        select id from public.studio_device_commands
        where device_id = $1 and status = 'pending'
-       order by created_at
+       order by created_at, id
+       for update skip locked
        limit $2
      )
-     returning *`,
+     update public.studio_device_commands as command
+     set status = 'delivered', delivered_at = now()
+     from claimable
+     where command.id = claimable.id and command.status = 'pending'
+     returning command.*`,
     [deviceId, Math.max(1, Math.min(20, limit))],
   );
   return claimable.rows.map(rowToCommand);

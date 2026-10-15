@@ -47,8 +47,8 @@ test('租户视图不渲染平台专属的审计/通知表，全局视图才渲�
   const html = OPS_OBSERVABILITY_HTML;
   // 两张表必须包在 tenantScope 判定里：租户视图里它们结构性恒空。
   assert.ok(
-    /if\(o\.tenantScope\)\{root\.appendChild\(make\('div','notice'/.test(html),
-    '租赁视图应改渲染平台数据归属说明',
+    /if\(o\.tenantScope\)details\.appendChild\(make\('div','notice'/.test(html),
+    '租户视图应在诊断区渲染平台数据归属说明',
   );
   // 归属标签只在全局视图拼进事故副标题（租户视图里每条都是自己，属冗余）。
   assert.ok(html.includes("(o.tenantScope?'':(typeof alertKeyScopeLabel==='function'?alertKeyScopeLabel(item.key):''))"));

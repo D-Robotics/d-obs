@@ -15,6 +15,12 @@ import {
   resolveChatPrincipalAccountId,
 } from './observability-access-adapter.js';
 import { isOpsAdminRequest } from './observability-access.js';
+import { resolveObservabilityActionApprovalScopes } from './observability-action-access.js';
+import {
+  actionRegressionMarker,
+  ObservabilityActionRegressionError,
+  ObservabilityActionRegressionService,
+} from './observability-action-regression.js';
 import {
   applyActionVerification,
   claimObservabilityAction,
@@ -66,8 +72,8 @@ type ActionActor = {
   actorId: string;
   /** The authenticated principal's own scope; proposals are always written here. */
   accountScopeId: string;
-  /** Scope allowlist. Until an explicit cross-tenant entitlement is configured, this is own-only. */
-  allowedAccountScopeIds: readonly string[];
+  /** Scope allowlist for review/list/decision only; execution and other state changes remain own-only. */
+  reviewableAccountScopeIds: readonly string[];
   isSessionUser: boolean;
 };
 
@@ -79,6 +85,7 @@ type EvidenceValidationResult = Readonly<{
 
 export type ObservabilityActionRouterOptions = Readonly<{
   getPool?: () => Promise<ActionStorePool>;
+  regressionCases?: Pick<ObservabilityActionRegressionService, 'save' | 'get'>;
   getEventDetail?: (eventId: string) => Promise<OpsEventDetail | null>;
   getAlertConfig?: () => Promise<AlertConfig>;
   executeRemediation?: (
@@ -160,28 +167,28 @@ function resolveActionActor(req: Request): ActionActor | null {
   const accountScopeId = normalizeActionScope(accountId);
   if (!accountScopeId) return null;
   const actorId = cleanIdentity(user?.id || user?.email) || accountId;
-  // Keep the action API tenant-isolated while the entitlement model is being
-  // finalized: every request is authorized only for its authenticated scope.
-  // The shared governance decision makes that invariant explicit and prevents
-  // a future query from accidentally treating a client-supplied scope as an
-  // administrator grant.
+  // Cross-account approvals require explicit server grants to authentic SSO
+  // administrators. Proposals and signed evidence remain in the caller's own
+  // account; request body/query fields never supply an entitlement.
+  let approvalScopes: string[];
+  try { approvalScopes = resolveObservabilityActionApprovalScopes(user?.id, accountScopeId); }
+  catch { return null; } // malformed server configuration fails closed
   const governanceActor: TelemetryActor = {
     actorId,
-    role: 'account_owner',
+    role: approvalScopes.length > 1 ? 'telemetry_administrator' : 'account_owner',
     authenticatedAccountScopeId: accountScopeId,
-    entitledAccountScopeIds: [accountScopeId],
+    entitledAccountScopeIds: approvalScopes,
     permissions: [ACTION_GOVERNANCE_PERMISSION],
     authorizationRevision: actionAuthorizationRevision(req, actorId),
   };
-  const decision = authorizeTelemetryAccess(governanceActor, {
-    permission: ACTION_GOVERNANCE_PERMISSION,
-    selectedAccountScopeId: accountScopeId,
-  });
-  if (!decision.allowed) return null;
+  const decisions = approvalScopes.map(scope => authorizeTelemetryAccess(governanceActor, {
+    permission: ACTION_GOVERNANCE_PERMISSION, selectedAccountScopeId: scope,
+  }));
+  if (decisions.some(decision => !decision.allowed)) return null;
   return {
     actorId,
     accountScopeId,
-    allowedAccountScopeIds: [decision.accountScopeId],
+    reviewableAccountScopeIds: approvalScopes,
     isSessionUser: Boolean(user?.id),
   };
 }
@@ -279,13 +286,12 @@ async function validateEvidenceRefs(
       throw new Error('action_evidence_not_found');
     }
     // In a multi-tenant SSO request, an event with a known user correlation
-    // must belong to an explicitly authorized scope.  The current default
-    // allowlist contains only the authenticated scope; future entitlement
-    // configuration must flow through resolveActionActor rather than a body
-    // field. Missing correlation is rejected rather than widening a proof.
+    // must belong to the caller's own account. Approval entitlements permit
+    // reviewing/deciding existing actions, never creating proofs or proposals
+    // that relabel another account's evidence as the caller's own.
     if (isMultiUserWebDeployment()) {
       const allowedUserRefs = new Set(
-        actor.allowedAccountScopeIds.map((scope) =>
+        [actor.accountScopeId].map((scope) =>
           eventUserRef(scope.replace(/^studio:/, '')),
         ),
       );
@@ -365,6 +371,7 @@ export function createObservabilityActionRouter(
   options: ObservabilityActionRouterOptions = {},
 ): Router {
   const router = Router();
+  const regressionCases = options.regressionCases ?? new ObservabilityActionRegressionService();
 
   router.post(
     '/api/ops/observability/actions/evidence-proof',
@@ -412,13 +419,13 @@ export function createObservabilityActionRouter(
         const pool = await openActionPool(options);
         const actions = await listObservabilityActionsForScopes(
           pool,
-          [...actor.allowedAccountScopeIds],
+          [...actor.reviewableAccountScopeIds],
           Number(req.query.limit),
         );
         // Aggregate only: counts per origin, no per-user detail.
         const stats = await observabilityActionOriginStats(
           pool,
-          [...actor.allowedAccountScopeIds],
+          [...actor.reviewableAccountScopeIds],
         ).catch(() => []);
         res.setHeader('Cache-Control', 'no-store');
         res.json({ ok: true, actions, stats });
@@ -498,7 +505,7 @@ export function createObservabilityActionRouter(
         const action = await getObservabilityActionForScopes(
           await openActionPool(options),
           id,
-          [...actor.allowedAccountScopeIds],
+          [...actor.reviewableAccountScopeIds],
         );
         if (!action) {
           res.status(404).json({ ok: false, error: 'action_not_found' });
@@ -536,7 +543,7 @@ export function createObservabilityActionRouter(
         const source = await getObservabilityActionForScopes(
           pool,
           id,
-          [...actor.allowedAccountScopeIds],
+          [actor.accountScopeId],
         );
         if (!source) {
           res.status(404).json({ ok: false, error: 'action_not_found' });
@@ -610,7 +617,7 @@ export function createObservabilityActionRouter(
         const current = await getObservabilityActionForScopes(
           pool,
           id,
-          [...actor.allowedAccountScopeIds],
+          [actor.accountScopeId],
         );
         if (!current) {
           res.status(404).json({ ok: false, error: 'action_not_found' });
@@ -684,7 +691,7 @@ export function createObservabilityActionRouter(
         const current = await getObservabilityActionForScopes(
           pool,
           id,
-          [...actor.allowedAccountScopeIds],
+          [actor.accountScopeId],
         );
         if (!current) {
           res.status(404).json({ ok: false, error: 'action_not_found' });
@@ -756,21 +763,66 @@ export function createObservabilityActionRouter(
         const current = await getObservabilityActionForScopes(
           pool,
           id,
-          [...actor.allowedAccountScopeIds],
+          [actor.accountScopeId],
         );
         if (!current) {
           res.status(404).json({ ok: false, error: 'action_not_found' });
           return;
         }
-        const next = markActionRegression(current, cleanIdentity(body(req).marker, 160));
-        const persisted = await updateObservabilityAction(pool, next, current.status);
+        await ensureRemediationSchema(remediationPool(pool));
+        const run = current.execution?.runId
+          ? await getRemediationRun(remediationPool(pool), current.execution.runId)
+          : null;
+        // Save immutable, server-verified evidence before claiming it has joined
+        // the regression set. A client label is never a diagnosis ground truth.
+        const regressionCase = await regressionCases.save(actor.accountScopeId, current, run);
+        const marker = actionRegressionMarker(regressionCase);
+        const persisted = current.regressionMarker === marker ? current : await updateObservabilityAction(
+          pool, markActionRegression(current, marker), current.status,
+        );
         writeAudit('action_regression_marked', actor, persisted);
-        res.json({ ok: true, action: persisted });
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ ok: true, action: persisted, regressionCase: {
+          id: regressionCase.id, contentHash: regressionCase.contentHash,
+          exportUrl: `/api/ops/observability/actions/${id}/regression?download=1`,
+        } });
       } catch (error) {
         const code = safeErrorCode(error, 'regression_marker_rejected');
         res
-          .status(code === 'action_store_unavailable' ? 503 : 409)
+          .status(error instanceof ObservabilityActionRegressionError ? error.status : code === 'action_store_unavailable' ? 503 : 409)
           .json({ ok: false, error: code });
+      }
+    },
+  );
+
+  router.get(
+    '/api/ops/observability/actions/:id/regression',
+    requireActionAccess,
+    async (req, res) => {
+      const actor = resolveActionActor(req);
+      const id = safeActionId(req.params.id);
+      if (!actor) return;
+      if (!id || (req.query.download !== undefined && req.query.download !== '1')) {
+        res.status(400).json({ ok: false, error: 'invalid_action_regression_request' });
+        return;
+      }
+      try {
+        const current = await getObservabilityActionForScopes(await openActionPool(options), id, [actor.accountScopeId]);
+        if (!current) { res.status(404).json({ ok: false, error: 'action_not_found' }); return; }
+        const regressionCase = await regressionCases.get(actor.accountScopeId, id);
+        if (!regressionCase || current.regressionMarker !== actionRegressionMarker(regressionCase)) {
+          res.status(404).json({ ok: false, error: 'action_regression_case_not_found' });
+          return;
+        }
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        if (req.query.download === '1') {
+          res.setHeader('Content-Disposition', `attachment; filename="${regressionCase.id}.json"`);
+          res.json(regressionCase);
+        } else res.json({ ok: true, regressionCase });
+      } catch (error) {
+        res.status(error instanceof ObservabilityActionRegressionError ? error.status : 503)
+          .json({ ok: false, error: safeErrorCode(error, 'action_regression_store_unavailable') });
       }
     },
   );
@@ -796,7 +848,7 @@ async function transitionAction(
     const current = await getObservabilityActionForScopes(
       pool,
       id,
-      [...actor.allowedAccountScopeIds],
+      kind === 'decision' ? [...actor.reviewableAccountScopeIds] : [actor.accountScopeId],
     );
     if (!current) {
       res.status(404).json({ ok: false, error: 'action_not_found' });

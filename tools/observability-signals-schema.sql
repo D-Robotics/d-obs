@@ -171,6 +171,7 @@ create table if not exists public.studio_obs_dashboards (
   owner text not null,
   name text not null,
   spec jsonb not null,
+  visibility text not null default 'private' check (visibility in ('private', 'team')),
   position int not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -178,6 +179,10 @@ create table if not exists public.studio_obs_dashboards (
 
 create index if not exists studio_obs_dashboards_owner_idx
   on public.studio_obs_dashboards (owner, position);
+-- Existing deployments keep their private boards; only owners can publish them.
+alter table public.studio_obs_dashboards
+  add column if not exists visibility text not null default 'private'
+  check (visibility in ('private', 'team'));
 
 -- ===== 库面板（跨看板复用的面板定义；添加到看板 = 副本，v1 无引用联动） =====
 create table if not exists public.studio_obs_library_panels (

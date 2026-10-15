@@ -51,3 +51,9 @@ test('falls back to the credential owner as the account scope by default', async
   assert.equal(insert.params[0], 'public_collectorowner');
   assert.equal(insert.params[2], 'public_collectorowner');
 });
+
+
+test('a guarded span conflict reports failure instead of acknowledging an ignored write', async()=>{
+  assert.equal(await persistStudioTraceSpans({spans:[SPAN],ownerUserId:'public_conflict_owner',schemaInitialized:true,
+    pool:{query:async()=>({rows:[],rowCount:0})}}),false);
+});

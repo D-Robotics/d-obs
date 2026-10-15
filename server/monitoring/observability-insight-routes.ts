@@ -211,7 +211,8 @@ export function registerInsightRoutes(router: Router): void {
           archived: queryBoolean(query, 'archived'),
           limit: queryInteger(query, 'limit', 200, 1, 200),
         };
-        const inProcess = publicObservabilityStore.listObjects('*', filters);
+        const publicIndexView = await publicObservabilityStore.refreshOwnerIndex('*');
+        const inProcess = publicIndexView.listObjects('*', filters);
         const registered = await listRegisteredObjects().catch(() => [] as RegisteredObject[]);
         const objects = mergeRegisteredObjects(inProcess, registered, filters);
         res.setHeader('Cache-Control', 'no-store');
@@ -241,7 +242,8 @@ export function registerInsightRoutes(router: Router): void {
         const query = req.query as Record<string, unknown>;
         const windowMinutes = queryInteger(query, 'windowMinutes', 1_440, 1, 10_080);
         const windowEnd = Date.now();
-        const detail = publicObservabilityStore.getObject('*', objectId, {
+        const publicIndexView = await publicObservabilityStore.refreshOwnerIndex('*');
+        const detail = publicIndexView.getObject('*', objectId, {
           team: queryText(query, 'team', 120),
           objectType: queryText(query, 'objectType', 120),
           projectId: queryText(query, 'projectId', 120),

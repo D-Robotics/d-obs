@@ -10,7 +10,13 @@ import {
   normalizeBoardName,
   normalizeBoardPanel,
   normalizeBoardSpec,
+  normalizeBoardWriteSpec,
   parseBoardTemplate,
+  configureDashboardPoolForTest,
+  createBoard,
+  deleteBoard,
+  listBoards,
+  updateBoard,
 } from './dashboard-boards-store.js';
 
 test('normalizeBoardName：去 \\0、裁剪、120 上限，空值拒绝', () => {
@@ -83,6 +89,13 @@ test('normalizeBoardSpec：面板数量截到 48 且坏面板整体拒绝', () =
   assert.equal(normalizeBoardSpec({ panels: [{ title: 'ok', metric: 'm' }, 'garbage'] }), null);
 });
 
+test('API board edits reject more than 48 panels while legacy template normalization remains compatible', () => {
+  const panels = Array.from({ length: 49 }, (_, index) => ({ title: 'p' + index, metric: 'm' + index }));
+  assert.equal(normalizeBoardWriteSpec({ panels }), null);
+  assert.equal(normalizeBoardWriteSpec({ panels: panels.slice(0, 48) })?.panels.length, 48);
+  assert.equal(normalizeBoardSpec({ panels })?.panels.length, 48);
+});
+
 test('parseBoardTemplate：完整导出 / title 变体 / 裸 spec / 拒绝垃圾', () => {
   const spec = { windowMinutes: 1440, panels: [{ title: 'QPS', metric: 'rdk.qps', windowMinutes: null, chart: 'bar', width: 2 }] };
   assert.deepEqual(parseBoardTemplate({ kind: 'd-obs-board', version: 1, name: '核心看板', spec }), {
@@ -94,4 +107,66 @@ test('parseBoardTemplate：完整导出 / title 变体 / 裸 spec / 拒绝垃圾
   assert.equal(parseBoardTemplate({ name: '坏面板', spec: { panels: [{ title: '', metric: 'm' }] } }), null);
   assert.equal(parseBoardTemplate('{"trick": true}'), null);
   assert.equal(parseBoardTemplate(42), null);
+});
+
+test('query panel definitions preserve complete PromQL and optional presentation fields without changing legacy shapes', () => {
+  const expr = 'sum by (service) (rate(http_requests_total{service="$service",status=~"5.."}[$__rate_interval]))';
+  const panel = normalizeBoardPanel({ title: 'Errors', metric: '', source: 'prometheus', queries: [{ refId: 'A', expr, legendFormat: '{{service}}', instant: false }], unit: 'ops', reducer: 'avg' });
+  assert.ok(panel); assert.equal(panel.metric, ''); assert.equal(panel.queries?.[0].expr, expr); assert.equal(panel.unit, 'ops'); assert.equal(panel.reducer, 'avg');
+  const legacy = normalizeBoardPanel({ title: 'Legacy', metric: 'orders.total' });
+  assert.ok(legacy); for (const field of ['source', 'queries', 'unit', 'reducer']) assert.equal(Object.hasOwn(legacy, field), false);
+  assert.equal(normalizeBoardPanel({ title: 'p', metric: '', source: 'prometheus' }), null);
+  assert.equal(normalizeBoardPanel({ title: 'p', metric: 'm', source: 'remote' }), null);
+  assert.equal(normalizeBoardPanel({ title: 'p', metric: '', source: 'prometheus', queries: [{ refId: 'A', expr: 'up' }, { refId: 'A', expr: 'down' }] }), null);
+  assert.equal(normalizeBoardPanel({ title: 'p', metric: '', source: 'prometheus', queries: Array.from({ length: 9 }, (_, i) => ({ refId: 'Q' + i, expr: 'up' })) }), null);
+  assert.equal(normalizeBoardPanel({ title: 'p', metric: 'm', reducer: 'unsafe' }), null);
+});
+
+test('board variable definitions preserve supported types and reject duplicate, reserved and oversized definitions', () => {
+  const variables = [{ name: 'service', label: '服务', type: 'custom', value: 'checkout', options: ['checkout', 'payments'] }, { name: 'route', label: '路由', type: 'textbox', value: '/orders' }];
+  assert.deepEqual(normalizeBoardSpec({ panels: [], variables })?.variables, variables);
+  assert.equal(Object.hasOwn(normalizeBoardSpec({ panels: [] })!, 'variables'), false);
+  for (const invalid of [[variables[0], variables[0]], [{ ...variables[0], name: '__interval' }], [{ ...variables[0], type: 'query' }], Array.from({ length: 21 }, (_, i) => ({ ...variables[0], name: 'v' + i }))]) assert.equal(normalizeBoardSpec({ variables: invalid }), null);
+});
+
+test('team boards are readable across owners while all writes remain owner scoped and copies default private', async () => {
+  const rows: Array<Record<string, unknown>> = [];
+  const seen: string[] = [];
+  configureDashboardPoolForTest({ query: async (sql, params = []) => {
+    seen.push(sql);
+    if (sql.startsWith('select count')) return { rows: [{ total: rows.filter((row) => row.owner === params[0]).length }] };
+    if (sql.startsWith('select coalesce')) return { rows: [{ next: rows.length }] };
+    if (sql.startsWith('insert into public.studio_obs_dashboards (owner, name')) {
+      const row = { id: 'board-' + rows.length, owner: params[0], name: params[1], spec: JSON.parse(String(params[2])), position: params[3], visibility: params[4], created_at: '', updated_at: '' }; rows.push(row); return { rows: [row] };
+    }
+    if (sql.startsWith('select *')) {
+      assert.match(sql, /owner = \$1/);
+      return { rows: rows.filter((row) => row.owner === params[0] || (sql.includes("visibility = 'team'") && row.visibility === 'team')) };
+    }
+    if (sql.startsWith('update public.studio_obs_dashboards set')) {
+      assert.match(sql, /where owner = \$\d+ and id = \$\d+/);
+      const row = rows.find((row) => row.owner === params.at(-2) && row.id === params.at(-1));
+      if (!row) return { rows: [] };
+      for (const match of sql.matchAll(/(visibility|name|spec) = \$(\d+)/g)) row[match[1]] = match[1] === 'spec' ? JSON.parse(String(params[Number(match[2]) - 1])) : params[Number(match[2]) - 1];
+      return { rows: [row] };
+    }
+    if (sql.startsWith('delete from public.studio_obs_dashboards')) {
+      assert.match(sql, /where owner = \$1 and id = \$2/);
+      const index = rows.findIndex((row) => row.owner === params[0] && row.id === params[1]);
+      if (index < 0) return { rows: [], rowCount: 0 }; rows.splice(index, 1); return { rows: [], rowCount: 1 };
+    }
+    return { rows: [] };
+  } });
+  try {
+    const privateBoard = await createBoard({ owner: 'alice', name: 'Private' });
+    const shared = await createBoard({ owner: 'alice', name: 'Shared', visibility: 'team' });
+    assert.equal(privateBoard.visibility, 'private'); assert.equal(privateBoard.editable, true);
+    const bobView = await listBoards('bob'); assert.equal(bobView.length, 1); assert.equal(bobView[0].id, shared.id); assert.equal(bobView[0].editable, false); assert.equal(Object.hasOwn(bobView[0], 'owner'), false);
+    assert.equal(await updateBoard('bob', shared.id, { name: 'Takeover', visibility: 'private' }), null);
+    assert.equal(await deleteBoard('bob', shared.id), false);
+    const copy = await createBoard({ owner: 'bob', name: 'My copy', spec: shared.spec }); assert.equal(copy.visibility, 'private'); assert.equal(copy.editable, true);
+    await updateBoard('alice', shared.id, { visibility: 'private' });
+    assert.deepEqual((await listBoards('bob')).map((row) => row.id), [copy.id]);
+    assert.ok(seen.some((sql) => sql.includes('add column if not exists visibility')));
+  } finally { configureDashboardPoolForTest(null); }
 });

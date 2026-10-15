@@ -1,3 +1,4 @@
+import { purgePublicObservabilityIndex, publicObservabilityAccountBarrierKey } from '../public-api/public-observability-pg-index.js';
 import type { StudioDeploymentEnvironment } from '../../shared/studio-observability.js';
 import {
   REQUIRED_TELEMETRY_PURGE_TARGETS,
@@ -196,10 +197,13 @@ export class PostgresTelemetryGovernanceRepository implements TombstoneStore, De
     }
     const selector = cleanSelector(input);
     const result = await this.db.query(
-      `insert into public.studio_telemetry_tombstones
+      `with public_index_barrier as materialized (
+         select pg_advisory_xact_lock(hashtextextended($10::text,0))
+       )
+       insert into public.studio_telemetry_tombstones
          (request_id, account_scope_id, environment, user_id, run_id,
           trace_id, session_id, grant_id, created_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,to_timestamp($9 / 1000.0))
+       select $1,$2,$3,$4,$5,$6,$7,$8,to_timestamp($9 / 1000.0) from public_index_barrier
        on conflict (account_scope_id, environment, request_id) do update
          set request_id = excluded.request_id
        returning tombstone_id, request_id, account_scope_id, environment,
@@ -214,6 +218,7 @@ export class PostgresTelemetryGovernanceRepository implements TombstoneStore, De
         selector.sessionId ?? null,
         selector.grantId ?? null,
         input.createdAt,
+        publicObservabilityAccountBarrierKey(input.environment, accountScopeId),
       ],
     );
     const tombstone = result.rows[0] ? tombstoneFromRow(result.rows[0]) : null;
@@ -483,6 +488,7 @@ export class PostgresPrimaryTelemetryPurgeAdapter implements TelemetryPurgeAdapt
          and $5::text is null and $7::text is null`,
       params,
     );
+    await purgePublicObservabilityIndex(this.db, tombstone);
   }
 }
 

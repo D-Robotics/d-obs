@@ -14,7 +14,9 @@ import { sanitizeOpsSummary } from './ops-event-store.js';
 import { getRunObservability, RunObservabilityStoreUnavailableError } from '../observability/run-observability-service.js';
 import { TelemetryAuditUnavailableError } from '../observability/governance-audit.js';
 import { createCentralPostgresTelemetryAuditGuard } from '../observability/governance-postgres-audit-sink.js';
+import { registerSessionTraceRoutes } from './observability-session-trace-routes.js';
 export function registerTraceRoutes(router: Router): void {
+  registerSessionTraceRoutes(router);
   /**
    * Scoped native Agent Run detail.  The locator is an AEAD token issued by
    * the server (the overview listing is the only producer); this endpoint

@@ -1,7 +1,11 @@
+import { registerCollectionWorkspaceRoutes } from './collection-workspace-routes.js';
+import { registerRsiLearningRoutes } from './rsi-learning-routes.js';
+import { registerRsiFailureRoutes } from './rsi-failure-routes.js';
 /**
  * 生产可观测看板 API。数据是跨租户聚合运维信号，因此复用增长看板的运营 allowlist：
  * web-cloud 仅运营账号或后台 token 可见，普通租户不能读取。
  */
+import { registerPluginRoutes } from './plugin-routes.js';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -108,6 +112,9 @@ import {
   type StudioAgentEnvironment,
 } from '../agent/studio-agent-env.js';
 import { createObservabilityActionRouter } from './observability-action-routes.js';
+import { registerGrafanaAssistantRoutes } from './grafana-assistant-routes.js';
+import { registerPlatformOperations } from './platform-operations.js';
+import { PLATFORM_OPERATION_METADATA } from './platform-operation-metadata.js';
 import {
   hasInvalidAdminToken,
   hasInvalidTenantToken,
@@ -154,6 +161,13 @@ import {
   tenantScopeGate,
 } from './observability-route-kit.js';
 import { registerSignalsRoutes } from './observability-signals-routes.js';
+import { registerSshLogRoutes } from './ssh-log-routes.js';
+import { registerRdkLogRoutes } from './rdk-log-routes.js';
+import { registerVisionWorkshopRoutes } from './vision-workshop-routes.js';
+import { registerEdgeLlmRoutes } from './edge-llm-routes.js';
+import { renderEdgeLlmPage } from './edge-llm-page.js';
+import { registerDataCenterRoutes } from './data-center-routes.js';
+import { registerDataCenterVisionBridge } from './data-center-vision-bridge.js';
 import { registerStrategyRoutes } from './alert-strategy-routes.js';
 import { registerDatabaseRoutes } from './observability-database-routes.js';
 import { registerInsightRoutes } from './observability-insight-routes.js';
@@ -161,6 +175,7 @@ import { registerTraceRoutes } from './observability-trace-routes.js';
 import { registerTenantRoutes } from './observability-tenant-routes.js';
 import { registerModelPoolRoutes } from './observability-model-pool-routes.js';
 import { registerSearchRoutes } from './observability-search-routes.js';
+import { registerAlertEvidenceRoutes } from './studio-alert-evidence-routes.js';
 export { isOpsAdminRequest } from './observability-access.js';
 export { isProtectedAgentFrontendModel } from './observability-route-kit.js';
 let configWriteQueue: Promise<void> = Promise.resolve();
@@ -400,9 +415,22 @@ export function createOpsObservabilityRouter(): Router {
     res.status(204).end();
   });
 
+  registerPluginRoutes(router);
   registerSignalsRoutes(router);
+  registerGrafanaAssistantRoutes(router);
+  registerSshLogRoutes(router);
+  registerRdkLogRoutes(router);
+  registerVisionWorkshopRoutes(router);
+  registerEdgeLlmRoutes(router);
+  router.get('/ops-observability/edge-llm', (_req, res) => res.type('html').send(renderEdgeLlmPage()));
+  registerDataCenterRoutes(router);
+  registerDataCenterVisionBridge(router);
+  registerCollectionWorkspaceRoutes(router);
+  registerRsiLearningRoutes(router);
+  registerRsiFailureRoutes(router);
   registerStrategyRoutes(router);
   registerSearchRoutes(router);
+  registerAlertEvidenceRoutes(router);
 
   // 账号行为视角（只读聚合，平台管理员专用：跨账号行为数据属运营审计面，
   // 租户组员/探针 token 不开放——requireObservabilityAccess 的管理员闸门收敛）。
@@ -461,15 +489,14 @@ export function createOpsObservabilityRouter(): Router {
   // operations namespace but do not depend on the removed Moss runtime.
   router.use(createObservabilityActionRouter());
 
-  // C1：Langfuse 公开看板嵌入。URL 来自服务端环境变量（运营可控），仅允许
-  // http(s)；未配置时页内显示引导而非空 iframe。
+  // Optional external dashboard; native Agent traces do not depend on Langfuse.
   const langfuseDashboardEmbed = (): string => {
     const url = String(process.env.STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL ?? '').trim();
     if (!/^https?:\/\//i.test(url)) {
-      return '<div class="notice">尚未配置 Langfuse 公开看板，外部调用树暂不可用；本地低敏链路仍可在「运行证据链」查看。若要启用外部看板，请在 Langfuse 项目里将 Dashboard 设为 Public，然后配置 <code>STUDIO_LANGFUSE_PUBLIC_DASHBOARD_URL</code> 并重启服务。</div>';
+      return '';
     }
     const safeUrl = url.replace(/"/g, '&quot;');
-    return `<iframe src="${safeUrl}" title="Langfuse Agent 追踪看板" loading="lazy" style="width:100%;height:72vh;border:1px solid rgba(148,163,184,.25);border-radius:12px;background:#fff"></iframe>`;
+    return `<details class="detail-sections"><summary class="detail-summary">Langfuse 外部看板</summary><iframe src="${safeUrl}" title="Langfuse Agent 追踪看板" loading="lazy" style="width:100%;height:72vh;border:1px solid rgba(148,163,184,.25);border-radius:12px;background:#fff"></iframe></details>`;
   };
 
   // HTML 壳本身不含任何运维数据，允许直接打开；真实数据 API 仍由下面的运营权限门控保护。
@@ -1104,5 +1131,7 @@ export function createOpsObservabilityRouter(): Router {
     },
   );
 
+  // Publish the reviewed catalog only after all original HTTP handlers are mounted.
+  registerPlatformOperations(router, PLATFORM_OPERATION_METADATA);
   return router;
 }

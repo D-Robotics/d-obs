@@ -1,0 +1,12 @@
+[Unit]
+Description=d-obs data center consistent file snapshot
+After=d-obs.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+EnvironmentFile=/etc/d-obs-data-center.env
+ExecStart=/opt/node-v22.19.0-linux-x64/bin/node /opt/d-obs/current/tools/data-center-backup.mjs
+TimeoutStartSec=180
+Nice=10

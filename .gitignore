@@ -7,3 +7,6 @@ output/
 ops/prometheus/rules/.metrics-token
 dist-server-build/
 node_modules
+.DS_Store
+.codex/artifacts/
+__pycache__/

@@ -1,9 +1,10 @@
 import { normalizeStudioTraceSpans, type StudioTraceSpan } from '../../shared/studio-tracing.js';
 import type { StudioDeploymentEnvironment } from '../../shared/studio-observability.js';
+import { resolveAiSessionBinding } from '../../shared/ai-observability-semantics.js';
 import { ensureUnifiedStudioTraceSchema } from './studio-trace-schema.js';
 
 type PgQueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number | null };
-type Pool = { query: (text: string, params?: unknown[]) => Promise<PgQueryResult> };
+type Pool = { query: (text: string, params?: unknown[]) => Promise<PgQueryResult>; on?(event: 'error', listener: (error: Error) => void): void; end?(): Promise<void> };
 
 function centralDbUrl(): string {
   return String(process.env.RDK_CHAT_CREDITS_DB_URL ?? '').trim();
@@ -44,9 +45,11 @@ async function pool(): Promise<Pool> {
   if (!poolReady) {
     poolReady = (async () => {
       const pgMod = (await import('pg' as string)) as {
-        default: { Pool: new (cfg: { connectionString: string; max?: number }) => Pool };
+        default: { Pool: new (cfg: { connectionString: string; max?: number; connectionTimeoutMillis?: number; statement_timeout?: number; lock_timeout?: number }) => Pool };
       };
-      return new pgMod.default.Pool({ connectionString: centralDbUrl(), max: 2 });
+      const p = new pgMod.default.Pool({ connectionString: centralDbUrl(), max: 2, connectionTimeoutMillis: 3_000, statement_timeout: 3_000, lock_timeout: 3_000 });
+      p.on?.('error', () => console.warn('[studio-trace-store] idle PostgreSQL connection failed'));
+      return p;
     })().catch((error) => {
       poolReady = null;
       throw error;
@@ -69,10 +72,14 @@ export async function persistStudioTraceSpans(input: {
   spans: StudioTraceSpan[];
   ownerUserId: string | null | undefined;
   runId?: string;
+  /** Authenticated/producer-declared conversation identity; never inferred from time. */
+  sessionId?: string;
   /** Optional authenticated account attribution; defaults to the owner. */
   accountScopeId?: string;
   /** Test seam; production always uses the bounded central pool. */
   pool?: Pool;
+  /** A transaction owner has already committed the schema migration before acquiring entity locks. */
+  schemaInitialized?: boolean;
 }): Promise<boolean> {
   const ownerUserId = String(input.ownerUserId ?? '')
     .trim()
@@ -82,19 +89,30 @@ export async function persistStudioTraceSpans(input: {
     .trim()
     .slice(0, 200);
   if (!ownerUserId || !isStudioTraceStoreConfigured()) return false;
+  const sessionByIdentity = new Map<string, string | undefined>();
+  for (const span of input.spans) {
+    const binding = resolveAiSessionBinding(span.attributes, input.sessionId);
+    if (binding.conflict) return false;
+    const identity = `${span.traceId}:${span.spanId}`;
+    if (sessionByIdentity.has(identity) && sessionByIdentity.get(identity) !== binding.sessionId) {
+      return false;
+    }
+    sessionByIdentity.set(identity, binding.sessionId);
+  }
   const spans = normalizeStudioTraceSpans(input.spans, {
     ...(forcedRunId ? { runId: forcedRunId } : {}),
   });
   if (!spans.length) return false;
   try {
     const p = input.pool ?? (await pool());
-    await ensureSchema(p);
+    if (!input.schemaInitialized) await ensureSchema(p);
     const environment = resolveStudioTraceStoreEnvironment();
     const rows = spans.map((span) => ({
       trace_id: span.traceId,
       span_id: span.spanId,
       parent_span_id: span.parentSpanId || null,
       run_id: forcedRunId || span.runId,
+      session_id: sessionByIdentity.get(`${span.traceId}:${span.spanId}`) ?? null,
       source: span.source,
       source_segment: span.source === 'client' ? 'client' : 'moss',
       name: span.name,
@@ -104,20 +122,21 @@ export async function persistStudioTraceSpans(input: {
       status_message: span.statusMessage || null,
       attributes: span.attributes,
     }));
-    await p.query(
+    const persisted = await p.query(
       `insert into public.studio_trace_spans
-         (account_scope_id, environment, trace_id, span_id, parent_span_id, run_id,
+         (account_scope_id, environment, trace_id, span_id, parent_span_id, run_id, session_id,
           owner_user_id, source, source_segment, name, start_time_ms, end_time_ms,
           status, status_message, attributes)
-       select $1, $2, x.trace_id, x.span_id, x.parent_span_id, x.run_id,
+       select $1, $2, x.trace_id, x.span_id, x.parent_span_id, x.run_id, x.session_id,
               $3, x.source, x.source_segment, x.name, x.start_time_ms,
               x.end_time_ms, x.status, x.status_message, x.attributes
        from jsonb_to_recordset($4::jsonb) as x(
-         trace_id text, span_id text, parent_span_id text, run_id text,
+         trace_id text, span_id text, parent_span_id text, run_id text, session_id text,
          source text, source_segment text, name text, start_time_ms bigint,
          end_time_ms bigint, status text, status_message text, attributes jsonb
        )
        on conflict (account_scope_id, environment, trace_id, span_id) do update set
+         session_id = coalesce(public.studio_trace_spans.session_id, excluded.session_id),
          parent_span_id = excluded.parent_span_id,
          start_time_ms = least(public.studio_trace_spans.start_time_ms, excluded.start_time_ms),
          end_time_ms = greatest(public.studio_trace_spans.end_time_ms, excluded.end_time_ms),
@@ -126,10 +145,14 @@ export async function persistStudioTraceSpans(input: {
          attributes = public.studio_trace_spans.attributes || excluded.attributes
        where public.studio_trace_spans.owner_user_id = excluded.owner_user_id
          and public.studio_trace_spans.run_id = excluded.run_id
-         and public.studio_trace_spans.source = excluded.source`,
+         and (public.studio_trace_spans.session_id is null or excluded.session_id is null
+              or public.studio_trace_spans.session_id = excluded.session_id)
+         and public.studio_trace_spans.source = excluded.source
+         and public.studio_trace_spans.canonical_hash is null
+       returning span_id`,
       [accountScopeId, environment, ownerUserId, JSON.stringify(rows)],
     );
-    return true;
+    return Number(persisted.rowCount ?? persisted.rows.length) === rows.length;
   } catch (error) {
     if (process.env.RDK_CENTRAL_TELEMETRY_LOG_ERRORS === '1') {
       console.warn(
@@ -146,6 +169,8 @@ export async function getStudioTraceSpansForRun(input: {
   ownerUserId: string;
   environment?: 'production' | 'staging' | 'development' | 'test';
   limit?: number;
+  /** Index authority already initialized the dependent trace schema. */
+  schemaInitialized?: boolean;
 }): Promise<StudioTraceSpan[] | null> {
   const runId = String(input.runId ?? '')
     .trim()
@@ -155,7 +180,7 @@ export async function getStudioTraceSpansForRun(input: {
     .slice(0, 256);
   if (!runId || !ownerUserId || !isStudioTraceStoreConfigured()) return null;
   const p = await pool();
-  await ensureSchema(p);
+  if (!input.schemaInitialized) await ensureSchema(p);
   const environment = input.environment ?? resolveStudioTraceStoreEnvironment();
   const result = await p.query(
     `select trace_id, span_id, parent_span_id, run_id, source, name,
@@ -197,4 +222,10 @@ export async function getStudioTraceSpansForRun(input: {
     { runId, max: 64 },
   );
   return spans.length ? spans : null;
+}
+
+
+export async function closeStudioTraceStoreForTest(): Promise<void> {
+  if (poolReady) await (await poolReady).end?.();
+  poolReady = null;
 }

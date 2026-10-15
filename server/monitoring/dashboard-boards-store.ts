@@ -8,6 +8,8 @@
 
 export const BOARD_PANEL_CHARTS = ['line', 'bar', 'stat', 'table'] as const;
 export type BoardPanelChart = (typeof BOARD_PANEL_CHARTS)[number];
+export type BoardPanelQuery = { refId: string; expr: string; legendFormat?: string; instant?: boolean };
+export type BoardVariable = { name: string; label: string; type: 'custom' | 'textbox'; value: string; options?: string[] };
 
 export type BoardPanel = {
   title: string;
@@ -22,6 +24,11 @@ export type BoardPanel = {
   critValue: number | null;
   /** 链接式库面板：非空时该面板由库面板派生，库面板更新会自动同步此定义 */
   libraryId: string | null;
+  /** Omitted fields retain the original OTLP metric panel contract. */
+  source?: 'otlp' | 'prometheus';
+  queries?: BoardPanelQuery[];
+  unit?: string;
+  reducer?: 'last' | 'sum' | 'avg' | 'min' | 'max';
 };
 
 export type BoardSpec = {
@@ -31,6 +38,7 @@ export type BoardSpec = {
   /** 看板变量筛选：按 series.labels.service 过滤全部面板（空串 = 全部） */
   filters: { service: string } | null;
   panels: BoardPanel[];
+  variables?: BoardVariable[];
 };
 
 export type BoardRecord = {
@@ -40,6 +48,8 @@ export type BoardRecord = {
   position: number;
   createdAt: string;
   updatedAt: string;
+  visibility: 'private' | 'team';
+  editable: boolean;
 };
 
 export const BOARD_WINDOW_MINUTES_MIN = 5;
@@ -75,7 +85,29 @@ export function normalizeBoardPanel(value: unknown): BoardPanel | null {
   const input = value as Record<string, unknown>;
   const title = cleanText(input.title, 120);
   const metric = String(input.metric ?? '').trim();
-  if (!title || !METRIC_PATTERN.test(metric)) return null;
+  if (!title || (input.source != null && input.source !== 'otlp' && input.source !== 'prometheus')) return null;
+  if (input.source !== 'prometheus' && !METRIC_PATTERN.test(metric)) return null;
+  if (input.source === 'prometheus' && metric && !METRIC_PATTERN.test(metric)) return null;
+  let queries: BoardPanelQuery[] | undefined;
+  if (input.queries != null) {
+    if (!Array.isArray(input.queries) || input.queries.length > 8) return null;
+    queries = [];
+    const refs = new Set<string>();
+    for (const raw of input.queries) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+      const query = raw as Record<string, unknown>;
+      const refId = String(query.refId ?? '').trim();
+      const expr = String(query.expr ?? '').trim();
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,31}$/.test(refId) || refs.has(refId) || !expr || expr.length > 2000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(expr)) return null;
+      if (query.legendFormat != null && (typeof query.legendFormat !== 'string' || query.legendFormat.length > 200)) return null;
+      if (query.instant != null && typeof query.instant !== 'boolean') return null;
+      refs.add(refId);
+      queries.push({ refId, expr, ...(query.legendFormat != null ? { legendFormat: query.legendFormat as string } : {}), ...(query.instant != null ? { instant: query.instant as boolean } : {}) });
+    }
+  }
+  if (input.source === 'prometheus' && !queries?.length && !metric) return null;
+  if (input.reducer != null && !['last', 'sum', 'avg', 'min', 'max'].includes(String(input.reducer))) return null;
+  if (input.unit != null && (typeof input.unit !== 'string' || input.unit.length > 80)) return null;
   const windowMinutes = input.windowMinutes == null ? null : clampWindow(input.windowMinutes);
   if (input.windowMinutes != null && windowMinutes == null) return null;
   const chart = BOARD_PANEL_CHARTS.includes(input.chart as BoardPanelChart)
@@ -92,7 +124,33 @@ export function normalizeBoardPanel(value: unknown): BoardPanel | null {
     warnValue: parseThreshold(input.warnValue),
     critValue: parseThreshold(input.critValue),
     libraryId,
+    ...(input.source != null ? { source: input.source as 'otlp' | 'prometheus' } : {}),
+    ...(queries !== undefined ? { queries } : {}),
+    ...(input.unit != null ? { unit: cleanText(input.unit, 80) } : {}),
+    ...(input.reducer != null ? { reducer: input.reducer as BoardPanel['reducer'] } : {}),
   };
+}
+
+function parseBoardVariables(value: unknown): BoardVariable[] | null {
+  if (!Array.isArray(value) || value.length > 20) return null;
+  const names = new Set<string>();
+  const variables: BoardVariable[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const input = raw as Record<string, unknown>;
+    const name = String(input.name ?? '').trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name) || name.startsWith('__') || names.has(name)) return null;
+    if (input.type !== 'custom' && input.type !== 'textbox') return null;
+    if (typeof input.value !== 'string' || input.value.length > 500 || /[\u0000-\u001f\u007f]/.test(input.value)) return null;
+    let options: string[] | undefined;
+    if (input.options != null) {
+      if (!Array.isArray(input.options) || input.options.length > 100 || input.options.some((item) => typeof item !== 'string' || item.length > 500 || /[\u0000-\u001f\u007f]/.test(item))) return null;
+      options = [...new Set(input.options as string[])];
+    }
+    names.add(name);
+    variables.push({ name, label: cleanText(input.label ?? name, 120) || name, type: input.type, value: input.value, ...(options !== undefined ? { options } : {}) });
+  }
+  return variables;
 }
 
 /** 绝对时间范围：非法/超跨度一律剥离为 null（不因坏 range 拒绝整个 spec）。 */
@@ -129,7 +187,18 @@ export function normalizeBoardSpec(value: unknown, nowMs: number = Date.now()): 
     if (!panel) return null;
     panels.push(panel);
   }
-  return { windowMinutes, range: parseBoardRange(input.range, nowMs), filters: parseBoardFilters(input.filters), panels };
+  const variables = input.variables == null ? undefined : parseBoardVariables(input.variables);
+  if (variables === null) return null;
+  return { windowMinutes, range: parseBoardRange(input.range, nowMs), filters: parseBoardFilters(input.filters), panels, ...(variables !== undefined ? { variables } : {}) };
+}
+
+/** API edits must reject overflow, rather than reporting a silently truncated save. */
+export function normalizeBoardWriteSpec(value: unknown, nowMs: number = Date.now()): BoardSpec | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const panels = (value as Record<string, unknown>).panels;
+    if (Array.isArray(panels) && panels.length > BOARD_PANELS_MAX) return null;
+  }
+  return normalizeBoardSpec(value, nowMs);
 }
 
 /** 看板名：非空、去 \0、≤120 字符；不合法返回 null。 */
@@ -160,7 +229,13 @@ type Pool = {
 };
 
 let poolReady: Promise<Pool> | null = null;
+let testPool: Pool | null = null;
+export function configureDashboardPoolForTest(value: Pool | null): void {
+  testPool = value;
+  schemaReady = null;
+}
 async function pool(): Promise<Pool> {
+  if (testPool) return testPool;
   const connectionString = String(process.env.RDK_CHAT_CREDITS_DB_URL ?? '').trim();
   if (!connectionString) throw new Error('central database is not configured');
   if (!poolReady) {
@@ -187,6 +262,7 @@ create table if not exists public.studio_obs_dashboards (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+alter table public.studio_obs_dashboards add column if not exists visibility text not null default 'private';
 create index if not exists studio_obs_dashboards_owner_idx
   on public.studio_obs_dashboards (owner, position);
 `;
@@ -229,7 +305,7 @@ async function ensureSchema(p: Pool): Promise<void> {
   await schemaReady;
 }
 
-function rowToBoard(row: Record<string, unknown>): BoardRecord {
+function rowToBoard(row: Record<string, unknown>, actor: string): BoardRecord {
   const spec = normalizeBoardSpec(row.spec);
   return {
     id: String(row.id ?? ''),
@@ -238,6 +314,8 @@ function rowToBoard(row: Record<string, unknown>): BoardRecord {
     position: Number(row.position ?? 0),
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at ?? ''),
     updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at ?? ''),
+    visibility: row.visibility === 'team' ? 'team' : 'private',
+    editable: String(row.owner ?? '') === actor,
   };
 }
 
@@ -245,19 +323,36 @@ export async function listBoards(owner: string): Promise<BoardRecord[]> {
   const p = await pool();
   await ensureSchema(p);
   const result = await p.query(
-    `select * from public.studio_obs_dashboards where owner = $1 order by position, created_at limit 100`,
+    `select * from public.studio_obs_dashboards where owner = $1 or visibility = 'team'
+     order by (owner = $1) desc, position, created_at limit 100`,
     [owner],
   );
-  return result.rows.map(rowToBoard);
+  return result.rows.map((row) => rowToBoard(row, owner));
+}
+
+/** Only authenticated stable identifiers and trusted session emails may claim legacy rows. */
+export async function migrateDashboardOwner(legacyOwners: string[], stableOwner: string): Promise<void> {
+  const aliases = [...new Set(legacyOwners)].filter((owner) => owner && owner !== stableOwner && owner !== 'admin-token' && owner !== 'ops-admin' && !owner.startsWith('sso:'));
+  if (!aliases.length) return;
+  const p = await pool();
+  await ensureSchema(p);
+  await p.query('update public.studio_obs_dashboards set owner = $1 where owner = any($2::text[])', [stableOwner, aliases]);
+  try {
+    await p.query('update public.studio_obs_library_panels set owner = $1 where owner = any($2::text[])', [stableOwner, aliases]);
+  } catch (error) {
+    if ((error as { code?: string }).code !== '42P01') throw error;
+  }
 }
 
 export async function createBoard(input: {
   owner: string;
   name: string;
   spec?: BoardSpec;
+  visibility?: 'private' | 'team';
 }): Promise<BoardRecord> {
   const p = await pool();
   await ensureSchema(p);
+  if (input.visibility != null && input.visibility !== 'private' && input.visibility !== 'team') throw new Error('invalid_board_visibility');
   const countResult = await p.query(
     `select count(*)::int as total from public.studio_obs_dashboards where owner = $1`,
     [input.owner],
@@ -272,22 +367,27 @@ export async function createBoard(input: {
   const position = Math.trunc(Number(positionRow.rows[0]?.next ?? 0));
   const spec = input.spec ?? DEFAULT_BOARD_SPEC;
   const result = await p.query(
-    `insert into public.studio_obs_dashboards (owner, name, spec, position)
-     values ($1, $2, $3::jsonb, $4) returning *`,
-    [input.owner, input.name, JSON.stringify(spec), position],
+    `insert into public.studio_obs_dashboards (owner, name, spec, position, visibility)
+     values ($1, $2, $3::jsonb, $4, $5) returning *`,
+    [input.owner, input.name, JSON.stringify(spec), position, input.visibility ?? 'private'],
   );
-  return rowToBoard(result.rows[0] ?? {});
+  return rowToBoard(result.rows[0] ?? {}, input.owner);
 }
 
 export async function updateBoard(
   owner: string,
   boardId: string,
-  patch: { name?: string; spec?: BoardSpec },
+  patch: { name?: string; spec?: BoardSpec; visibility?: 'private' | 'team' },
 ): Promise<BoardRecord | null> {
   const p = await pool();
   await ensureSchema(p);
   const sets: string[] = [];
   const params: unknown[] = [];
+  if (patch.visibility != null) {
+    if (patch.visibility !== 'private' && patch.visibility !== 'team') throw new Error('invalid_board_visibility');
+    params.push(patch.visibility);
+    sets.push(`visibility = $${params.length}`);
+  }
   if (patch.name != null) {
     params.push(patch.name);
     sets.push(`name = $${params.length}`);
@@ -301,7 +401,7 @@ export async function updateBoard(
       `select * from public.studio_obs_dashboards where owner = $1 and id = $2`,
       [owner, boardId],
     );
-    return existing.rows[0] ? rowToBoard(existing.rows[0]) : null;
+    return existing.rows[0] ? rowToBoard(existing.rows[0], owner) : null;
   }
   params.push(owner, boardId);
   const result = await p.query(
@@ -309,7 +409,7 @@ export async function updateBoard(
      where owner = $${params.length - 1} and id = $${params.length} returning *`,
     params,
   );
-  return result.rows[0] ? rowToBoard(result.rows[0]) : null;
+  return result.rows[0] ? rowToBoard(result.rows[0], owner) : null;
 }
 
 export async function deleteBoard(owner: string, boardId: string): Promise<boolean> {

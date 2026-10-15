@@ -1,7 +1,14 @@
 export type WorkerLeaseQueryResult = { rows: Array<{ acquired?: boolean }> };
 
-export type WorkerLeasePool = {
+export type WorkerLeaseClient = {
   query: (text: string, params?: unknown[]) => Promise<WorkerLeaseQueryResult>;
+  on: (event: 'error' | 'end', listener: (error?: Error) => void) => unknown;
+  removeListener: (event: 'error' | 'end', listener: (error?: Error) => void) => unknown;
+  release: (destroy?: boolean) => void;
+};
+
+export type WorkerLeasePool = {
+  connect: () => Promise<WorkerLeaseClient>;
   end: () => Promise<void>;
 };
 
@@ -22,11 +29,13 @@ function leaseKey(): string {
   return String(process.env.RDK_ALERT_WORKER_LOCK_KEY ?? '').trim() || DEFAULT_LEASE_KEY;
 }
 
-/** Acquire a session-scoped advisory lock. max=1 ensures unlock runs on the same session. */
+/** Hold a dedicated session until release; pool.query would release it to the idle timeout. */
 export async function acquireWorkerLease(options: {
   connectionString?: string;
   key?: string;
   required?: boolean;
+  /** The evaluator must stop immediately when its lock session disappears. */
+  onLost?: (error: Error) => void;
 } = {}): Promise<WorkerLease> {
   const connectionString = String(options.connectionString ?? process.env.RDK_CHAT_CREDITS_DB_URL ?? '').trim();
   const required = options.required ?? requiredByEnvironment();
@@ -47,28 +56,63 @@ export async function acquireWorkerLease(options: {
     application_name: 'd-obs-alert-worker-lease',
   });
   const lockName = options.key || leaseKey();
+  let client: WorkerLeaseClient | undefined;
+  let lease: WorkerLease | undefined;
+  let connectionLost = false;
+  let released = false;
+  let disposal: Promise<void> | undefined;
+  let releasePromise: Promise<void> | undefined;
+  const onConnectionLost = (error?: Error): void => {
+    connectionLost = true;
+    if (released || !lease?.acquired) return;
+    lease.acquired = false;
+    options.onLost?.(Object.assign(new Error('alert_worker_lease_connection_lost'), { cause: error }));
+  };
+  const dispose = (): Promise<void> => {
+    if (disposal) return disposal;
+    disposal = (async () => {
+      // Destroy this session rather than ever returning a possibly locked client to the pool.
+      client?.release(true);
+      await pool.end().catch(() => undefined);
+      client?.removeListener('error', onConnectionLost);
+      client?.removeListener('end', onConnectionLost);
+    })();
+    return disposal;
+  };
   try {
-    const result = await pool.query(
+    client = await pool.connect();
+    client.on('error', onConnectionLost);
+    client.on('end', onConnectionLost);
+    const result = await client.query(
       'select pg_try_advisory_lock(hashtextextended($1, 0)) as acquired',
       [lockName],
     );
+    if (connectionLost) throw new Error('alert_worker_lease_connection_lost');
     const acquired = result.rows[0]?.acquired === true;
     if (!acquired) {
-      await pool.end().catch(() => undefined);
+      released = true;
+      await dispose();
       return { acquired: false, release: async () => undefined };
     }
-    let released = false;
-    return {
+    lease = {
       acquired: true,
-      release: async () => {
-        if (released) return;
+      release: () => {
+        if (releasePromise) return releasePromise;
         released = true;
-        await pool.query('select pg_advisory_unlock(hashtextextended($1, 0))', [lockName]).catch(() => undefined);
-        await pool.end().catch(() => undefined);
+        lease!.acquired = false;
+        releasePromise = (async () => {
+          if (!connectionLost) {
+            await client!.query('select pg_advisory_unlock(hashtextextended($1, 0))', [lockName]).catch(() => undefined);
+          }
+          await dispose();
+        })();
+        return releasePromise;
       },
     };
+    return lease;
   } catch (error) {
-    await pool.end().catch(() => undefined);
+    released = true;
+    await dispose();
     if (required) throw error;
     return { acquired: true, release: async () => undefined };
   }

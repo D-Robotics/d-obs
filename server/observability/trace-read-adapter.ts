@@ -6,6 +6,8 @@ import type {
   StudioTraceOutcome,
   StudioTraceSourceSegment,
 } from '../../shared/studio-observability.js';
+import { normalizeStudioTraceContent } from '../../shared/studio-trace-content.js';
+import { resolveAiSessionBinding } from '../../shared/ai-observability-semantics.js';
 import { sanitizeLowSensitivityAttributes } from '../../shared/telemetry-data-governance.js';
 
 type QueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number | null };
@@ -20,14 +22,21 @@ export interface TraceReadScope {
 
 export type TraceIntegrityIssue =
   | { code: 'orphan_parent'; traceId: string; spanId: string; parentSpanId: string }
-  | { code: 'identifier_conflict'; traceId: string; spanId: string }
+  | { code: 'identifier_conflict'; traceId: string; spanId: string; field?: 'run_id' | 'session_id' }
   | { code: 'invalid_timing'; traceId: string; spanId: string }
   | { code: 'duplicate_identity'; traceId: string; spanId: string }
   | { code: 'topology_cycle'; traceId: string; spanId: string };
 
+export type TraceContentAvailability = 'available' | 'not_captured' | 'expired' | 'unavailable';
+export type StudioReadTraceSpan = StudioNormalizedTraceSpan & {
+  contentAvailability?: TraceContentAvailability;
+  /** Explicit conversation binding, distinct from a legacy inferred Moss session key. */
+  canonicalSessionId?: string;
+};
+
 export interface TraceReadFragment {
   traceId: string;
-  spans: StudioNormalizedTraceSpan[];
+  spans: StudioReadTraceSpan[];
   integrity: TraceIntegrityIssue[];
 }
 
@@ -67,7 +76,7 @@ function scalarAttributes(value: unknown): Record<string, string | number | bool
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const result: Record<string, string | number | boolean> = {};
   for (const [key, raw] of Object.entries(value as Record<string, unknown>).slice(0, 32)) {
-    if (typeof raw === 'string') result[text(key, 80)] = text(raw, 160);
+    if (typeof raw === 'string') result[text(key, 80)] = text(raw, key === 'rdk.session.id' ? 200 : 160);
     else if (typeof raw === 'number' && Number.isFinite(raw)) result[text(key, 80)] = raw;
     else if (typeof raw === 'boolean') result[text(key, 80)] = raw;
   }
@@ -76,7 +85,7 @@ function scalarAttributes(value: unknown): Record<string, string | number | bool
 
 function mapRows(rows: Array<Record<string, unknown>>, requestedLimit: number): TraceReadResult {
   const issues: TraceIntegrityIssue[] = [];
-  const spans: StudioNormalizedTraceSpan[] = [];
+  const spans: StudioReadTraceSpan[] = [];
   const seenIdentity = new Set<string>();
   for (const row of rows.slice(0, requestedLimit)) {
     const traceId = text(row.trace_id, 32).toLowerCase();
@@ -93,9 +102,11 @@ function mapRows(rows: Array<Record<string, unknown>>, requestedLimit: number): 
     const attributes = sanitizedAttributes.ok
       ? (sanitizedAttributes.value as Record<string, string | number | boolean>)
       : {};
+    const identifierAttributes = row.attributes && typeof row.attributes === 'object' && !Array.isArray(row.attributes)
+      ? row.attributes as Record<string, unknown> : {};
     const canonicalRunId = text(row.run_id, 200);
-    const mocRunId = text(rawAttributes['moss.run.id'], 200);
-    const legacyRunId = text(rawAttributes.runId, 200);
+    const mocRunId = text(identifierAttributes['moss.run.id'], 200);
+    const legacyRunId = text(identifierAttributes.runId, 200);
     if (
       (canonicalRunId && mocRunId && canonicalRunId !== mocRunId) ||
       (canonicalRunId && legacyRunId && canonicalRunId !== legacyRunId) ||
@@ -103,6 +114,13 @@ function mapRows(rows: Array<Record<string, unknown>>, requestedLimit: number): 
     ) {
       issues.push({ code: 'identifier_conflict', traceId, spanId });
     }
+    const sessionBinding = resolveAiSessionBinding(identifierAttributes, row.session_id);
+    if (sessionBinding.conflict) {
+      issues.push({ code: 'identifier_conflict', traceId, spanId, field: 'session_id' });
+    }
+    const canonicalSessionId = identifierAttributes['rdk.session.id'] !== undefined ||
+      (row.session_id != null && identifierAttributes['moss.session.id'] === undefined && identifierAttributes.sessionKey === undefined)
+      ? sessionBinding.sessionId : undefined;
     const startTimeUnixMs = Math.trunc(Number(row.start_time_ms));
     const endTimeUnixMs = Math.trunc(Number(row.end_time_ms));
     if (
@@ -132,6 +150,11 @@ function mapRows(rows: Array<Record<string, unknown>>, requestedLimit: number): 
         ? 'error'
         : 'unset';
     const samplingCandidate = text(row.sampling_decision, 16) as StudioSamplingDecision;
+    const content = row.content_availability === 'expired'
+      ? undefined : normalizeStudioTraceContent(row.content);
+    const contentAvailability: TraceContentAvailability =
+      row.content_availability === 'expired' ? 'expired' : content ? 'available' :
+      row.content != null ? 'unavailable' : 'not_captured';
     spans.push({
       traceId,
       spanId,
@@ -139,7 +162,8 @@ function mapRows(rows: Array<Record<string, unknown>>, requestedLimit: number): 
       ...(canonicalRunId || mocRunId || legacyRunId
         ? { runId: canonicalRunId || mocRunId || legacyRunId }
         : {}),
-      ...(text(row.session_id, 200) ? { sessionId: text(row.session_id, 200) } : {}),
+      ...(sessionBinding.sessionId ? { sessionId: sessionBinding.sessionId } : {}),
+      ...(canonicalSessionId ? { canonicalSessionId } : {}),
       ...(text(row.client_operation_id, 200)
         ? { clientOperationId: text(row.client_operation_id, 200) }
         : {}),
@@ -171,6 +195,8 @@ function mapRows(rows: Array<Record<string, unknown>>, requestedLimit: number): 
         mocVersion: text(row.moc_version, 40) || '0.0.0',
       },
       attributes,
+      ...(content ? { content } : {}),
+      contentAvailability,
       sampling: {
         decision: SAFE_SAMPLING.has(samplingCandidate) ? samplingCandidate : 'pending',
         policyVersion: text(row.sampling_policy_version, 40) || 'legacy',
@@ -184,7 +210,7 @@ function mapRows(rows: Array<Record<string, unknown>>, requestedLimit: number): 
       left.endTimeUnixMs - right.endTimeUnixMs ||
       left.spanId.localeCompare(right.spanId),
   );
-  const byTrace = new Map<string, StudioNormalizedTraceSpan[]>();
+  const byTrace = new Map<string, StudioReadTraceSpan[]>();
   for (const span of spans) byTrace.set(span.traceId, [...(byTrace.get(span.traceId) ?? []), span]);
   const fragments = [...byTrace.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
@@ -230,7 +256,11 @@ const SELECT_COLUMNS = `
   status, otel_status, outcome, attributes, moc_version, service_name,
   service_instance_id, environment resource_environment, surface,
   studio_version, moss_version, sampling_decision, sampling_policy_version,
-  sampling_reason
+  sampling_reason,
+  case when content_expires_at > now() then content else null end content,
+  case when content_expires_at <= now() then 'expired'
+       when content is not null and content_expires_at > now() then 'available'
+       else 'not_captured' end content_availability
 `;
 
 export class PostgresStudioTraceReadAdapter implements StudioTraceReadAdapter {

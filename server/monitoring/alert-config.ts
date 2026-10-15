@@ -136,7 +136,7 @@ export const ALERT_RULE_DEFINITIONS = [
     key: 'tool-failure-repeat',
     category: 'metric',
     title: '工具调用连续失败',
-    description: '同一工具在窗口内影响的独立 run 数；原始失败事件数只用于摘要辅助排查。',
+    description: '按同一工具在窗口内的失败调用次数触发，同时展示独立 run 数与原始失败记录数。',
     fields: ['windowMinutes', 'threshold', 'criticalThreshold'],
   },
   {

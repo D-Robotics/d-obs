@@ -154,6 +154,7 @@ export function scheduleCentralConversationInsert(record: ConversationTurnRecord
   void insertConversationTurnCentral({
     ...row,
     session_id: record.sessionId ?? null,
+    run_id: record.runId ?? null,
     // 账号列以 ssoUserId(服务端会话解析的计费账号 id)为准,与 agent_run_records.sso_user_id 同源同键。
     // 不能用 record.userId:那是工作区 id,feishu/weixin/autonomy 下与账号分叉,未登录时甚至来自前端
     // body(客户端可控)——按它落列会让云端历史(严格按 SSO id 读)找不到归档,还开了跨账号写入口。

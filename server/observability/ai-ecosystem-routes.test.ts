@@ -139,6 +139,7 @@ test('accepts Phoenix/Langfuse-compatible OTLP aliases and exposes Prometheus me
     }),
   });
   assert.equal(metricsResponse.status, 200);
+  assert.equal((await metricsResponse.json() as { partialSuccess: { rejectedDataPoints: number } }).partialSuccess.rejectedDataPoints, 1);
   const prometheus = await (await fetch(`${baseUrl}/metrics`)).text();
   assert.match(prometheus, /rdk_ai_otlp_spans_accepted_total\s+[1-9]/);
   assert.match(prometheus, /rdk_upstream_gen_ai_client_token_usage\{firmware="fw-2\.1\.0",model="test-model",robot="robot-01",service="metrics-agent"\}\s+20/);
@@ -226,6 +227,7 @@ test('accepts OTLP/HTTP protobuf and standard OTLP/gRPC traces and metrics', asy
     }),
   });
   assert.equal(httpMetricResponse.status, 200);
+  assert.equal((await httpMetricResponse.json() as { partialSuccess: { rejectedDataPoints: number } }).partialSuccess.rejectedDataPoints, 1);
 
   const grpcRuntime = await startAiEcosystemGrpcServer({ host: '127.0.0.1', port: 0 });
   const metadata = new Metadata();
@@ -250,12 +252,13 @@ test('accepts OTLP/HTTP protobuf and standard OTLP/gRPC traces and metrics', asy
     }],
   });
   assert.equal(grpcTrace.partialSuccess?.rejectedSpans, '0');
-  await grpcCall(metricClient, {
+  const grpcMetric = await grpcCall<{ partialSuccess?: { rejectedDataPoints?: string } }>(metricClient, {
     resourceMetrics: [{ scopeMetrics: [{ metrics: [{
       name: 'gen_ai.grpc.metric',
       gauge: { dataPoints: [{ asDouble: 7.5, timeUnixNano: String(Date.now() * 1_000_000) }] },
     }] }] }],
   });
+  assert.equal(grpcMetric.partialSuccess?.rejectedDataPoints, '1');
   traceClient.close();
   metricClient.close();
   grpcRuntime.server.forceShutdown();
@@ -330,4 +333,55 @@ test('accepts OTLP logs (and aliases), rejects bodyless records, and reports log
   };
   assert.ok(capabilities.data.signals.includes('logs'));
   assert.equal(capabilities.data.logsEndpoint, '/v1/logs');
+});
+
+test('retained trace fragments batch by run while preserving trace/parent IDs and scope boundaries', async()=>{
+  const { ingestTracePayload }=await import('./ai-ecosystem-routes.js');
+  const { getPublicObservabilityStore }=await import('../public-api/public-observability-store.js');
+  const store=getPublicObservabilityStore(), append=store.appendSpans.bind(store);
+  let writes=0;
+  store.appendSpans=async input=>{writes+=1;return append(input);};
+  const identity={owner:`batch-owner-${Date.now()}`,keyId:'batch-key'};
+  const runId=`fragment-batch-${Date.now()}`;
+  const epoch=BigInt(Date.now())*1000000n;
+  const span=(trace:string,id:string,status=1)=>({traceId:trace,spanId:id,parentSpanId:'a'.repeat(16),name:'fragment',startTimeUnixNano:String(epoch),endTimeUnixNano:String(epoch+1000000n),status:{code:status},attributes:[{key:'moss.run.id',value:{stringValue:runId}}]});
+  try {
+    const result=await ingestTracePayload({resourceSpans:[{resource:{attributes:[{key:'service.name',value:{stringValue:'first-fragment-metadata'}}]},scopeSpans:[{spans:[span('1'.repeat(32),'1'.repeat(16)),span('2'.repeat(32),'2'.repeat(16))]}]}]},identity);
+    assert.deepEqual(result,{valid:true,accepted:2,rejected:0,runs:1});
+    assert.equal(writes,1);
+    const trace=await store.getTrace(identity.owner,runId);
+    assert.deepEqual(trace?.map(item=>item.traceId).sort(),['1'.repeat(32),'2'.repeat(32)]);
+    assert.ok(trace?.every(item=>item.parentSpanId==='a'.repeat(16)));
+    assert.equal((await store.getRun(identity.owner,runId))?.service,'first-fragment-metadata');
+    writes=0;
+    await ingestTracePayload({resourceSpans:['scope-one','scope-two'].map((scope,index)=>({resource:{attributes:[{key:'rdk.telemetry.scope.ref',value:{stringValue:scope}}]},scopeSpans:[{spans:[span(String(index+3).repeat(32),String(index+3).repeat(16))]}]}))},identity);
+    assert.equal(writes,2);
+    // More than 64 fragments use bounded batches while preserving the 256/run budget.
+    writes=0;
+    const largeRun=`${runId}-large`;
+    const spans=Array.from({length:65},(_,index)=>({...span((index+100).toString(16).padStart(32,'0'),(index+100).toString(16).padStart(16,'0')),attributes:[{key:'moss.run.id',value:{stringValue:largeRun}}]}));
+    const large=await ingestTracePayload({resourceSpans:[{scopeSpans:[{spans}]}]},identity);
+    assert.equal(large.accepted,65);assert.equal(large.rejected,0);assert.equal(writes,2);
+  } finally {store.appendSpans=append;}
+});
+
+test('trace sampling precedes batching and deterministic quota fallback preserves per-trace acceptance', async()=>{
+  const { ingestTracePayload }=await import('./ai-ecosystem-routes.js');
+  const { getPublicObservabilityStore }=await import('../public-api/public-observability-store.js');
+  const identity={owner:`quota-batch-owner-${Date.now()}`,keyId:'quota-batch-key'};
+  const runId=`quota-fragments-${Date.now()}`,epoch=BigInt(Date.now())*1000000n;
+  const make=(trace:string,id:string,error=false)=>({traceId:trace,spanId:id,name:'sample fragment',startTimeUnixNano:String(epoch),endTimeUnixNano:String(epoch+1000000n),status:{code:error?2:1},attributes:[{key:'moss.run.id',value:{stringValue:runId}}]});
+  const previousRatio=process.env.RDK_OTLP_TAIL_SAMPLE_RATIO;process.env.RDK_OTLP_TAIL_SAMPLE_RATIO='0';
+  try {
+    const sampled=await ingestTracePayload({resourceSpans:[{scopeSpans:[{spans:[make('5'.repeat(32),'5'.repeat(16)),make('6'.repeat(32),'6'.repeat(16),true)]}]}]},identity);
+    assert.equal(sampled.accepted,1);assert.equal(sampled.rejected,0);
+    assert.deepEqual((await getPublicObservabilityStore().getTrace(identity.owner,runId))?.map(item=>item.traceId),['6'.repeat(32)]);
+  } finally {if(previousRatio===undefined) delete process.env.RDK_OTLP_TAIL_SAMPLE_RATIO;else process.env.RDK_OTLP_TAIL_SAMPLE_RATIO=previousRatio;}
+  const store=getPublicObservabilityStore();
+  const nearRun=`${runId}-near`;
+  for(let batch=0;batch<4;batch++) await store.appendSpans({owner:identity.owner,keyId:identity.keyId,runId:nearRun,spans:Array.from({length:batch===3?63:64},(_,index)=>({spanId:(batch*64+index+2000).toString(16).padStart(16,'0'),startTime:Date.now(),endTime:Date.now()+1}))});
+  const remaining=[make('7'.repeat(32),'7'.repeat(16)),make('8'.repeat(32),'8'.repeat(16))].map(span=>({...span,attributes:[{key:'moss.run.id',value:{stringValue:nearRun}}]}));
+  const quota=await ingestTracePayload({resourceSpans:[{scopeSpans:[{spans:remaining}]}]},identity);
+  assert.equal(quota.accepted,1);assert.equal(quota.rejected,1);
+  assert.equal((await store.getRun(identity.owner,nearRun))?.spanCount,256);
 });

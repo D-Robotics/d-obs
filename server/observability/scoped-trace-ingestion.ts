@@ -4,6 +4,7 @@ import type {
   StudioNormalizedTraceSpan,
   StudioTraceBatch,
 } from '../../shared/studio-observability.js';
+import { normalizeStudioTraceContent } from '../../shared/studio-trace-content.js';
 import { ensureUnifiedStudioTraceSchema } from './studio-trace-schema.js';
 
 export interface StudioTraceIngestionScope {
@@ -83,6 +84,7 @@ function spanRows(batch: StudioTraceBatch): Array<Record<string, unknown>> {
     otel_status: span.status,
     legacy_status: span.status === 'error' ? 'error' : 'ok',
     attributes: span.attributes,
+    content: normalizeStudioTraceContent(span.content) ?? null,
     service_name: span.resource.serviceName,
     service_instance_id: span.resource.serviceInstanceId,
     surface: span.resource.surface,
@@ -104,7 +106,7 @@ const INSERT_SPANS_SQL = `
     status_message, attributes, moc_version, producer_version, service_name,
     service_instance_id, surface, studio_version, moss_version,
     sampling_decision, sampling_policy_version, sampling_reason,
-    canonical_hash, batch_id, received_at, governance_expires_at
+    canonical_hash, batch_id, received_at, governance_expires_at, content, content_expires_at
   )
   select
     $1, $2, x.trace_id, x.span_id, x.parent_span_id, x.run_id,
@@ -114,13 +116,15 @@ const INSERT_SPANS_SQL = `
     x.service_name, x.service_instance_id, x.surface, x.studio_version,
     x.moss_version, x.sampling_decision, x.sampling_policy_version,
     x.sampling_reason, x.canonical_hash, $4, now(),
-    to_timestamp(x.start_time_ms / 1000.0) + interval '35 days'
+    to_timestamp(x.start_time_ms / 1000.0) + interval '35 days', x.content,
+    case when x.content is not null then
+      to_timestamp(x.start_time_ms / 1000.0) + interval '7 days' else null end
   from jsonb_to_recordset($5::jsonb) as x(
     trace_id text, span_id text, parent_span_id text, run_id text,
     session_id text, client_operation_id text, source_segment text,
     legacy_source text, name text, span_kind text, start_time_ms bigint,
     end_time_ms bigint, outcome text, otel_status text, legacy_status text,
-    attributes jsonb, service_name text, service_instance_id text, surface text,
+    attributes jsonb, content jsonb, service_name text, service_instance_id text, surface text,
     studio_version text, moss_version text, moc_version text,
     sampling_decision text, sampling_policy_version text, sampling_reason text,
     canonical_hash text

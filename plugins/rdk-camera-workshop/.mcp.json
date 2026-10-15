@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "rdk-camera-workshop": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["mcp/bridge.mjs"]
+    }
+  }
+}

@@ -153,7 +153,7 @@ function batchRetentionDeadline(batch: StudioTraceBatch, fallback: number): numb
   if (Number.isFinite(batchCreatedAt)) deadline = Math.min(deadline, batchCreatedAt + MAX_AGE_MS);
   for (const span of batch.spans) {
     const eventTime = Number(span.startTimeUnixMs);
-    if (Number.isFinite(eventTime)) deadline = Math.min(deadline, eventTime + MAX_AGE_MS);
+    if (Number.isFinite(eventTime)) deadline = Math.min(deadline, eventTime + (span.content ? 7 * 24 * 60 * 60_000 : MAX_AGE_MS));
   }
   return deadline;
 }

@@ -10,6 +10,7 @@ import {
   getGatewayConfigSummary,
   isGatewayAdminConfigured,
 } from '../credits/gateway-admin-client.js';
+import { resolvePlatformAssistantChatTarget } from './platform-assistant-model.js';
 
 export type CopilotEvidenceRef = { ref: string; kind: string; label: string };
 
@@ -64,10 +65,13 @@ function normalizeEvidenceIndex(value: unknown): CopilotEvidenceRef[] {
 }
 
 export async function resolveGatewayChatTarget(): Promise<{ baseUrl: string; model: string; apiKey: string } | null> {
+  const configuredClient = await resolvePlatformAssistantChatTarget();
+  if (configuredClient) return configuredClient;
   const config = await getGatewayConfigSummary();
   const mappings = config.modelMapping ?? {};
   const candidates = Object.values(mappings)
-    .map((item) => item && item.baseUrl && item.model && item.apiKey
+    .map((item) => item && item.baseUrl && item.model && typeof item.apiKey === 'string' && item.apiKey
+      && !/\*{3}|\.{3}|^\[(?:redacted|configured|hidden)\]$/i.test(item.apiKey)
       ? { baseUrl: item.baseUrl, model: item.model, apiKey: item.apiKey }
       : null)
     .filter((item): item is { baseUrl: string; model: string; apiKey: string } => item !== null);
@@ -78,6 +82,7 @@ export async function callGatewayChat(
   target: { baseUrl: string; model: string; apiKey: string },
   messages: Array<{ role: string; content: string }>,
   timeoutMs: number,
+  options: { maxTokens?: number } = {},
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -95,7 +100,7 @@ export async function callGatewayChat(
         messages,
         stream: false,
         temperature: 0.2,
-        max_tokens: 1_200,
+        max_tokens: options.maxTokens ?? 1_200,
       }),
       signal: controller.signal,
     });

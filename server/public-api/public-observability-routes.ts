@@ -278,6 +278,8 @@ export function createPublicObservabilityRouter(): Router {
         runId: text(req.params.runId, 200),
         owner: identity.owner,
         keyId: identity.keyId,
+        // Public bearer callers cannot manufacture a different durable account attribution.
+        accountScopeId: identity.owner,
       });
       res.json({
         ok: true,
@@ -295,9 +297,10 @@ export function createPublicObservabilityRouter(): Router {
   router.get('/api/v1/observability/runs', async (req: PublicRequest, res) => {
     try {
       const identity = await principal(req);
+      const view = await store.refreshOwnerIndex(identity.owner);
       const filters = runFilters(req.query);
       const limit = Math.max(1, Math.min(200, filters.limit ?? 50));
-      res.json({ ok: true, data: { runs: store.listRuns(identity.owner, { ...filters, limit }).map((run) => publicRun(run as unknown as Record<string, unknown>)), limit } });
+      res.json({ ok: true, data: { runs: view.listRuns(identity.owner, { ...filters, limit }).map((run) => publicRun(run as unknown as Record<string, unknown>)), limit } });
     } catch (error) {
       sendError(res, error);
     }
@@ -306,7 +309,8 @@ export function createPublicObservabilityRouter(): Router {
   router.get('/api/v1/observability/catalog', async (req: PublicRequest, res) => {
     try {
       const identity = await principal(req);
-      res.json({ ok: true, data: store.listCatalog(identity.owner, runFilters(req.query)) });
+      const view = await store.refreshOwnerIndex(identity.owner);
+      res.json({ ok: true, data: view.listCatalog(identity.owner, runFilters(req.query)) });
     } catch (error) {
       sendError(res, error);
     }
@@ -315,9 +319,10 @@ export function createPublicObservabilityRouter(): Router {
   router.get('/api/v1/observability/objects', async (req: PublicRequest, res) => {
     try {
       const identity = await principal(req);
+      const view = await store.refreshOwnerIndex(identity.owner);
       res.json({
         ok: true,
-        data: store.listObjects(identity.owner, {
+        data: view.listObjects(identity.owner, {
           ...runFilters(req.query),
           ...(queryValue(req.query.q) ? { q: queryValue(req.query.q) } : {}),
           ...(queryValue(req.query.ownerTeam) ? { ownerTeam: queryValue(req.query.ownerTeam) } : {}),
@@ -333,7 +338,8 @@ export function createPublicObservabilityRouter(): Router {
   router.get('/api/v1/observability/summary', async (req: PublicRequest, res) => {
     try {
       const identity = await principal(req);
-      res.json({ ok: true, data: store.summarize(identity.owner, summaryFilters(req.query)) });
+      const view = await store.refreshOwnerIndex(identity.owner);
+      res.json({ ok: true, data: view.summarize(identity.owner, summaryFilters(req.query)) });
     } catch (error) {
       sendError(res, error);
     }
@@ -342,7 +348,8 @@ export function createPublicObservabilityRouter(): Router {
   router.get('/api/v1/observability/objects/:objectId', async (req: PublicRequest, res) => {
     try {
       const identity = await principal(req);
-      const detail = store.getObject(identity.owner, text(req.params.objectId, 200), summaryFilters(req.query));
+      const view = await store.refreshOwnerIndex(identity.owner);
+      const detail = view.getObject(identity.owner, text(req.params.objectId, 200), summaryFilters(req.query));
       if (!detail) throw new PublicObservabilityHttpError(404, 'observability_object_not_found');
       res.json({ ok: true, data: detail });
     } catch (error) {
@@ -353,7 +360,7 @@ export function createPublicObservabilityRouter(): Router {
   router.patch('/api/v1/observability/objects/:objectId', async (req: PublicRequest, res) => {
     try {
       const identity = await principal(req);
-      const detail = store.upsertObject(identity.owner, text(req.params.objectId, 200), bodyObject(req) as never);
+      const detail = await store.persistObject(identity.owner, text(req.params.objectId, 200), bodyObject(req) as never);
       res.json({ ok: true, data: detail });
     } catch (error) {
       sendError(res, error);

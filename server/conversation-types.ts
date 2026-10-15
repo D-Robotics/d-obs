@@ -15,6 +15,8 @@ export type ConversationTurnRecord = {
   recordedAt: number;
   /** RDK Studio 客户端会话 id（本机多线程聊天列表里的 thread id）；旧记录可能为空 */
   sessionId?: string;
+  /** 本轮权威 Agent Run id；只由运行生命周期提供，旧归档缺失时不按时间推断。 */
+  runId?: string;
   /** Agent 落盘会话键（含设备/RDK Studio session 前缀），仅写入本机 JSONL，云端表忽略 */
   agentSessionKey?: string;
   /** 当前选中设备 id；无设备为空 */

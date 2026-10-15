@@ -23,6 +23,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readSync, fstatSync, statSy
 import { hostname } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CloudBridgeRuntime } from './collection-log-bridge-runtime.mjs';
 
 const ENDPOINT = String(process.env.RDK_LOG_BRIDGE_ENDPOINT ?? 'http://127.0.0.1:18093').replace(/\/+$/, '');
 const TOKEN = String(process.env.RDK_LOG_BRIDGE_TOKEN ?? '').trim();
@@ -34,10 +35,10 @@ const STATE_DIR = String(process.env.RDK_LOG_BRIDGE_STATE_DIR ?? '/var/lib/d-obs
 const CURSOR_FILE = path.join(STATE_DIR, 'journal-cursor');
 const HOST_NAME = String(process.env.RDK_LOG_BRIDGE_HOST ?? '') || hostname();
 const BOOTSTRAP_SINCE = String(process.env.RDK_LOG_BRIDGE_BOOTSTRAP ?? '-15m');
-const POLL_INTERVAL_MS = Number(process.env.RDK_LOG_BRIDGE_POLL_MS ?? 5_000);
-const FLUSH_INTERVAL_MS = Number(process.env.RDK_LOG_BRIDGE_FLUSH_MS ?? 3_000);
-const FLUSH_BATCH = Number(process.env.RDK_LOG_BRIDGE_BATCH ?? 100);
-const QUEUE_LIMIT = Number(process.env.RDK_LOG_BRIDGE_QUEUE ?? 5_000);
+let POLL_INTERVAL_MS = Number(process.env.RDK_LOG_BRIDGE_POLL_MS ?? 5_000);
+let FLUSH_INTERVAL_MS = Number(process.env.RDK_LOG_BRIDGE_FLUSH_MS ?? 3_000);
+let FLUSH_BATCH = Number(process.env.RDK_LOG_BRIDGE_BATCH ?? 100);
+let QUEUE_LIMIT = Number(process.env.RDK_LOG_BRIDGE_QUEUE ?? 5_000);
 const MAX_BODY = 1_000;
 const REQUEST_TIMEOUT_MS = 5_000;
 const MERGE_WINDOW_MS = 2_000;
@@ -267,15 +268,19 @@ async function postBatch(records) {
 }
 
 let retryCount = 0;
+let sentRecords = 0;
+let flushFailures = 0;
 async function flush() {
   if (!pending.length) return;
   const batch = pending.splice(0, Math.min(FLUSH_BATCH, pending.length));
   for (const record of batch) reassembler.flushed(record);
   try {
-    await postBatch(batch);
+    const accepted = await postBatch(batch);
+    if (Number.isSafeInteger(accepted) && accepted >= 0) sentRecords += accepted;
     retryCount = 0;
   } catch (error) {
     retryCount += 1;
+    flushFailures += 1;
     pending.unshift(...batch.slice(0, Math.max(0, QUEUE_LIMIT - pending.length)));
     if (retryCount <= 3 || retryCount % 20 === 0) {
       process.stderr.write(`[d-obs-log-bridge] flush failed (${retryCount}): ${error?.message ?? error}\n`);
@@ -594,7 +599,15 @@ if (invokedDirectly) {
   scheduleFlush();
   void (async () => {
     let cycles = 0;
+    const runtime = new CloudBridgeRuntime({ initialConfig: { pollMs: POLL_INTERVAL_MS, flushMs: FLUSH_INTERVAL_MS, batch: FLUSH_BATCH, queueLimit: QUEUE_LIMIT }, sourceCounts: { journald: UNITS.length, docker: DOCKER_SOURCES.length, file: FILE_SOURCES.length } });
     while (!stopping) {
+      const config = await runtime.reload();
+      const previousFlushMs = FLUSH_INTERVAL_MS;
+      POLL_INTERVAL_MS = config.pollMs; FLUSH_INTERVAL_MS = config.flushMs; FLUSH_BATCH = config.batch; QUEUE_LIMIT = config.queueLimit;
+      while (pending.length > QUEUE_LIMIT) { pending.shift(); dropped += 1; }
+      if (previousFlushMs !== FLUSH_INTERVAL_MS) { clearInterval(flushTimer); flushTimer = null; scheduleFlush(); }
+      // Acknowledge only after applying the bounded scheduling and queue settings.
+      await runtime.publish({ cycles, pending: pending.length, dropped, sent: sentRecords, flushFailures });
       const tasks = [pollOnce()];
       for (const source of DOCKER_SOURCES) tasks.push(pollDockerSource(source));
       for (const source of FILE_SOURCES) tasks.push(pollFileSource(source));

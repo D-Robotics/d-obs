@@ -1,19 +1,19 @@
 /**
- * 移动端底部导航与首次访问导览。
+ * 移动端底部导航与按需使用指南。
  *
- * 底部 tab：≤520px 时复用现有 .side-nav / .module-tabs / .module-tab DOM（按钮
+ * 底部 tab：≤720px 时复用现有 .side-nav / .module-tabs / .module-tab DOM（按钮
  * 本来就带 data-view 和 click 路由），CSS 把它变成 fixed 底栏；前 5 个高频模块
  * 平铺（脚本搬进 .nav-primary，resize 回桌面时还原），其余模块折叠进"更多"
  * 表。不引入新按钮或新路由逻辑。
  *
- * 导览：localStorage 标记一次性；步骤卡定位在底部栏上方，60 秒内可走完，
+ * 导览：由「使用指南」主动开启；步骤卡定位在底部栏上方，60 秒内可走完，
  * 任意时刻可跳过；键盘可达（Esc 跳过），不遮住正在浏览的数据。
  */
 export const OPS_OBSERVABILITY_MOBILE_TOUR_STYLE = `
     /* 选择器都带 body.ops-observability 前缀：product-style 的移动端规则包在
        @scope (body.ops-observability) 里，scoped 选择器特异性比裸类名高，
        不加前缀会被同名的 720px scoped 规则压掉。 */
-    @media(max-width:520px){
+    @media(max-width:720px){
       body.ops-observability .app-shell{display:block;padding-bottom:calc(64px + env(safe-area-inset-bottom))}
       body.ops-observability .side-nav{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:30;width:100%;height:auto;max-height:70vh;overflow:visible;border-right:0;border-top:1px solid var(--line);padding:0;background:var(--c2);box-shadow:0 -6px 18px var(--c63)}
       body.ops-observability .global-nav{display:none}
@@ -41,10 +41,10 @@ export const OPS_OBSERVABILITY_MOBILE_TOUR_STYLE = `
       body.ops-observability .mobile-more-toggle:before{content:"•••";font-size:13px;letter-spacing:1px}
       body.ops-observability .mobile-more-toggle span{font-size:9px}
     }
-    @media(min-width:521px){body.ops-observability .mobile-more-toggle{display:none}}
+    @media(min-width:721px){body.ops-observability .mobile-more-toggle{display:none}}
 
     .tour-card{position:fixed;left:50%;bottom:calc(74px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:70;width:min(430px,calc(100vw - 24px));padding:15px 16px 13px;border:1px solid var(--c357);border-radius:13px;background:var(--c2);box-shadow:0 16px 44px var(--c131)}
-    @media(min-width:521px){.tour-card{bottom:26px;left:26px;transform:none}}
+    @media(min-width:721px){.tour-card{bottom:26px;left:26px;transform:none}}
     .tour-step-chip{display:inline-flex;align-items:center;gap:6px;margin-bottom:7px;color:var(--muted);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
     .tour-step-chip strong{color:var(--green)}
     .tour-card h3{margin:0 0 5px;font-size:14px;line-height:1.3;color:var(--c375)}
@@ -62,10 +62,10 @@ export const OPS_OBSERVABILITY_MOBILE_TOUR_STYLE = `
 
 export const OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR = `
       (function(){
-        // ---- 移动端底部 tab：标记前 5 个高频模块，≤520px 时搬进主行 ----
+        // ---- 移动端底部 tab：标记前 5 个高频模块，≤720px 时搬进主行 ----
         // Keep the bottom bar to five task-first destinations. Growth, SLO,
-        // device and setup views remain one tap away in “更多”.
-        const MOBILE_PRIMARY=['overview','investigate','alerts/center','traces','signals/panels'];
+        // investigation and setup views remain one tap away in “更多”.
+        const MOBILE_PRIMARY=['overview','alerts/center','traces','signals','devices'];
         try{
           document.querySelectorAll('.module-tab').forEach(tab=>{if(MOBILE_PRIMARY.includes(tab.dataset.view))tab.classList.add('mobile-primary')});
           const tabs=document.querySelector('.module-tabs');
@@ -74,7 +74,7 @@ export const OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR = `
             // <details> 上 display:contents 布局不生效，主 tab 需物理搬进
             // .nav-primary 才能成为底栏 flex 项；resize 回桌面时还原回原分组。
             const primary=document.querySelector('.nav-primary');
-            const mql=window.matchMedia('(max-width:520px)');
+            const mql=window.matchMedia('(max-width:720px)');
             const moved=[];
             const applyMobileNav=()=>{
               if(!primary)return;
@@ -86,6 +86,7 @@ export const OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR = `
               }else{
                 while(moved.length){const {btn,parent,next}=moved.pop();parent.insertBefore(btn,next||null)}
                 tabs.classList.remove('mobile-expanded');
+                const moreButton=tabs.querySelector('.mobile-more-toggle');if(moreButton){moreButton.classList.remove('expanded');moreButton.setAttribute('aria-expanded','false')}
               }
             };
             try{mql.addEventListener('change',applyMobileNav)}catch(_){/* 旧浏览器忽略动态切换 */}
@@ -95,52 +96,52 @@ export const OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR = `
             applyMobileNav();
             const more=document.createElement('button');
             more.type='button';more.className='module-tab mobile-more-toggle';more.setAttribute('aria-expanded','false');more.setAttribute('aria-controls','moduleTabs');
-            more.innerHTML='<span>更多</span>';
+            const moreLabel=document.createElement('span');moreLabel.textContent='更多';more.appendChild(moreLabel);
             more.addEventListener('click',()=>{
               const expanded=!tabs.classList.contains('mobile-expanded');
               tabs.classList.toggle('mobile-expanded',expanded);
               more.classList.toggle('expanded',expanded);
               more.setAttribute('aria-expanded',String(expanded));
-              if(!expanded&&window.matchMedia('(max-width:520px)').matches){window.scrollTo({top:0});}
+              if(expanded){const first=tabs.querySelector('.nav-section-toggle');if(first)first.focus()}
             });
-            nav.appendChild(more);
+            tabs.appendChild(more);
             // 切换主 tab 时收起"更多"面板
-            tabs.addEventListener('click',event=>{const btn=event.target.closest('.module-tab');if(!btn||btn===more)return;if(btn.classList.contains('mobile-primary')||tabs.classList.contains('mobile-expanded')){tabs.classList.remove('mobile-expanded');more.classList.remove('expanded');more.setAttribute('aria-expanded','false')}});
+            tabs.addEventListener('click',event=>{const btn=event.target.closest('.module-tab');if(!btn||btn===more)return;const closing=tabs.classList.contains('mobile-expanded');if(btn.classList.contains('mobile-primary')||closing){tabs.classList.remove('mobile-expanded');more.classList.remove('expanded');more.setAttribute('aria-expanded','false');if(closing&&!btn.classList.contains('mobile-primary'))document.getElementById('mainContent')?.focus()}});
+            tabs.addEventListener('keydown',event=>{if(event.key==='Escape'&&tabs.classList.contains('mobile-expanded')){event.preventDefault();tabs.classList.remove('mobile-expanded');more.classList.remove('expanded');more.setAttribute('aria-expanded','false');more.focus()}});
           }
         }catch(_){/* 移动栏增强失败不影响桌面 */}
 
-        // ---- 首次访问导览（约 60 秒，可跳过） ----
-        const TOUR_KEY='d_obs_tour_done_v1';
+        // ---- 按需使用指南：不打断首次进入 ----
         const TOUR_STEPS=[
-          {title:'这里是全局态势',body:'打开页面先看"当前态势"：进行中告警、SLO 错误预算和今天该处理的待办都在这一屏。'},
-          {title:'出了事先去"事故调查"',body:'按 影响面 → 多信号趋势 → 代表事件 的顺序下钻；证据不足时页面会明说，不会编造根因。'},
-          {title:'用 ⌘K / 斜杠 快速跳转',body:'任何时候按 <kbd>⌘ K</kbd>（Mac）或 <kbd>/</kbd> 唤起命令面板，输入"事故""Trace""SLO"直接跳模块。'},
+          {title:'这里是全局态势',body:'从总览确认运行状态，再查看当前待处置。服务与产品健康按需展开，完整证据始终可查。'},
+          {title:'出了事先去"事故调查"',body:'在「分析与洞察」打开事故调查，按影响面、异常趋势与代表事件下钻，核对每条结论的证据。'},
+          {title:'用 ⌘K / 斜杠 快速跳转',body:'按 ⌘ K（Mac）或 / 唤起搜索，输入事故、Trace、SLO 或对象名称，直接打开对应工作区。'},
           {title:'告警与通知在"告警策略"',body:'规则、阈值、通知模板都在这里改；新环境默认影子模式（只记录不外发），确认后再开启真实投递。'},
           {title:'数据与证据可查证',body:'链路追踪、数据库只读资产、数据健康面板提供证据链；所有数据按运营权限脱敏。'}
         ];
-        try{
-          if(localStorage.getItem(TOUR_KEY))return;
+        function startWorkbenchTour(){
+          if(document.body.classList.contains('auth-gate'))return;
           if(document.getElementById('tourCard'))return;
           const card=document.createElement('section');
           card.id='tourCard';card.className='tour-card';card.setAttribute('role','dialog');card.setAttribute('aria-modal','false');card.setAttribute('aria-label','工作台导览');
           let step=0;
-          const finish=()=>{try{localStorage.setItem(TOUR_KEY,'1')}catch(_){}card.remove();document.removeEventListener('keydown',onKey)};
+          const finish=()=>{card.remove();document.removeEventListener('keydown',onKey);const trigger=document.getElementById('startWorkbenchTour');if(trigger)trigger.focus()};
           const render=()=>{
             const s=TOUR_STEPS[step];
-            card.innerHTML='';
+            card.replaceChildren();
             const chip=document.createElement('div');chip.className='tour-step-chip';
             const chipStrong=document.createElement('strong');chipStrong.textContent=(step+1)+' / '+TOUR_STEPS.length;
             chip.appendChild(chipStrong);chip.appendChild(document.createTextNode('导览'));
             card.appendChild(chip);
             const h=document.createElement('h3');h.textContent=s.title;card.appendChild(h);
-            const p=document.createElement('p');p.innerHTML=s.body;card.appendChild(p);
+            const p=document.createElement('p');p.textContent=s.body;card.appendChild(p);
             const progress=document.createElement('div');progress.className='tour-progress';
             TOUR_STEPS.forEach((_,i)=>{const dot=document.createElement('i');if(i<=step)dot.classList.add('done');progress.appendChild(dot)});
             card.appendChild(progress);
             const actions=document.createElement('div');actions.className='tour-actions';
             const next=document.createElement('button');next.type='button';next.className='btn';
             next.textContent=step===TOUR_STEPS.length-1?'完成':'下一步';
-            next.addEventListener('click',()=>{step+=1;if(step>=TOUR_STEPS.length)finish();else render()});
+            next.addEventListener('click',()=>{step+=1;if(step>=TOUR_STEPS.length)finish();else{render();card.querySelector('button')?.focus()}});
             actions.appendChild(next);
             const skip=document.createElement('button');skip.type='button';skip.className='tour-skip';skip.textContent='跳过导览';
             skip.addEventListener('click',finish);
@@ -151,6 +152,8 @@ export const OPS_OBSERVABILITY_SCRIPT_MOBILE_TOUR = `
           document.addEventListener('keydown',onKey);
           render();
           document.body.appendChild(card);
-        }catch(_){/* localStorage 不可用时静默跳过导览 */}
+          card.querySelector('button')?.focus();
+        }
+        document.getElementById('startWorkbenchTour')?.addEventListener('click',startWorkbenchTour);
       })();
 `;

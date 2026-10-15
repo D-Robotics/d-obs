@@ -7,6 +7,7 @@ import {
   requireObservabilityAccess,
   requireOpsMutationGuard,
   resolveOpsActor,
+  tenantScopeGate,
 } from './observability-route-kit.js';
 import { recordOpsConfigurationAudit, getOpsIncident } from './observability-store.js';
 import { buildIncidentCorrelation } from './incident-correlate.js';
@@ -33,6 +34,7 @@ import {
   normalizeBoardName,
   normalizeBoardPanel,
   normalizeBoardSpec,
+  normalizeBoardWriteSpec,
   parseBoardTemplate,
   updateBoard,
   type BoardPanel,
@@ -45,10 +47,15 @@ import { ingestLogPayload, ingestMetricPayload } from '../observability/ai-ecosy
 import { parseGrafanaDashboard, toGrafanaDashboard } from './grafana-compat.js';
 import { deleteLibraryPanel, listLibraryPanels, saveLibraryPanel } from './dashboard-library-store.js';
 import { buildObservabilityMcpTools, handleMcpJsonRpc } from '../observability/agent-mcp.js';
+import { buildPlatformMcpTools } from './platform-operations.js';
+import { registerPlatformAssistantRoutes, requirePlatformAssistantAccess } from './platform-assistant-routes.js';
 import { listModelPrices, upsertModelPrice } from '../flywheel/model-prices-store.js';
 import { loadQualityTrend } from '../public-api/public-observability-quality-trend.js';
 import { loadRunIterationCycle } from './run-iteration-cycle.js';
+import { registerDashboardQueryRoutes } from './dashboard-query-routes.js';
+import { resolveDashboardOwner } from './dashboard-owner.js';
 export function registerSignalsRoutes(router: Router): void {
+  registerDashboardQueryRoutes(router);
   // 平台内落库序列索引（metric + service），NL 查询与 MCP 工具共用。
   function buildSeriesIndex(series: Array<{ metric: string; labels: unknown }>): Array<{ metric: string; service: string }> {
     const indexMap = new Map<string, string>();
@@ -84,7 +91,7 @@ export function registerSignalsRoutes(router: Router): void {
     return { incident, correlation };
   }
 
-  // AI agent MCP 工具面（只读查询，工具集构建一次）。
+  // Compatibility metric tools; the complete platform facade is request-scoped.
   const mcpTools = buildObservabilityMcpTools({
     listSeries: async ({ limit }) => await queryMetricSeries({ limit }),
     queryRanges: async ({ metric, fromMs, toMs, windowMinutes, maxPoints }) => {
@@ -99,6 +106,8 @@ export function registerSignalsRoutes(router: Router): void {
     incidentCorrelate: (alertKey) => correlateIncidentByKey(alertKey),
     runIterationCycle: (days) => loadRunIterationCycle(days),
   });
+
+  registerPlatformAssistantRoutes(router);
 
   // ---- 平台内指标查询（OTLP metrics 落库后的一等查询面，管理员只读） ----
 
@@ -574,7 +583,7 @@ export function registerSignalsRoutes(router: Router): void {
 
   router.get('/api/ops/observability/boards', requireObservabilityAccess, async (req: Request, res: Response) => {
     try {
-      const boards = await listBoards(resolveOpsActor(req));
+      const boards = await listBoards(await resolveDashboardOwner(req));
       res.setHeader('Cache-Control', 'no-store');
       res.json({ ok: true, boards });
     } catch (error) {
@@ -589,9 +598,13 @@ export function registerSignalsRoutes(router: Router): void {
     async (req: Request, res: Response) => {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const name = normalizeBoardName(body.name);
+      if (body.visibility != null && body.visibility !== 'private' && body.visibility !== 'team') {
+        res.status(400).json({ ok: false, error: 'invalid_board_visibility' });
+        return;
+      }
       let spec: BoardSpec | undefined;
       if (body.spec != null) {
-        const parsed = normalizeBoardSpec(body.spec);
+        const parsed = normalizeBoardWriteSpec(body.spec);
         if (!parsed) {
           res.status(400).json({ ok: false, error: 'invalid_board_spec' });
           return;
@@ -604,9 +617,10 @@ export function registerSignalsRoutes(router: Router): void {
       }
       try {
         const board = await createBoard({
-          owner: resolveOpsActor(req),
+          owner: await resolveDashboardOwner(req),
           name: name ?? '未命名看板',
           spec,
+          ...(body.visibility != null ? { visibility: body.visibility as 'private' | 'team' } : {}),
         });
         res.status(201).json({ ok: true, board });
       } catch (error) {
@@ -633,9 +647,13 @@ export function registerSignalsRoutes(router: Router): void {
           res.status(400).json({ ok: false, error: 'invalid_board_template' });
           return;
         }
+        if (!grafana.mapped) {
+          res.status(400).json({ ok: false, error: 'unsupported_grafana_dashboard', source: 'grafana', mapped: 0, skipped: grafana.skipped, warnings: grafana.warnings, details: grafana.details });
+          return;
+        }
         try {
-          const board = await createBoard({ owner: resolveOpsActor(req), name: grafana.name, spec: grafana.spec });
-          res.status(201).json({ ok: true, board, source: 'grafana', mapped: grafana.mapped, skipped: grafana.skipped });
+          const board = await createBoard({ owner: await resolveDashboardOwner(req), name: grafana.name, spec: grafana.spec });
+          res.status(201).json({ ok: true, board, source: 'grafana', mapped: grafana.mapped, skipped: grafana.skipped, warnings: grafana.warnings, details: grafana.details });
         } catch (error) {
           if (String((error as Error)?.message ?? '') === 'too_many_boards') {
             res.status(400).json({ ok: false, error: 'too_many_boards' });
@@ -647,7 +665,7 @@ export function registerSignalsRoutes(router: Router): void {
       }
       try {
         const board = await createBoard({
-          owner: resolveOpsActor(req),
+          owner: await resolveDashboardOwner(req),
           name: parsed.name ?? '导入看板',
           spec: parsed.spec,
         });
@@ -723,7 +741,7 @@ export function registerSignalsRoutes(router: Router): void {
           return;
         }
         const board = await createBoard({
-          owner: resolveOpsActor(req),
+          owner: await resolveDashboardOwner(req),
           name: normalizeBoardName(specJson?.name) ?? question.slice(0, 20) ?? 'AI 看板',
           spec,
         });
@@ -749,7 +767,14 @@ export function registerSignalsRoutes(router: Router): void {
     requireOpsMutationGuard,
     async (req: Request, res: Response) => {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const patch: { name?: string; spec?: BoardSpec } = {};
+      const patch: { name?: string; spec?: BoardSpec; visibility?: 'private' | 'team' } = {};
+      if (body.visibility != null) {
+        if (body.visibility !== 'private' && body.visibility !== 'team') {
+          res.status(400).json({ ok: false, error: 'invalid_board_visibility' });
+          return;
+        }
+        patch.visibility = body.visibility;
+      }
       if (body.name != null) {
         const name = normalizeBoardName(body.name);
         if (!name) {
@@ -759,7 +784,7 @@ export function registerSignalsRoutes(router: Router): void {
         patch.name = name;
       }
       if (body.spec != null) {
-        const spec = normalizeBoardSpec(body.spec);
+        const spec = normalizeBoardWriteSpec(body.spec);
         if (!spec) {
           res.status(400).json({ ok: false, error: 'invalid_board_spec' });
           return;
@@ -767,7 +792,7 @@ export function registerSignalsRoutes(router: Router): void {
         patch.spec = spec;
       }
       try {
-        const board = await updateBoard(resolveOpsActor(req), String(req.params.boardId ?? ''), patch);
+        const board = await updateBoard(await resolveDashboardOwner(req), String(req.params.boardId ?? ''), patch);
         if (!board) {
           res.status(404).json({ ok: false, error: 'board_not_found' });
           return;
@@ -785,7 +810,7 @@ export function registerSignalsRoutes(router: Router): void {
     requireOpsMutationGuard,
     async (req: Request, res: Response) => {
       try {
-        const removed = await deleteBoard(resolveOpsActor(req), String(req.params.boardId ?? ''));
+        const removed = await deleteBoard(await resolveDashboardOwner(req), String(req.params.boardId ?? ''));
         if (!removed) {
           res.status(404).json({ ok: false, error: 'board_not_found' });
           return;
@@ -797,10 +822,11 @@ export function registerSignalsRoutes(router: Router): void {
     },
   );
 
-  // ---- AI agent MCP 工具面（只读查询；Streamable HTTP / JSON-RPC 2.0，通知回 202） ----
+  // ---- AI agent MCP：全部平台能力复用 HTTP 权限/校验/审批，通知回 202 ----
 
-  router.post('/api/ops/mcp', requireObservabilityAccess, async (req: Request, res: Response) => {
-    const response = await handleMcpJsonRpc(req.body, mcpTools, { name: 'd-obs', version: '1.0.0' });
+  router.post('/api/ops/mcp', tenantScopeGate, requirePlatformAssistantAccess, async (req: Request, res: Response) => {
+    const tools = [...(req.opsTenantAccess ? [] : mcpTools), ...buildPlatformMcpTools(router, req, res)];
+    const response = await handleMcpJsonRpc(req.body, tools, { name: 'd-obs', version: '1.1.0' });
     if (!response) {
       res.status(202).end();
       return;
@@ -891,13 +917,14 @@ export function registerSignalsRoutes(router: Router): void {
     requireObservabilityAccess,
     async (req: Request, res: Response) => {
       try {
-        const owner = resolveOpsActor(req);
+        const owner = await resolveDashboardOwner(req);
         const board = (await listBoards(owner)).find((item) => item.id === String(req.params.boardId ?? ''));
         if (!board) {
           res.status(404).json({ ok: false, error: 'board_not_found' });
           return;
         }
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(board.name)}.grafana.json"`);
         res.json(toGrafanaDashboard(board));
       } catch (error) {
@@ -910,7 +937,7 @@ export function registerSignalsRoutes(router: Router): void {
 
   router.get('/api/ops/observability/library/panels', requireObservabilityAccess, async (req: Request, res: Response) => {
     try {
-      const panels = await listLibraryPanels(resolveOpsActor(req));
+      const panels = await listLibraryPanels(await resolveDashboardOwner(req));
       res.setHeader('Cache-Control', 'no-store');
       res.json({ ok: true, panels });
     } catch (error) {
@@ -931,15 +958,16 @@ export function registerSignalsRoutes(router: Router): void {
       }
       try {
         const record = await saveLibraryPanel({
-          owner: resolveOpsActor(req),
+          owner: await resolveDashboardOwner(req),
           panel,
           id: typeof body.id === 'string' ? body.id : undefined,
         });
         // 链接式传播：更新已有库面板时，同步所有引用它的看板面板定义。
         let syncedBoards = 0;
         if (body.id && record) {
-          const owner = resolveOpsActor(req);
+          const owner = await resolveDashboardOwner(req);
           for (const board of await listBoards(owner)) {
+            if (!board.editable) continue;
             if (!board.spec.panels.some((p) => p.libraryId === record.id)) continue;
             const panels = board.spec.panels.map((p) =>
               p.libraryId === record.id
@@ -967,7 +995,7 @@ export function registerSignalsRoutes(router: Router): void {
     requireOpsMutationGuard,
     async (req: Request, res: Response) => {
       try {
-        const removed = await deleteLibraryPanel(resolveOpsActor(req), String(req.params.panelId ?? ''));
+        const removed = await deleteLibraryPanel(await resolveDashboardOwner(req), String(req.params.panelId ?? ''));
         if (!removed) {
           res.status(404).json({ ok: false, error: 'library_panel_not_found' });
           return;
@@ -1054,9 +1082,10 @@ export function registerSignalsRoutes(router: Router): void {
     requireOpsMutationGuard,
     async (req: Request, res: Response) => {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const inputPerM = Number(body.inputPerM);
-      const outputPerM = Number(body.outputPerM);
-      if (!Number.isFinite(inputPerM) || !Number.isFinite(outputPerM) || inputPerM < 0 || outputPerM < 0) {
+      const inputPerM = body.inputPerM;
+      const outputPerM = body.outputPerM;
+      if (typeof inputPerM !== 'number' || typeof outputPerM !== 'number'
+        || !Number.isFinite(inputPerM) || !Number.isFinite(outputPerM) || inputPerM < 0 || outputPerM < 0) {
         res.status(400).json({ ok: false, error: 'invalid_model_price' });
         return;
       }

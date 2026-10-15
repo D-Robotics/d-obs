@@ -11,3 +11,4 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/run
+TimeoutStartSec=30s

@@ -25,40 +25,28 @@ export const OPS_OBSERVABILITY_COCKPIT_SCRIPT = `
       function cockpitSamples(summary){const match=String(summary||'').match(/样本\\s*(?:≥|=)?\\s*([0-9,]+)/);return match?Number(match[1].replace(/,/g,'')):null}
       function cockpitTarget(summary){const match=String(summary||'').match(/产品目标\\s*≥\\s*([0-9]+(?:\\.[0-9]+)?)%/);return match?Number(match[1]):null}
       function cockpitAlertBand(summary){const match=String(summary||'').match(/预警\\s*<\\s*([0-9]+(?:\\.[0-9]+)?)%/);return match?Number(match[1]):null}
-      function cockpitFreshness(value,status){if(!value)return['未确认','暂无最近评估时间','warn'];const time=new Date(value).getTime();const age=Math.max(0,Date.now()-time);if(!Number.isFinite(time))return['未确认','评估时间无效','warn'];const minutes=Math.floor(age/60000);const label=minutes<1?'刚刚':minutes<60?minutes+' 分钟前':Math.floor(minutes/60)+' 小时前';return[label,'最近评估 '+when(value),status==='stale'?'warn':'good']}
+      function cockpitProductState(check){const summary=String(check.summary||'');const value=cockpitPercent(summary);const stale=check.status==='stale'||/快照已[^;；]*未刷新|快照刷新失败/.test(summary);const unavailable=['unknown','stale','disabled'].includes(check.status)||value==null||/不可用|暂不评估|样本不足/.test(summary);return{value,stale,unavailable,unknown:stale||unavailable}}
+      function cockpitFreshness(value,status){if(!value)return['未确认','暂无最近评估时间','warn'];const time=new Date(value).getTime();const age=Math.max(0,Date.now()-time);if(!Number.isFinite(time))return['未确认','评估时间无效','warn'];const minutes=Math.floor(age/60000);const label=minutes<1?'刚刚':minutes<60?minutes+' 分钟前':Math.floor(minutes/60)+' 小时前';return[label,(status==='stale'||age>5*60*1000?'数据已过期 · ':'')+'最近评估 '+when(value),status==='stale'||age>5*60*1000?'warn':'good']}
       function cockpitNorthStarChecks(o){return overviewChecks(o).filter(check=>String(check.key||'').startsWith('north-star-'))}
       function renderNorthStarCockpit(o){
-        const panel=make('section','panel north-star-panel');
-        panel.setAttribute('aria-labelledby','northStarHeading');
-        const head=make('div','section-head');
-        const copy=make('div');
-        const heading=add(copy,'h2','','产品健康 / 北极星指标');heading.id='northStarHeading';
-        add(copy,'div','hint','与线上可靠性分开观察；样本不足显示为未知，不伪装成健康。');
-        head.appendChild(copy);
-        add(head,'div','right',cockpitNorthStarChecks(o).length+' 项 · 6 小时快照');
-        panel.appendChild(head);
-        const grid=make('div','north-star-grid');
         const checks=cockpitNorthStarChecks(o);
-        if(!checks.length){panel.appendChild(make('div','impact-empty','北极星快照尚未接入；数据可用后会自动显示。'));return panel}
+        if(!checks.length){const disclosure=overviewDisclosure('overviewProductHealthEmpty','产品健康 / 北极星指标','暂无快照 · 按需查看接入状态');disclosure.classList.add('overview-product-health');disclosure.appendChild(make('div','impact-empty','北极星快照尚未接入；数据可用后会自动显示。'));return disclosure}
+        const panel=make('section','panel north-star-panel overview-product-health');panel.setAttribute('aria-labelledby','northStarHeading');
+        const head=make('div','section-head');const copy=make('div');const heading=add(copy,'h2','','产品健康 / 北极星指标');heading.id='northStarHeading';add(copy,'div','hint','产品效果单独观察；样本不足显示为未知。');head.appendChild(copy);add(head,'div','right',checks.length+' 项 · 6 小时快照');panel.appendChild(head);
+        const grid=make('div','north-star-grid overview-product-kpis');
+        const definition=overviewDisclosure('overviewProductHealthDetails','口径与最近评估','样本、目标与评估摘要');
         checks.forEach(check=>{
-          const value=cockpitPercent(check.summary);
-          const unknown=check.status==='unknown'||value==null||/不可用|暂不评估|样本不足/.test(String(check.summary||''));
-          const status=cockpitStatus(check.status,unknown);
-          const samples=cockpitSamples(check.summary);
-          const target=cockpitTarget(check.summary);const alertBand=cockpitAlertBand(check.summary);const targetMiss=target!=null&&value!=null&&value<target;
-          const card=make('article','north-star-card '+status+(targetMiss?' target-miss':''));
-          const top=make('div','north-star-head');top.appendChild(make('span','state-dot '+(status==='unknown'?'disabled':status)));add(top,'strong','',cockpitNorthStarName(check.key));add(top,'span','status-chip',cockpitStatusLabel(status,targetMiss));card.appendChild(top);
-          add(card,'div','north-star-value',value==null?'—':value.toFixed(1)+'%');
-          const bar=make('div','north-star-bar');const fill=make('span');fill.style.width=value==null?'0%':Math.max(0,Math.min(100,value))+'%';bar.appendChild(fill);card.appendChild(bar);
-          const meta=make('div','north-star-meta');add(meta,'span','',samples==null?'样本待接入':'样本 '+fmt(samples));add(meta,'span','',check.checkedAt?'更新 '+when(check.checkedAt):'暂无更新时间');card.appendChild(meta);
-          if(target!=null||alertBand!=null){const targetRow=make('div','north-star-target');add(targetRow,'span','',target!=null?'产品目标 ≥ '+target+'%':'');add(targetRow,'span',targetMiss?'target-miss':'',targetMiss?'尚未达标':(alertBand!=null?'预警 < '+alertBand+'%':'告警未触发'));card.appendChild(targetRow)}
-          add(card,'div','check-summary',unknown?'样本不足，暂不评估':(check.summary||'暂无摘要'));grid.appendChild(card);
-        });
-        panel.appendChild(grid);return panel;
+          const {value,stale,unavailable,unknown}=cockpitProductState(check);
+          const status=cockpitStatus(check.status,unknown);const samples=cockpitSamples(check.summary);const target=cockpitTarget(check.summary);const alertBand=cockpitAlertBand(check.summary);const targetMiss=!unknown&&target!=null&&value!=null&&value<target;
+          const card=make('article','north-star-card '+status+(targetMiss?' target-miss':''));const top=make('div','north-star-head');add(top,'strong','',cockpitNorthStarName(check.key));add(top,'span','status-chip',check.status==='disabled'?'未启用':stale?'快照过期':cockpitStatusLabel(status,targetMiss));card.appendChild(top);add(card,'div','north-star-value',unavailable?'—':value.toFixed(1)+'%');
+          const bar=make('div','north-star-bar');const fill=make('span');fill.style.width=unknown?'0%':Math.max(0,Math.min(100,value))+'%';bar.appendChild(fill);card.appendChild(bar);
+          const meta=make('div','north-star-meta');add(meta,'span','',samples==null?'样本待接入':'样本 '+fmt(samples));add(meta,'span',targetMiss?'target-miss':'',target!=null?'目标 ≥ '+target+'%':(alertBand!=null?'预警 < '+alertBand+'%':'暂无目标'));card.appendChild(meta);grid.appendChild(card);
+          const row=make('div','overview-product-definition');add(row,'strong','',cockpitNorthStarName(check.key));add(row,'span','',check.summary||'暂无评估摘要');add(row,'small','',check.checkedAt?'更新 '+when(check.checkedAt):'暂无更新时间');definition.appendChild(row);
+        });panel.appendChild(grid);panel.appendChild(definition);return panel;
       }
       function cockpitDomain(check){const key=String(check.key||'');if(key.includes('tool'))return '工具链';if(key.includes('ai-run')||key.includes('moss-model'))return 'Agent Runtime';if(key.includes('login')||key.includes('sso'))return '账号与会话';if(key.includes('postgres')||key.includes('database'))return '中心数据库';if(key.includes('probe')||check.category==='probe')return '用户旅程拨测';if(key.includes('north-star'))return '产品健康';return check.category==='log'?'应用日志':'平台基础设施'}
       function renderImpactCockpit(o){
-        const wrapper=make('div','impact-grid');
+        const wrapper=make('div','impact-grid overview-impact');
         const panel=make('section','panel impact-panel');
         const head=make('div','section-head');const copy=make('div');add(copy,'h2','','影响面与服务域');add(copy,'div','hint','将同一类异常聚合到可处理的服务域，避免只看孤立规则。');head.appendChild(copy);add(head,'div','right','异常优先');panel.appendChild(head);
         const list=make('div','impact-list');
@@ -70,5 +58,5 @@ export const OPS_OBSERVABILITY_COCKPIT_SCRIPT = `
         const data=make('section','panel impact-panel');const dataHead=make('div','section-head');const dataCopy=make('div');add(dataCopy,'h2','','观测系统健康');add(dataCopy,'div','hint','先确认数据可信，再判断业务是否健康。');dataHead.appendChild(dataCopy);data.appendChild(dataHead);const stats=make('div','metrics impact-health-metrics');const signals=o.signals||{};const total=overviewNumber(signals.totalEvents);const freshness=cockpitFreshness(o.alerting&&o.alerting.lastCheckedAt,o.alerting&&o.alerting.status);[['Telemetry 事件',fmt(total),total?'已接收':'暂无事件',total?'good':'warn'],['巡检新鲜度',freshness[0],freshness[1],freshness[2]],['Trace 覆盖',o.runTraces&&o.runTraces.length?fmt(o.runTraces.length)+' 条':'—','窗口内原生运行证据',o.runTraces&&o.runTraces.length?'good':'warn']].forEach(item=>{const card=make('div','metric');add(card,'div','label',item[0]);add(card,'div','value '+item[3],item[1]);add(card,'div','detail',item[2]);stats.appendChild(card)});data.appendChild(stats);wrapper.appendChild(data);return wrapper;
       }
       const cockpitBaseRenderOverview=renderOverview;
-      renderOverview=function(){cockpitBaseRenderOverview();const root=$('overviewContent');if(!root||!state.overview)return;const firstDetail=root.querySelector('.detail-sections');const impact=renderImpactCockpit(state.overview);if(firstDetail)root.insertBefore(impact,firstDetail);else root.appendChild(impact);const northStar=renderNorthStarCockpit(state.overview);if(firstDetail)root.insertBefore(northStar,firstDetail);else root.appendChild(northStar);const selectedHours=state.overviewHours||state.overview.windowHours||24;const windowSelect=$('overviewWindow');if(windowSelect)windowSelect.value=String(selectedHours)};
+      renderOverview=function(){cockpitBaseRenderOverview();const root=$('overviewContent');if(!root||!state.overview)return;const secondary=root.querySelector('.overview-secondary')||root;secondary.appendChild(renderImpactCockpit(state.overview));secondary.appendChild(renderNorthStarCockpit(state.overview));const selectedHours=state.overviewHours||state.overview.windowHours||24;const windowSelect=$('overviewWindow');if(windowSelect)windowSelect.value=String(selectedHours)};
 `;

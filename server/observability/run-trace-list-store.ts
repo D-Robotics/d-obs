@@ -72,6 +72,7 @@ export interface RunTraceListRow {
   coverage: StudioTraceCoverage & {
     spanCount: number;
     observedSegments: StudioTraceCoverageSegment[];
+    truncated?: boolean;
   };
   producer: {
     surface: StudioTraceSurface;
@@ -161,6 +162,49 @@ interface TraceCoverageAggregate {
   studioVersion: string | null;
   mossVersion: string | null;
   mocVersion: string | null;
+  invalidParent: boolean;
+  duplicateIdentity: boolean;
+  topologyCycle: boolean;
+  topologyTruncated: boolean;
+}
+
+const TRACE_TOPOLOGY_LIMIT = 512;
+
+/** Only bounded graph identities are read; none are included in the list response. */
+function projectTraceTopology(value: unknown, spanCount: number) {
+  const truncated = spanCount > TRACE_TOPOLOGY_LIMIT;
+  const fragments = new Map<string, Map<string, string>>();
+  let duplicateIdentity = false;
+  let invalidParent = false;
+  let topologyCycle = false;
+  for (const raw of Array.isArray(value) ? value.slice(0, TRACE_TOPOLOGY_LIMIT) : []) {
+    if (!raw || typeof raw !== 'object') continue;
+    const row = raw as Record<string, unknown>;
+    const traceId = text(row.traceId, 32).toLowerCase();
+    const spanId = text(row.spanId, 16).toLowerCase();
+    if (!/^[0-9a-f]{32}$/.test(traceId) || !/^[0-9a-f]{16}$/.test(spanId)) continue;
+    const graph = fragments.get(traceId) ?? new Map<string, string>();
+    if (graph.has(spanId)) duplicateIdentity = true;
+    else graph.set(spanId, text(row.parentSpanId, 16));
+    fragments.set(traceId, graph);
+  }
+  for (const graph of fragments.values()) {
+    const resolved = new Set<string>();
+    for (const [spanId, parentSpanId] of graph) {
+      // A parent outside the bounded sample may still be present in storage.
+      if (parentSpanId && !graph.has(parentSpanId) && !truncated) invalidParent = true;
+      if (resolved.has(spanId)) continue;
+      const path = new Set<string>();
+      let current = spanId;
+      while (current && graph.has(current) && !resolved.has(current)) {
+        if (path.has(current)) { topologyCycle = true; break; }
+        path.add(current);
+        current = graph.get(current) ?? '';
+      }
+      for (const id of path) resolved.add(id);
+    }
+  }
+  return { invalidParent, duplicateIdentity, topologyCycle, topologyTruncated: truncated };
 }
 
 function emptyTraceCoverageAggregate(): TraceCoverageAggregate {
@@ -176,6 +220,10 @@ function emptyTraceCoverageAggregate(): TraceCoverageAggregate {
     studioVersion: null,
     mossVersion: null,
     mocVersion: null,
+    invalidParent: false,
+    duplicateIdentity: false,
+    topologyCycle: false,
+    topologyTruncated: false,
   };
 }
 
@@ -219,10 +267,42 @@ async function readTraceCoverageAggregates(
     const result = await pool.query(
       `with wanted(account_scope_id, run_id) as (
              select * from unnest($4::text[], $5::text[])
-           )
+           ), visible_spans as (
+         select s.account_scope_id, s.run_id, s.trace_id, s.span_id, s.parent_span_id,
+                s.span_kind, s.source_segment, s.name, s.start_time_ms, s.end_time_ms,
+                s.surface, s.studio_version, s.moss_version, s.moc_version,
+                row_number() over (
+                  partition by s.account_scope_id, s.run_id
+                  order by s.start_time_ms, s.end_time_ms, s.span_id, s.trace_id
+                ) topology_index
+           from public.studio_trace_spans s
+           join wanted on wanted.account_scope_id = s.account_scope_id
+                     and wanted.run_id = s.run_id
+          where s.environment = $1
+            and ($6::text is not null or s.start_time_ms >= $2)
+            and ($6::text is not null or s.start_time_ms <= $3)
+            and coalesce(
+              s.governance_expires_at,
+              to_timestamp(s.start_time_ms / 1000.0) + interval '35 days'
+            ) > now()
+            and not exists (
+              select 1 from public.studio_telemetry_tombstones tombstone
+               where tombstone.account_scope_id = s.account_scope_id
+                 and tombstone.environment = s.environment
+                 and (tombstone.user_id is null or tombstone.user_id = s.owner_user_id)
+                 and (tombstone.run_id is null or tombstone.run_id = s.run_id)
+                 and (tombstone.trace_id is null or tombstone.trace_id = s.trace_id)
+                 and (tombstone.session_id is null or tombstone.session_id = s.session_id)
+                 and tombstone.grant_id is null
+            )
+       )
        select s.account_scope_id, s.run_id,
               count(*)::int span_count,
               count(distinct s.trace_id)::int trace_count,
+              jsonb_agg(jsonb_build_object(
+                'traceId', s.trace_id, 'spanId', s.span_id, 'parentSpanId', s.parent_span_id
+              ) order by s.topology_index)
+                filter (where s.topology_index <= ${TRACE_TOPOLOGY_LIMIT}) span_topology,
               count(*) filter (where s.span_kind = 'client')::int client_span_count,
               count(*) filter (where s.span_kind = 'server')::int server_span_count,
               coalesce(sum(greatest(0, s.end_time_ms - s.start_time_ms))
@@ -235,26 +315,7 @@ async function readTraceCoverageAggregates(
               max(nullif(s.studio_version, '')) studio_version,
               max(nullif(s.moss_version, '')) moss_version,
               max(nullif(s.moc_version, '')) moc_version
-         from public.studio_trace_spans s
-         join wanted on wanted.account_scope_id = s.account_scope_id
-                   and wanted.run_id = s.run_id
-        where s.environment = $1
-          and ($6::text is not null or s.start_time_ms >= $2)
-          and ($6::text is not null or s.start_time_ms <= $3)
-          and coalesce(
-            s.governance_expires_at,
-            to_timestamp(s.start_time_ms / 1000.0) + interval '35 days'
-          ) > now()
-          and not exists (
-            select 1 from public.studio_telemetry_tombstones tombstone
-             where tombstone.account_scope_id = s.account_scope_id
-               and tombstone.environment = s.environment
-               and (tombstone.user_id is null or tombstone.user_id = s.owner_user_id)
-               and (tombstone.run_id is null or tombstone.run_id = s.run_id)
-               and (tombstone.trace_id is null or tombstone.trace_id = s.trace_id)
-               and (tombstone.session_id is null or tombstone.session_id = s.session_id)
-               and tombstone.grant_id is null
-          )
+         from visible_spans s
         group by s.account_scope_id, s.run_id`,
       [environmentValue, windowStart, windowEnd, accountScopeIds, runIds, exactRunId],
     );
@@ -281,6 +342,7 @@ async function readTraceCoverageAggregates(
         studioVersion: safeVersion(row.studio_version),
         mossVersion: safeVersion(row.moss_version),
         mocVersion: safeVersion(row.moc_version),
+        ...projectTraceTopology(row.span_topology, number(row.span_count)),
       });
     }
   } catch {
@@ -504,7 +566,15 @@ export async function getRunTraceList(options: RunTraceListOptions): Promise<Run
       admittedAt: iso(row.started_at) ? Date.parse(String(iso(row.started_at))) : undefined,
       observedSegments,
       hasRunSummary: aggregate.hasRunSummary,
+      multipleFragments: aggregate.traceCount > 1,
+      invalidParent: aggregate.invalidParent,
+      duplicateIdentity: aggregate.duplicateIdentity,
+      topologyCycle: aggregate.topologyCycle,
     });
+    if (aggregate.topologyTruncated) {
+      // Presence alone cannot prove a complete graph beyond the bounded sample.
+      if (coverage.state === 'complete') coverage.state = 'partial';
+    }
     return [
       {
         runRef,
@@ -543,7 +613,12 @@ export async function getRunTraceList(options: RunTraceListOptions): Promise<Run
         serverSpanCount: aggregate.serverSpanCount,
         clientDurationMs: aggregate.clientDurationMs,
         traceCount: aggregate.traceCount,
-        coverage: { ...coverage, spanCount: aggregate.spanCount, observedSegments },
+        coverage: {
+          ...coverage,
+          spanCount: aggregate.spanCount,
+          observedSegments,
+          ...(aggregate.topologyTruncated ? { truncated: true } : {}),
+        },
         producer: {
           surface: producerSurface,
           studioVersion,

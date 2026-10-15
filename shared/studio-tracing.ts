@@ -104,7 +104,7 @@ function normalizeAttributes(
   for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
     if (!allowed.has(key)) continue;
     if (typeof raw === 'string') {
-      const text = safeText(raw, 160);
+      const text = safeText(raw, key === 'sessionRef' ? 200 : 160);
       if (text) result[key] = text;
     } else if (typeof raw === 'boolean') {
       result[key] = raw;

@@ -1,0 +1,460 @@
+{
+  "schema": "rdk.camera-studio-onboarding-validation.v1",
+  "date": "2026-10-15",
+  "timezone": "Asia/Shanghai",
+  "scope": "supplemental_compile_link_and_real_user_software_preparation_validation",
+  "deploymentPerformedByThisRecord": false,
+  "priorReleaseHistoryModified": false,
+  "hardwareOperations": 0,
+  "targetSdk": {
+    "status": "compile_link_and_static_symbols_passed",
+    "actualInstalledSdkUsed": true,
+    "command": [
+      "make",
+      "syntax-check",
+      "all",
+      "VP_SENSOR_DIR=/app/multimedia_samples/vp_sensors",
+      "SDK_INCLUDE=/usr/include",
+      "SDK_LIBDIR=/usr/hobot/lib",
+      "LDFLAGS=-L/usr/hobot/lib -Wl,-t"
+    ],
+    "exitCode": 0,
+    "declaredPublicAbiCount": 22,
+    "allDeclaredPublicSymbolsPresent": true,
+    "exportedX5wSymbolCount": 24,
+    "artifact": {
+      "relativePath": "build/libvision_x5_native.so",
+      "sha256": "cdfee849fa66f56c174640f9cd6c5d5a1fdeb8fd8bf31352378218c80660a00c",
+      "bytes": 381624,
+      "elfAarch64": true,
+      "x5wExportedSymbolCount": 24,
+      "neededLibraries": [
+        "libvpf.so.1",
+        "libcam.so.1",
+        "libhbmem.so.1",
+        "libm.so.6",
+        "libc.so.6",
+        "ld-linux-aarch64.so.1"
+      ]
+    },
+    "generatedArtifactExecuted": false,
+    "dlopenUsed": false,
+    "sdkTypesReplaced": false,
+    "systemPackagesChanged": false,
+    "cleanupCompleted": true,
+    "clockSkewWarningPreserved": true,
+    "runtimeHardwareVerified": false
+  },
+  "realUserPreparation": {
+    "status": "observed_ui_flow_export_content_verified",
+    "identityScope": "existing_real_sso_user",
+    "flow": [
+      "create_file_experiment",
+      "save_acceptance_plan",
+      "reopen_experiment",
+      "download_experiment_zip_and_handbook"
+    ],
+    "operationEvidence": "Independent redacted UI observation proof records the existing authenticated browser workflow, reopening persisted plan, and downloaded bytes. This is observed UI evidence, not an HTTP log or proof of per-request status.",
+    "uiProofStatus": "observed_ui_verified",
+    "experimentId": "efbc74b5-3b7b-4e4e-be0b-ff8394d5be26",
+    "experimentCreatedAt": "2026-10-15T08:21:39.564Z",
+    "acceptancePlanId": "1e443e64-1065-43ed-a342-f4b9ceb81bd5",
+    "acceptancePlanCreatedAt": "2026-10-15T08:25:39.458Z",
+    "requiredVisualCriteria": 3,
+    "zipEntryCount": 4,
+    "zipEntries": [
+      {
+        "path": "manifest.json",
+        "bytes": 5631,
+        "sha256": "845b39b2f1804562c7d2008315a21e7a51a051cc4443daa3bbf07bd8fd30e0b4"
+      },
+      {
+        "path": "handbook.md",
+        "bytes": 16822,
+        "sha256": "3a28f10948566617b9e45b4fe218d7df254e63fe32f67bffd29018540167d16a"
+      },
+      {
+        "path": "calibration/tasks.json",
+        "bytes": 139,
+        "sha256": "58b3f882ae3834ac771c3267430251ed0c65d0952fd497797d99b2b21d4f52c0"
+      },
+      {
+        "path": "delivery.json",
+        "bytes": 4705,
+        "sha256": "a9be11b2745c7ca4d9717d36eeabf34ddd5c580e0e3aa393f7143cc7e36f0da2"
+      }
+    ],
+    "deliveryBytesMatchZipEntry": true,
+    "qualityStatus": "pending",
+    "tuningStatus": "missing",
+    "workshopReady": false,
+    "cameraSessionCount": 0,
+    "rawSampleCount": 0,
+    "cameraFrameCount": 0,
+    "processedImageCount": 0,
+    "candidateCount": 0,
+    "evaluationCount": 0,
+    "deviceRunCount": 0,
+    "aiDebugRunCount": 0,
+    "acceptanceRecordCount": 0,
+    "selectedTuning": null,
+    "deviceAdapterCount": 0,
+    "blockers": [
+      "device_adapter_required",
+      "delivery_target_required",
+      "current_acceptance_record_required",
+      "acceptance_measurements_missing",
+      "bringup_evidence_required",
+      "applied_config_and_new_frame_required",
+      "original_baseline_restore_and_new_frame_required",
+      "standalone_tuning_reload_unverified"
+    ],
+    "uiObservationProofSha256": "fa5f88928df07c74ff34fbc6230d636743b2a5d3614e06b1cb5a08a665185e8c",
+    "observedUiActions": [
+      "opened built-in RDK Camera Workshop v1.2.1",
+      "created file preparation experiment using Workshop 2 goal",
+      "saved scene and three required visual acceptance criteria",
+      "closed and reopened workspace and verified saved scene, criteria, and plan ID",
+      "downloaded handbook, delivery JSON, and experiment ZIP through UI",
+      "reopened workspace again after Bridge attempt and verified same plan persisted"
+    ],
+    "uiEvidenceFiles": [
+      {
+        "name": "camera-handbook.md",
+        "sha256": "054ef9636b3f872f2b359bb382af571b1cbd3638e4d39fb9d477655bab12fbd6",
+        "bytes": 16822
+      },
+      {
+        "name": "camera-delivery.json",
+        "sha256": "a9be11b2745c7ca4d9717d36eeabf34ddd5c580e0e3aa393f7143cc7e36f0da2",
+        "bytes": 4705
+      },
+      {
+        "name": "camera-workshop.zip",
+        "sha256": "cc92d8f4ea20e5b876ac68571153014d80dbf1f83a765c29e98941f9301bcb01",
+        "bytes": 27741
+      },
+      {
+        "name": "studio-preparation.jpg",
+        "sha256": "14ef5e642a75e389a49e952994f76a83872750c0fbab9fecc7147c77a9b9bc5b",
+        "bytes": 68222
+      },
+      {
+        "name": "studio-acceptance-plan.jpg",
+        "sha256": "ddd047db484d3d4520c8461cbea79f58aabbf5cc68fed6877ee6b9f3975f5096",
+        "bytes": 72529
+      },
+      {
+        "name": "studio-workspace-dom.txt",
+        "sha256": "767a1a22e7a7dd9b12120214640f16c7f9e57c4c5ef8f0f1abae25713020449a",
+        "bytes": 18660
+      }
+    ]
+  },
+  "entrySourceRepair": {
+    "status": "source_only_verified_not_deployed",
+    "focusedTests": 17,
+    "focusedExitCode": 0,
+    "typecheckWebExitCode": 0,
+    "eslintExitCode": 0,
+    "fullRepositoryFastStatus": "failed",
+    "fullRepositoryFastFailedChecks": [
+      "rdk-docs-metadata",
+      "mcp-http-oauth-permissions",
+      "packaged-runtime-assets",
+      "rdk-docs-dual-runtime",
+      "plan-mode-device-safety",
+      "observability-moss-conformance",
+      "agent-sse-producer-events",
+      "moss-agent-post-tool",
+      "agent-entry-contract",
+      "agent-friendly-reference-audit-schema",
+      "known-giants-shrinkage",
+      "desktop-after-pack-workspaces"
+    ],
+    "browserValidationOfThisSourceRepair": false,
+    "additionalDeployment": false,
+    "files": {
+      "src/components/plugin-center/PluginDetailDrawer.tsx": {
+        "sha256": "c7610f0b9026aab535da8b9f5d83772505c542f0cebcb8262666b7aae851da47",
+        "bytes": 20250
+      },
+      "src/components/VisionWorkshopEntry.tsx": {
+        "sha256": "e45c7f5cce55a5ebf2329ac8bbb02bf74b2b9d536b79099c54468e1607e09818",
+        "bytes": 1166
+      },
+      "src/components/plugin-center/PluginDetailDrawer.camera-workshop.test.tsx": {
+        "sha256": "e44ce2a461518aaf22edd3a6e68f4439ed3f0d4a41c316bd1a4f5dc41913e6ff",
+        "bytes": 5030
+      }
+    }
+  },
+  "localBridgePairing": {
+    "status": "passed_bridge_pairing_and_single_target_ssh_auth",
+    "checkedAt": "2026-10-15T09:00:40Z",
+    "recoveryCompleted": true,
+    "recoveryScope": "board network and observed Studio Bridge software connection only; camera and ISP remain unverified",
+    "strictKnownHosts": true,
+    "singleSavedTargetDiscovered": true,
+    "scanScopeImmutableSingleTarget": true,
+    "sshAuthenticationStatus": "verified_by_real_ssh_marker_in_scan",
+    "bridgeCurrentlyRunningAtCheck": true,
+    "aliveBeyondInitialDiscoveryWindow": true,
+    "observedAliveDurationSeconds": 80,
+    "realStudioPairingObserved": true,
+    "studioWebSocketConnectedObserved": true,
+    "pairingAuthorization": "The user explicitly authorized retry and a new pairing after reconnecting the cable.",
+    "replugReadOnlyCheck": {
+      "tcpConnected": true,
+      "strictSshMarkerPassed": true,
+      "sshExitCode": 0,
+      "checkedAt": "2026-10-15T08:57:06.682Z",
+      "cameraOperations": 0
+    },
+    "studioObservedWorkflow": {
+      "source": "parent_task_observed_ui",
+      "newBoardAddress": "192.168.128.10",
+      "newBoardAutomaticallyRegistered": true,
+      "newBoardSelectedAndOnline": true,
+      "oldBoardAddress": "192.168.1.2",
+      "oldBoardRetainedOffline": true,
+      "terminalKernelCommand": "uname -r",
+      "terminalKernelOutput": "6.1.83",
+      "terminalWorkingDirectoryCommand": "pwd",
+      "terminalWorkingDirectoryOutput": "/home/sunrise",
+      "defaultDirectoryIssue": "/userdata/rdkstudio/projects/studio-default-project permission denied; initial terminal UI misclassified as SSH authentication; mitigated for current session by selecting existing user directory and reopening",
+      "independentUiProofStatus": "observed_ui_verified",
+      "folderPickerListedExistingHomeDirectory": true,
+      "fileEditorReadWriteVerified": false,
+      "filePaneObservation": "root label studio-default-project and empty-directory text after selecting home; requires separate investigation",
+      "uiConnectionProofSha256": "282ea6b97fd0a09fd7be000a20982e7e00c658957046f41bcf3dda4301453c2d",
+      "uiConnectionRecordedAt": "2026-10-15T09:07:49.036924+00:00",
+      "reopenedTerminalPtyReady": true,
+      "uiEvidenceFiles": [
+        {
+          "name": "studio-x5-online-terminal.jpg",
+          "bytes": 56718,
+          "sha256": "1461282e540b3315cc5eee3eda324923d0d786bdb7821b8e8884b7841fb5e2ee"
+        },
+        {
+          "name": "terminal-dom.txt",
+          "bytes": 923,
+          "sha256": "3565ab5d684b41bee59c0d7795025f15c496ee52fafbfd7f309f51486ba8cc85"
+        }
+      ],
+      "sourceRegressionFixStatus": "completed_software_verified_not_deployed",
+      "filePaneAfterAdditionalWait": "Still original project root label and empty-directory display with no error; editor project binding and read/write remain unverified."
+    },
+    "networkConfigurationChanged": false,
+    "boardConfigurationChanged": false,
+    "cameraOperations": 0,
+    "cameraOrIspRuntimeVerified": false,
+    "priorFailedAttempt": {
+      "archiveRelativePath": "attempts/attempt-20261015T085025Z",
+      "status": "blocked_target_network_unreachable",
+      "recoveryCompletedAtThatTime": false,
+      "processExited": true,
+      "observation": {
+        "source": "parent_task_observed_ui_and_process_state",
+        "uiPairingGenerated": true,
+        "scopedWrapperStarted": true,
+        "connectionAndPairingInitiallyObserved": true,
+        "autoExitAfterNoTargetsSeconds": 10,
+        "currentProcessState": "exited",
+        "studioDeviceState": "offline",
+        "subsequentNodeAndPythonTcpProbes": "timed_out",
+        "claimBoundary": "Transient bridge connection/pairing does not establish a reachable board, camera adapter or sustained bridge operation."
+      },
+      "readOnlySshProbe": {
+        "ok": false,
+        "markerReceived": false,
+        "elapsedMs": 8236,
+        "targetCount": 1,
+        "result": "connection_timed_out",
+        "cameraOperations": 0
+      },
+      "networkDiagnosis": {
+        "routeInterface": "en10",
+        "routeFlags": "<UP,HOST,REJECT,DONE,LLINFO,WASCLONED,IFSCOPE,IFREF>",
+        "pingReplyReceived": false,
+        "arpComplete": false,
+        "targetCount": 1
+      },
+      "localLinkObservation": {
+        "localUsbTargetPresent": true,
+        "localRouteInterface": "en10",
+        "localInterfaceActive": true,
+        "localInterfaceInSavedTargetSubnet": true,
+        "localSubnetConflictObserved": false,
+        "localIpEqualsBoardTarget": false,
+        "arpEntryComplete": false,
+        "pingReplyReceived": false,
+        "networkConfigurationChanged": false,
+        "boardConfigurationChanged": false
+      },
+      "supersededBy": "successful replug checks and newly authorized pairing recorded above"
+    },
+    "privacyScope": "Only redacted preparation, network, SSH, replug, archive-index and Bridge software proof JSON were read. No private connection, pairing input or runtime logs were read."
+  },
+  "unverified": [
+    "target_sdk_dlopen_and_execution",
+    "first_adapter_provisioning_in_studio_ui",
+    "native_camera_session_and_new_frames",
+    "raw_capture_and_isp_application",
+    "fresh_session_tuning_reload_independent_readback_and_restoration",
+    "real_scene_image_quality_acceptance",
+    "file_editor_project_binding_and_read_write"
+  ],
+  "evidence": [
+    {
+      "artifactRef": "studio-camera-live-20261015/board/link/software-proof.json",
+      "sha256": "4964234edd27aa6409f5304bd8d49966d2da774395c6e0d470f57c94a996605c",
+      "bytes": 1245
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/board/link/target-link-result.json",
+      "sha256": "47379c88b6a54fc4f2e14096b4d5df25b1d389450ec162ca1c2950945e56d16a",
+      "bytes": 24576
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/board/link/static-symbol-verification.json",
+      "sha256": "725d54c9fa340af5e6b02465ee484b41e17f8429d5dbe85ae435c92dff63e47c",
+      "bytes": 1702
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/board/link/source-manifest.json",
+      "sha256": "295787587a539aea903301aed8abedb4ba09f51a6881e990c27e368db91e3e72",
+      "bytes": 621
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/user-project/camera-workshop.zip",
+      "sha256": "cc92d8f4ea20e5b876ac68571153014d80dbf1f83a765c29e98941f9301bcb01",
+      "bytes": 27741
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/user-project/camera-delivery.json",
+      "sha256": "a9be11b2745c7ca4d9717d36eeabf34ddd5c580e0e3aa393f7143cc7e36f0da2",
+      "bytes": 4705
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/user-project/camera-handbook.md",
+      "sha256": "054ef9636b3f872f2b359bb382af571b1cbd3638e4d39fb9d477655bab12fbd6",
+      "bytes": 16822
+    },
+    {
+      "artifactRef": "studio-camera-entry-source-20261015/software-proof.json",
+      "sha256": "93923e9555e6227f8726d3b2243c2cca0786bb84730006ea8c2082fb7db7668e",
+      "bytes": 2801
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/user-project/ui-observation-proof.json",
+      "sha256": "fa5f88928df07c74ff34fbc6230d636743b2a5d3614e06b1cb5a08a665185e8c",
+      "bytes": 2029
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/bridge-preparation/attempts/attempt-20261015T085025Z/network-diagnosis.json",
+      "sha256": "13933595a2e09006608e0ffce658fdb43220b03fdc6333c3e3fb36721d4fdf7d",
+      "bytes": 239,
+      "historicalAttempt": true
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/bridge-preparation/attempts/attempt-20261015T085025Z/native-client-ssh-probe.json",
+      "sha256": "060ab93bedbcc9b73ce50a9637b6dedcf24de32b89cd9896b7d3fad7fa9ae2cf",
+      "bytes": 287,
+      "historicalAttempt": true
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/bridge-preparation/preparation-proof.json",
+      "sha256": "ac4f970eec4df51d482a45dd8ae1c4ebbf6bab574859334b12f2dadbf5e61fd8",
+      "bytes": 1767
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/bridge-preparation/attempts/attempt-20261015T085025Z/bridge-software-proof.json",
+      "sha256": "77f48dc054a33da62b60e52f690e1f93ee82815912f583b9424398b36d880fcd",
+      "bytes": 2338,
+      "historicalAttempt": true
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/bridge-preparation/bridge-software-proof.json",
+      "sha256": "7e588ba80f182e8f464e5e8ff80fb08d6dafb1e876de526b2fcc4ab9073bf4b8",
+      "bytes": 1531
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/bridge-preparation/replug-connection-check.json",
+      "sha256": "0ade6266a8f747dd9a5ae3a473b6f2e6d4a84b376899458d33a0b8c54318a2bd",
+      "bytes": 347
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/bridge-preparation/prior-attempt-archive.json",
+      "sha256": "6cf51751fe1454ecbca93cd6233f73e18ca50d7cbcf39acaacfd8fac9cda0e90",
+      "bytes": 1954
+    },
+    {
+      "artifactRef": "studio-camera-live-20261015/studio-connection/ui-connection-proof.json",
+      "sha256": "282ea6b97fd0a09fd7be000a20982e7e00c658957046f41bcf3dda4301453c2d",
+      "bytes": 1845
+    },
+    {
+      "artifactRef": "studio-terminal-auth-classification-20261015/software-proof.json",
+      "sha256": "1795e0843b665bb552f05f26233b85b557ef2e5337ea6e577f84fd9e4b4c641c",
+      "bytes": 3597
+    }
+  ],
+  "claimBoundary": "Compile/link, public symbol presence and real-user file experiment preparation passed within the stated evidence scope. This is not complete bringup, ISP tuning, portable tuning delivery or image quality acceptance.",
+  "terminalSourceRepair": {
+    "status": "source_only_verified_not_deployed",
+    "scope": "source_only_no_deployment_no_device_operations",
+    "newFocusedTests": 25,
+    "existingTerminalRegressionTests": 13,
+    "totalPassingTests": 38,
+    "typecheckWebExitCode": 0,
+    "eslintExitCode": 0,
+    "fullRepositoryFastStatus": "failed",
+    "fullRepositoryFastExitCode": 1,
+    "fullRepositoryFastFailedChecks": [
+      "rdk-docs-metadata",
+      "mcp-http-oauth-permissions",
+      "packaged-runtime-assets",
+      "rdk-docs-dual-runtime",
+      "plan-mode-device-safety",
+      "observability-moss-conformance",
+      "agent-sse-producer-events",
+      "moss-agent-post-tool",
+      "agent-entry-contract",
+      "agent-friendly-reference-audit-schema",
+      "known-giants-shrinkage",
+      "desktop-after-pack-workspaces"
+    ],
+    "behavior": [
+      "PTY data is command output once structured terminal status is observed or the legacy shell is ready",
+      "Structured error reports credential rejection only before SSH authenticated and only for explicit SSH error signatures",
+      "Legacy pre-ready data fallback requires a server SSH/Bridge error frame and an explicit authentication signature",
+      "Local PTY, command stderr, shell-open policy errors and timeouts do not emit global SSH credential rejection events"
+    ],
+    "files": {
+      "src/components/WorkspaceTerminalEmbed.tsx": {
+        "sha256": "1f67b607c1ad3081d450e75fc9b6291dc02e002e37e87c737305b384f005d6fc",
+        "bytes": 30370
+      },
+      "src/components/terminal/workspace-terminal-helpers.ts": {
+        "sha256": "ba8266acf3ce6a47ede0ed4729ca843053070de8baca29c2d375c5f333c593d3",
+        "bytes": 1995
+      },
+      "src/components/WorkspaceTerminalEmbed.auth-status.test.tsx": {
+        "sha256": "ab6cad403fe90d79fc9b0828ae6380f65129818f9ddc125f8b29c8ced097d1e3",
+        "bytes": 7904
+      },
+      "src/components/terminal/workspace-terminal-helpers.test.ts": {
+        "sha256": "98a6bb407510993aaef827c851a9112cfc3460e73cf31fb6eb457af7db20e34a",
+        "bytes": 1015
+      }
+    },
+    "limitations": [
+      "No production deploy",
+      "No new real-board commands or path changes",
+      "Renderer uses mocked Socket.IO/xterm transport; no browser xterm repaint inspection",
+      "Device working directory/Files-pane project coherence are outside this patch"
+    ],
+    "frozenSourceStillMatches": true
+  }
+}

@@ -68,17 +68,35 @@ The current limits are also exposed in the capabilities response:
 - run list reads: 200 records;
 - log body: 1,000 characters.
 
-The capabilities response also reports the persistence boundary. The current
-deployment uses a bounded `process-memory-cache` for run/object metadata and
-indexes, while traces and quality records are projected to their durable stores.
-The cache exposes `exportSnapshot()`/`importSnapshot()` for a controlled rolling
-handoff and reports `degraded: true` while a shared multi-instance repository is
-not enabled. A deployment must not treat the cache as the authoritative source
-for cross-instance reads until the capability reports a shared repository.
+The capabilities response reports the persistence boundary. With
+`RDK_CHAT_CREDITS_DB_URL` configured, `postgres-entity-index` owns run metadata,
+object profiles, status, counters and idempotency aliases. Each run mutation holds
+a transaction lock and commits its bounded low-sensitivity projection with trace
+and quality writes; profile patches serialize per object. API reads refresh from
+PG so a process restart or a second replica sees committed data. The index does
+not retain prompts, completions, raw tool payloads or feedback message bodies.
+Run authority expires after 35 days from its first event; physical cleanup also
+removes its idempotency aliases. Object metadata is capped at 5,000 profiles per owner.
+
+Without PG, the bounded `process-memory-cache` and explicit
+`exportSnapshot()`/`importSnapshot()` handoff remain available with `degraded: true`.
+Configured PG failures never fall back to a stale cache success. `degraded` stays
+true until an index operation has succeeded, and returns true after an index
+failure. Shared PG authority does not imply cross-host service or database HA.
 
 The cumulative run limit is enforced by the store. Replaying a span with the
 same `traceId:spanId` does not consume another slot. A batch that would add
 spans beyond the limit is rejected atomically and does not partially append.
+
+OTLP ingestion samples each trace before batching retained fragments by
+`runId` and authenticated `scopeRef`. Each bounded append transaction preserves
+individual trace/parent/session references and returns whether it created the Run,
+so ingestion does not issue separate Run or quality reads only to count creations.
+The 256-span cumulative budget still applies. Only a deterministic quota rejection
+can fall back to the earlier per-trace acceptance; database or uncertain commit
+failures are never retried by this batching step. Deletion selectors cover every
+trace/session fragment in the additional Run projection and snapshot restore.
+
 
 ## Idempotency and retries
 

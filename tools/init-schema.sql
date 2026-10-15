@@ -217,3 +217,6 @@ create table if not exists public.studio_alert_strategy_states (
   last_notify_at timestamptz,
   primary key (strategy_id, rule_id, series_key)
 );
+
+-- Public API run/profile/idempotency authority (additive).
+\ir public-observability-index-schema.sql

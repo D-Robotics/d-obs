@@ -1,0 +1,60 @@
+# OpenTelemetry Collector Contrib: local SDKs -> d-obs standard OTLP/HTTP.
+# Required environment: D_OBS_OTLP_ENDPOINT, D_OBS_INGEST_TOKEN,
+# D_OBS_OTEL_STORAGE_DIR. See docs/editable-dashboards.md.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  batch:
+    timeout: 5s
+    send_batch_size: 256
+    send_batch_max_size: 512
+
+extensions:
+  file_storage:
+    directory: ${env:D_OBS_OTEL_STORAGE_DIR}
+  health_check:
+    endpoint: 127.0.0.1:13133
+
+exporters:
+  otlphttp/dobs:
+    endpoint: ${env:D_OBS_OTLP_ENDPOINT}
+    headers:
+      Authorization: "Bearer ${env:D_OBS_INGEST_TOKEN}"
+    compression: none
+    timeout: 15s
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 1000
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+service:
+  extensions: [file_storage, health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/dobs]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/dobs]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/dobs]

@@ -286,6 +286,7 @@ const SAFE_ATTRIBUTE_KEYS = new Set([
   'moss.observability.contract.version',
   'moss.run.id',
   'moss.session.id',
+  'rdk.session.id',
   'moss.turn.index',
   'moss.outcome',
   'moss.error.category',
@@ -339,14 +340,15 @@ const BOUNDED_VALUES: Record<string, ReadonlySet<string>> = {
   'rdk.sampling.decision': new Set(['pending', 'retained', 'dropped']),
 };
 
-function safeOpaqueIdentifier(value: unknown): string | undefined {
+function safeOpaqueIdentifier(value: unknown, allowSlash = false): string | undefined {
   const normalized = String(value ?? '').trim();
-  return normalized && normalized.length <= 200 && /^[A-Za-z0-9._:-]+$/.test(normalized)
+  return normalized && normalized.length <= 200 && (allowSlash ? /^[A-Za-z0-9._:/-]+$/ : /^[A-Za-z0-9._:-]+$/).test(normalized)
     ? normalized
     : undefined;
 }
 
 function sanitizeAllowedValue(key: string, value: unknown): unknown {
+  if (key === 'rdk.session.id') return safeOpaqueIdentifier(value, true);
   if (key === 'moss.run.id' || key === 'moss.session.id') return safeOpaqueIdentifier(value);
   if (key.endsWith('tokens') || key === 'moss.turn.index') {
     return Number.isSafeInteger(value) && Number(value) >= 0 ? value : undefined;

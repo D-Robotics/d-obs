@@ -704,7 +704,7 @@ export async function listOpsIncidents(query: OpsIncidentListQuery = {}): Promis
   if (query.state === 'active') conditions.push(`status in ('open','acknowledged','silenced')`);
   else if (query.state === 'closed') conditions.push(`status = 'resolved'`);
   const days = Math.max(1, Math.min(90, Math.floor(Number(query.days) || 30)));
-  conditions.push(`first_seen_at >= now() - make_interval(days => ${push(days)}::int)`);
+  conditions.push(`(status in ('open','acknowledged','silenced') or greatest(last_seen_at, resolved_at, first_seen_at) >= now() - make_interval(days => ${push(days)}::int))`);
   if (query.scope === 'mine' && query.actor) {
     // 写侧（acknowledged_by/assignee）经 sanitizeOpsSummary 落库，SSO 邮箱被
     // 打码为 '[REDACTED]'；查询侧对 actor 做同款确定性脱敏后再等值比较，
@@ -722,7 +722,7 @@ export async function listOpsIncidents(query: OpsIncidentListQuery = {}): Promis
               resolution_note, silence_until, silence_reason, last_notified_at
        from public.studio_alert_incidents
        ${where}
-       order by (status in ('open','acknowledged','silenced')) desc, first_seen_at desc
+       order by (status in ('open','acknowledged','silenced')) desc, greatest(last_seen_at, resolved_at, first_seen_at) desc
        limit ${limit} offset ${offset}`,
       params,
     ),

@@ -43,6 +43,9 @@ import {
   type GatewayTtftProbeResult,
 } from './gateway-health-probe.js';
 import { AI_RUN_OBSERVATION_QUERY } from './ai-run-observation-query.js';
+import { collectAlertEvidence } from './studio-alert-evidence.js';
+import { recordAlertEvidenceSnapshot } from './studio-alert-evidence-store.js';
+import { tenantScopeFromAlertKey } from './observability-store.js';
 import {
   summarizeGatewayTargetHealth,
   type GatewayTargetHealthSnapshot,
@@ -390,6 +393,88 @@ async function recordGatewayProbeSample(
   await recordServiceLevelSamples(p, observations, new Date().toISOString());
 }
 
+export const TOOL_FAILURE_OBSERVATION_QUERY = `with tool_errors as (
+  select
+    coalesce(nullif(trim(metadata->>'tool_name'), ''), 'unknown') tool_name,
+    case when coalesce(nullif(trim(correlation->>'run_id'), ''), nullif(trim(metadata->>'run_id'), '')) is not null
+              and coalesce(nullif(trim(correlation->>'user_id'), ''), nullif(trim(metadata->>'sso_user_id'), '')) is not null
+              and coalesce(nullif(trim(correlation->>'environment'), ''), nullif(trim(metadata->>'environment'), ''), 'production')
+                  in ('production', 'staging', 'development', 'test')
+         then jsonb_build_array(
+           coalesce(nullif(trim(correlation->>'user_id'), ''), nullif(trim(metadata->>'sso_user_id'), '')),
+           coalesce(nullif(trim(correlation->>'environment'), ''), nullif(trim(metadata->>'environment'), ''), 'production'),
+           coalesce(nullif(trim(correlation->>'run_id'), ''), nullif(trim(metadata->>'run_id'), '')))::text end run_key,
+    jsonb_build_array(
+      coalesce(nullif(trim(correlation->>'user_id'), ''), nullif(trim(metadata->>'sso_user_id'), '')),
+      coalesce(nullif(trim(correlation->>'environment'), ''), nullif(trim(metadata->>'environment'), ''), 'production'),
+      coalesce(nullif(trim(correlation->>'run_id'), ''), nullif(trim(metadata->>'run_id'), '')),
+      case when coalesce(metadata->>'failure_category', '') = 'legacy_unclassified'
+           then coalesce(nullif(metadata->>'run_id', ''), nullif(correlation->>'run_id', ''), id::text)
+           else coalesce(nullif(metadata->>'tool_call_id', ''), nullif(metadata->>'attempt', ''), id::text)
+      end
+    )::text failure_unit
+  from public.studio_ops_events
+  where occurred_at >= now() - make_interval(mins => $1::int)
+    and occurred_at <= now() + interval '5 minutes'
+    and event_code = 'tool_call' and outcome = 'error'
+    and coalesce(metadata->>'client_type', '') <> 'local-dev'
+    -- Platform rules must not be opened by tenant event ingestion.
+    and tenant_id = 'platform'
+)
+select tool_name, count(distinct failure_unit)::int n, count(*)::int event_count,
+       count(distinct run_key)::int run_count
+from tool_errors group by 1 order by 2 desc, 3 desc limit 1`;
+
+const toolEvidenceTargets = new WeakMap<AlertObservation, string>();
+
+export function toolFailureObservation(config: AlertConfig, row?: Record<string, unknown>): AlertObservation {
+  const rule = config.rules['tool-failure-repeat'];
+  const failures = number(row?.n);
+  const runs = number(row?.run_count);
+  const events = number(row?.event_count);
+  const observation = ruleObservation(config, {
+    key: 'tool-failure-repeat',
+    title: '工具调用连续失败',
+    severity: ruleSeverity(config, 'tool-failure-repeat', failures),
+    // Preserve the existing failed-call threshold: one run can fail repeatedly.
+    unhealthy: Boolean(row && failures >= rule.threshold),
+    summary: row
+      ? `${rule.windowMinutes} 分钟内工具 ${sanitizeOpsSummary(row.tool_name, 120) || 'unknown'} 影响 ${runs} 个 run（${events} 条失败记录，${failures} 次失败调用）`
+      : `${rule.windowMinutes} 分钟内未发现重复工具失败`,
+  });
+  if (row) toolEvidenceTargets.set(observation, String(row.tool_name ?? 'unknown'));
+  return observation;
+}
+
+/** Historical links are valid only after their exact transition snapshot is durable. */
+export async function deliverWithAlertEvidenceSnapshot<T>(
+  p: Parameters<typeof recordAlertEvidenceSnapshot>[0] | null,
+  transition: AlertTransition,
+  deliver: () => Promise<T>,
+  options: {
+    recordSnapshot?: typeof recordAlertEvidenceSnapshot;
+    onSnapshotError?: (error: unknown) => void;
+  } = {},
+): Promise<T> {
+  if (p && transition.evidence) {
+    try {
+      await (options.recordSnapshot ?? recordAlertEvidenceSnapshot)(p, {
+        key: transition.key, at: transition.at, evidence: transition.evidence,
+        tenantId: tenantScopeFromAlertKey(transition.key),
+      });
+      delete transition.evidenceUnavailable;
+    } catch (error) {
+      transition.evidenceUnavailable = true;
+      if (options.onSnapshotError) options.onSnapshotError(error);
+      else console.warn('[alert-worker] alert evidence snapshot failed:', transition.key, sanitizeOpsSummary(error, 180));
+    }
+  } else if (transition.evidence) {
+    // A previous unhealthy observation may survive a central database outage.
+    transition.evidenceUnavailable = true;
+  }
+  return deliver();
+}
+
 async function collectDatabaseObservations(
   p: Pool,
   config: AlertConfig,
@@ -435,29 +520,7 @@ async function collectDatabaseObservations(
     ),
     p
       .query(
-        `with tool_errors as (
-           select
-             coalesce(metadata->>'tool_name', 'unknown') tool_name,
-             case
-               when coalesce(metadata->>'failure_category', '') = 'legacy_unclassified' then
-                 coalesce(nullif(metadata->>'run_id', ''), nullif(correlation->>'run_id', ''), id::text)
-               else
-                 concat_ws(':',
-                   coalesce(nullif(metadata->>'run_id', ''), nullif(correlation->>'run_id', ''), 'runless'),
-                   coalesce(nullif(metadata->>'tool_call_id', ''), nullif(metadata->>'attempt', ''), id::text)
-                 )
-             end failure_unit
-           from public.studio_ops_events
-           where occurred_at >= now() - make_interval(mins => $1::int)
-             and occurred_at <= now() + interval '5 minutes'
-             and event_code = 'tool_call' and outcome = 'error'
-             and coalesce(metadata->>'client_type', '') <> 'local-dev'
-             -- 平台规则只看平台自身埋点：租户上报的事件不能打开平台事故。
-             and tenant_id = 'platform'
-         )
-         select tool_name, count(distinct failure_unit)::int n, count(*)::int event_count
-         from tool_errors
-         group by 1 order by 2 desc, 3 desc limit 1`,
+        TOOL_FAILURE_OBSERVATION_QUERY,
         [toolRule.windowMinutes],
       )
       .catch((error) => {
@@ -717,25 +780,7 @@ async function collectDatabaseObservations(
     }),
   );
 
-  const topToolRow = toolResult.rows[0];
-  const topTool = topToolRow
-    ? ([
-        sanitizeOpsSummary(topToolRow.tool_name, 120) || 'unknown',
-        number(topToolRow.n),
-        number(topToolRow.event_count),
-      ] as const)
-    : undefined;
-  observations.push(
-    ruleObservation(config, {
-      key: 'tool-failure-repeat',
-      title: '工具调用连续失败',
-      severity: ruleSeverity(config, 'tool-failure-repeat', topTool?.[1] ?? 0),
-      unhealthy: Boolean(topTool && topTool[1] >= toolRule.threshold),
-      summary: topTool
-        ? `${toolRule.windowMinutes} 分钟内工具 ${topTool[0]} 影响 ${topTool[1]} 个 run（${topTool[2]} 次失败）`
-        : `${toolRule.windowMinutes} 分钟内未发现重复工具失败`,
-    }),
-  );
+  observations.push(toolFailureObservation(config, toolResult.rows[0]));
   const eventCounts = (eventResult.rows[0] ?? {}) as Record<string, unknown>;
   const loginInfraFailures = number(eventCounts.login_errors);
   const apiErrors = number(eventCounts.api_errors);
@@ -1394,6 +1439,18 @@ async function runWorkerCycle(): Promise<void> {
 
   const checkedAt = new Date();
   observations.push(...(await collectSyntheticObservations(config, state, checkedAt)));
+  if (p) {
+    const evidencePool = p;
+    await Promise.all(observations.filter((observation) => observation.unhealthy && !observation.unknown && observation.enabled !== false).map(async (observation) => {
+      try {
+        observation.evidence = await collectAlertEvidence(evidencePool, observation.key,
+          config.rules[observation.key]?.windowMinutes ?? 10, checkedAt,
+          tenantScopeFromAlertKey(observation.key), toolEvidenceTargets.get(observation));
+      } catch (error) {
+        console.warn('[alert-worker] alert evidence collection failed:', observation.key, sanitizeOpsSummary(error, 180));
+      }
+    }));
+  }
   const reconciled = reconcileAlertState(state, observations, checkedAt, {
     cooldownMinutes: config.global.cooldownMinutes,
     remindersEnabled: config.global.remindersEnabled,
@@ -1433,6 +1490,7 @@ async function runWorkerCycle(): Promise<void> {
     summary: candidate.summary,
     at: checkedAt.toISOString(),
     firstSeenAt: candidate.firstSeenAt,
+    evidence: state.keys[candidate.alertKey]?.evidence,
   }));
   const allTransitions = prioritizeAlertTransitions([
     ...escalationTransitions,
@@ -1441,9 +1499,9 @@ async function runWorkerCycle(): Promise<void> {
   for (const transition of allTransitions) {
     // 维护窗口抑制：评估与落库照旧，渠道投递抑制（窗口结束后由状态机补发）。
     const suppression = maintenanceSuppression(transition.key, maintenanceKeys);
-    const delivery = suppression
-      ? { delivered: false, channel: 'suppressed', attempts: 0, error: suppression.reason }
-      : await deliverAndRecordTransition(state, transition, allTransitions, config);
+    const delivery = await deliverWithAlertEvidenceSnapshot(p, transition, () => suppression
+      ? Promise.resolve({ delivered: false, channel: 'suppressed', attempts: 0, error: suppression.reason })
+      : deliverAndRecordTransition(state, transition, allTransitions, config));
     if (p) {
       await recordIncident(p, transition, delivery.delivered).catch(() => {});
       await p
@@ -1628,7 +1686,13 @@ async function runWorkerCycle(): Promise<void> {
 }
 
 async function runWorker(): Promise<void> {
-  const lease = await acquireWorkerLease();
+  const lease = await acquireWorkerLease({
+    onLost: () => {
+      // Losing the session releases the DB lock. Continuing could race another evaluator.
+      console.error('[alert-worker] lease connection lost; stopping this evaluation cycle');
+      process.exit(1);
+    },
+  });
   if (!lease.acquired) {
     console.log('[alert-worker] another evaluator holds the lease; skipping this cycle');
     return;

@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly backup of d-obs data center files
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+Unit=d-obs-data-center-backup.service
+
+[Install]
+WantedBy=timers.target

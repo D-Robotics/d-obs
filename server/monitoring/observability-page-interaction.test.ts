@@ -14,6 +14,8 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 
 import { OPS_OBSERVABILITY_HTML } from './observability-page.js';
+import { COLLECTION_WORKSPACE_HTML } from './collection-workspace-page.js';
+import { DATA_CENTER_WORKSPACE_HTML } from './data-center-page.js';
 
 function extractScript(): string {
   const blocks = [...OPS_OBSERVABILITY_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
@@ -37,6 +39,7 @@ interface StubNode {
   style: Record<string, unknown>;
   listeners: Record<string, Array<(e?: unknown) => unknown>>;
   appendChild(child: StubNode): StubNode;
+  insertBefore(child: StubNode, reference: StubNode | null): StubNode;
   removeChild(child: StubNode): StubNode;
   remove(): void;
   setAttribute(k: string, v: string): void;
@@ -102,19 +105,32 @@ function setup(): Harness {
         node.children.push(child);
         return child;
       },
+      insertBefore(child: StubNode, reference: StubNode | null) {
+        if (child === reference) return child;
+        if (reference !== null && !node.children.includes(reference)) throw new Error('Reference is not a child');
+        if (child.parentNode) child.parentNode.removeChild(child);
+        const index = reference === null ? node.children.length : node.children.indexOf(reference);
+        node.children.splice(index, 0, child); child.parentNode = node; return child;
+      },
       removeChild(child: StubNode) {
         const i = node.children.indexOf(child);
         if (i >= 0) node.children.splice(i, 1);
         return child;
       },
       replaceChildren(...replacements: StubNode[]) {
+        node.children.forEach((child: StubNode) => { child.parentNode = null; });
         node.children.splice(0, node.children.length, ...replacements);
+        replacements.forEach(child => { child.parentNode = node; });
       },
       remove() {
         if (node.parentNode) node.parentNode.removeChild(node);
       },
       setAttribute(k: string, v: string) {
         node.attrs[k] = String(v);
+        if (k.startsWith('data-')) node.dataset[k.slice(5).replace(/-([a-z])/g, (_: string, letter: string) => letter.toUpperCase())] = String(v);
+        if (k === 'class') node.className = String(v);
+        if (['id','name','type','href','value'].includes(k)) node[k] = String(v);
+        if (['hidden','disabled','required','multiple'].includes(k)) node[k] = true;
       },
       getAttribute(k: string) {
         return node.attrs[k] ?? null;
@@ -122,9 +138,23 @@ function setup(): Harness {
       removeAttribute(k: string) {
         delete node.attrs[k];
       },
-      querySelector: () => null,
-      querySelectorAll: () => [] as StubNode[],
-      closest: () => null,
+      querySelector: (selector: string) => node.querySelectorAll(selector)[0] ?? null,
+      querySelectorAll: (selector: string) => {
+        const match = (candidate: any, part: string): boolean => {
+          const attrs = [...part.matchAll(/\[([\w-]+)(?:=["']?([^\]"']+)["']?)?\]/g)];
+          if (attrs.some(attr => attr[2] === undefined ? candidate.attrs[attr[1]] === undefined : candidate.attrs[attr[1]] !== attr[2])) return false;
+          const base = part.replace(/\[[^\]]+\]/g,'');
+          const id = base.match(/#([\w-]+)/)?.[1]; if (id && candidate.id !== id) return false;
+          const classes = [...base.matchAll(/\.([\w-]+)/g)].map(item => item[1]); if (classes.some(cls => !candidate.classList.contains(cls))) return false;
+          const tag = base.match(/^[a-zA-Z][\w-]*/)?.[0]; return !tag || candidate.tagName === tag.toUpperCase();
+        };
+        const visit = (parent: StubNode): StubNode[] => parent.children.flatMap(child => [child,...visit(child)]);
+        return visit(node).filter(candidate => selector.split(',').some(part => match(candidate,part.trim())));
+      },
+      closest: (selector: string) => { let current = node.parentNode; while (current) { if (selector.startsWith('.') && current.classList.contains(selector.slice(1))) return current; current = current.parentNode; } return null; },
+      showModal() { node.open = true; },
+      close() { node.open = false; },
+      reportValidity() { return node.querySelectorAll('input,select,textarea').every((control: any) => control.disabled || !control.required || (control.type === 'checkbox' ? control.checked : Boolean(control.value))); },
       addEventListener(type: string, fn: (e?: unknown) => unknown) {
         (listeners[type] ||= []).push(fn);
       },
@@ -140,11 +170,15 @@ function setup(): Harness {
       click() {
         void node.dispatch('click');
       },
-      focus() {},
+      focus() { documentStub.activeElement = node; },
     };
     Object.defineProperty(node, 'firstElementChild', {
       get: () => node.children[0] ?? null,
     });
+    Object.defineProperty(node, 'isConnected', { get: () => node.tagName === 'BODY' || Boolean(node.parentNode) });
+    let controlType = '';
+    Object.defineProperty(node, 'type', { get: () => node.tagName === 'TEXTAREA' ? 'textarea' : node.tagName === 'SELECT' ? node.multiple ? 'select-multiple' : 'select-one' : controlType, set: (value: string) => { if (['TEXTAREA','SELECT'].includes(node.tagName)) throw new TypeError('control type is read only'); controlType = value; }, configurable: true });
+    Object.defineProperty(node, 'selectedOptions', { get: () => node.children.filter((option: any) => option.selected) });
     Object.defineProperty(node, 'className', {
       get: () => [...classes].join(' '),
       set: (v: string) => {
@@ -211,19 +245,35 @@ function setup(): Harness {
       byId.set(id, created);
       return created;
     },
-    querySelector: () => null,
-    querySelectorAll: () => [],
+    querySelector: (selector: string) => (body as any).querySelector(selector),
+    querySelectorAll: (selector: string) => (body as any).querySelectorAll(selector),
     addEventListener: (type: string, fn: (e?: unknown) => unknown) => {
       (docListeners[type] ||= []).push(fn);
     },
     removeEventListener() {},
     body,
     documentElement: el('html'),
-    activeElement: null,
+    activeElement: null as StubNode | null,
     visibilityState: 'visible',
     title: '',
     execCommand: () => true,
   };
+
+  // Parse the real newly mounted workspace fragments. Their factories must see
+  // native attributes and descendants instead of fabricated placeholder IDs.
+  for (const html of [COLLECTION_WORKSPACE_HTML, DATA_CENTER_WORKSPACE_HTML]) {
+    const stack = [body];
+    for (const token of html.matchAll(/<([^>]+)>|([^<]+)/g)) {
+      if (token[2]) { stack[stack.length - 1].textContent += token[2]; continue; }
+      if (token[1].startsWith('/')) { if (stack.length > 1) stack.pop(); continue; }
+      const tag = token[1].match(/^([a-z][\w-]*)/i)?.[1]; if (!tag) continue;
+      const child = el(tag);
+      for (const attr of token[1].matchAll(/\s([\w-]+)(?:="([^"]*)")?/g)) child.setAttribute(attr[1],attr[2] ?? '');
+      stack[stack.length - 1].appendChild(child);
+      if (child.id) byId.set(child.id,child);
+      if (!['input','br','hr','img','meta'].includes(tag)) stack.push(child);
+    }
+  }
 
   const storage = new Map<string, string>();
   const context = vm.createContext({
@@ -250,10 +300,14 @@ function setup(): Harness {
     },
     fetch: (url: string, init?: { method?: string; body?: string }) => {
       fetchCalls.push({ url: String(url), method: String(init?.method ?? 'GET'), body: String(init?.body ?? '') });
+      const boardFixture = fetchJson && typeof fetchJson === 'object' ? (fetchJson as { board?: unknown }).board : null;
+      const capturedJson = init?.method === 'PUT' && String(url).includes('/boards/') && boardFixture && init.body
+        ? { ok: true, board: { ...(boardFixture as Record<string, unknown>), ...JSON.parse(init.body) } }
+        : fetchJson;
       return Promise.resolve({
         ok: true,
         status: 200,
-        json: async () => (fetchJson && typeof fetchJson === 'object' ? fetchJson : {}),
+        json: async () => (capturedJson && typeof capturedJson === 'object' ? capturedJson : {}),
         text: async () => '',
       });
     },
@@ -398,7 +452,7 @@ test('两级路由：旧 hash 别名规范化为 视图/子模块，未知视图
   assert.equal(canon('alerts'), JSON.stringify({ name: 'alerts', child: 'center', source: 'alerts/center' }), '裸 #alerts 默认落在告警中心（响应队列优先）');
   assert.equal(canon('alerts/rules'), JSON.stringify({ name: 'alerts', child: 'rules', source: 'alerts/rules' }));
   assert.equal(canon('alerts/channels'), JSON.stringify({ name: 'alerts', child: 'channels', source: 'alerts/channels' }));
-  assert.equal(canon('agent-traces'), JSON.stringify({ name: 'traces', child: 'agent', source: 'traces/agent' }));
+  assert.equal(canon('agent-traces'), JSON.stringify({ name: 'traces', child: 'runs', source: 'traces/runs' }), '旧 Agent Trace 深链回落运行证据链');
   assert.equal(canon('session-traces'), JSON.stringify({ name: 'traces', child: 'session', source: 'traces/session' }));
   assert.equal(canon('signals'), JSON.stringify({ name: 'signals', child: 'metrics', source: 'signals/metrics' }));
   const setView = h.obs.setView as (r: string, u?: boolean) => unknown;
@@ -584,28 +638,56 @@ test('运营指标折线图：日序列渲染 SVG 折线与数据点，系列切
   const text = h.text(root);
   assert.ok(text.includes('用户总数'), '应渲染用户总数卡片');
   assert.ok(text.includes('4,620'), '用户总数应渲染全量累计值');
-  assert.ok(text.includes('每日 token 消耗趋势'), '默认系列应为 token 消耗');
-  const chart = h.all(root).find((n) => String(n.attrs?.['class'] ?? '').includes('omc-chart-svg'));
+  assert.ok(text.includes('每日 新增用户趋势'), '用户增长页默认系列应为新增用户');
+  const growthChart = h.all(root).find((n) => n.id === 'operatorGrowthChart');
+  assert.ok(growthChart, '主图应有独立增长容器');
+  assert.deepEqual(h.all(growthChart).filter((n) => n.tagName === 'BUTTON').map((n) => n.textContent), ['新增用户', '日活 DAU']);
+  const chart = h.all(growthChart).find((n) => String(n.attrs?.['class'] ?? '').includes('omc-chart-svg'));
   assert.ok(chart, '应渲染折线图 SVG');
   const dots = h.all(chart).filter((n) => n.tagName.toUpperCase() === 'CIRCLE');
   assert.equal(dots.length, 7, '7 天应渲染 7 个数据点');
   assert.ok(dots[0].children.some((c) => (c as { textContent?: string }).textContent?.includes('2026-09-18')), '数据点悬停应含完整日期');
-  assert.ok(text.includes('万'), '坐标轴应使用紧凑数量级');
-  const lastTip = dots[6].children.find((c) => (c as { textContent?: string }).textContent?.includes('7,350,000'));
-  assert.ok(lastTip, '末位数据点悬停应含当日精确 token 值');
+  const lastTip = dots[6].children.find((c) => (c as { textContent?: string }).textContent === '2026-09-24 · 46');
+  assert.ok(lastTip, '默认增长系列末位数据点悬停应含当日精确新增用户数');
 
-  // 切换系列：同一 SVG 容器改画新增用户，标题与点位同步。
-  const userButton = h.all(root).find((n) => n.tagName === 'BUTTON' && n.textContent === '新增用户');
-  assert.ok(userButton, '应存在系列切换按钮');
-  await (userButton as StubNode).dispatch('click');
+  const dauButton = h.all(growthChart).find((n) => n.tagName === 'BUTTON' && n.textContent === '日活 DAU');
+  assert.ok(dauButton);
+  await dauButton.dispatch('click');
+  const usageDetails = h.all(root).find((n) => n.id === 'operatorMetricsDetails-usage');
+  assert.ok(usageDetails, '用量曲线通过明确的使用量与成本入口展开');
+  (usageDetails as unknown as { open: boolean }).open = true;
+  await usageDetails.dispatch('toggle');
+  const usageChart = h.all(usageDetails).find((n) => n.id === 'operatorUsageChart');
+  assert.ok(usageChart);
+  const conversationButton = h.all(usageChart).find((n) => n.tagName === 'BUTTON' && n.textContent === '对话次数');
+  assert.ok(conversationButton);
+  await conversationButton.dispatch('click');
+  const refreshedUsage = h.all(root).find((n) => n.id === 'operatorUsageChart');
+  assert.ok(refreshedUsage);
+  const tokenButton = h.all(refreshedUsage).find((n) => n.tagName === 'BUTTON' && n.textContent === 'token 消耗');
+  assert.ok(tokenButton, '使用量详情中应存在 token 系列切换按钮');
+  await (tokenButton as StubNode).dispatch('click');
   const textAfter = h.text(root);
-  assert.ok(textAfter.includes('每日 新增用户趋势'), '切换后标题应为新增用户');
+  assert.ok(textAfter.includes('每日 日活 DAU趋势'), '切换使用量指标保持主图的增长选择');
+  assert.ok(textAfter.includes('每日 token 消耗趋势'), '使用量图标题应为 token 消耗');
+  assert.ok(textAfter.includes('万'), 'token 坐标轴应使用紧凑数量级');
+  const tokenChartRoot = h.all(root).find((n) => n.id === 'operatorUsageChart');
+  assert.ok(tokenChartRoot);
+  const tokenChart = h.all(tokenChartRoot).find((n) => String(n.attrs?.['class'] ?? '').includes('omc-chart-svg'));
+  assert.ok(tokenChart, '切换后仍应渲染折线图 SVG');
+  const tokenDots = h.all(tokenChart).filter((n) => n.tagName.toUpperCase() === 'CIRCLE');
+  assert.equal(tokenDots.length, 7);
+  assert.ok(tokenDots[6].children.some((c) => c.textContent === '2026-09-24 · 7,350,000'), 'token 系列末位数据点应含当日精确 token 值');
 
   // 旧 payload 缺 totalAccounts：如实显示 —，不冒充 0。
   (obs.setObsState as (p: Record<string, unknown>) => unknown)({
     operatorMetrics: { metrics: { ...metricsFixture.metrics, totalAccounts: undefined } },
   });
   render(root!);
+  assert.ok(h.text(root).includes('每日 token 消耗趋势'), '重新渲染后保留使用量图的 token 选择');
+  assert.ok(h.text(root).includes('每日 日活 DAU趋势'), '重新渲染后保留主图的 DAU 选择');
+  const openUsage = h.all(root).find((n) => n.id === 'operatorMetricsDetails-usage');
+  assert.equal((openUsage as unknown as { open: boolean }).open, true, '刷新保留使用量详情展开状态');
   const totalCard = h.byClass(root, 'operator-metrics-kpi').find((n) => (n.children ?? []).some((c) => (c as { textContent?: string }).textContent === '用户总数'));
   assert.ok(totalCard, '缺 totalAccounts 时仍应渲染用户总数卡片');
   const totalValue = (totalCard as StubNode).children.find((c) => c.classList && c.classList.contains('value'));
@@ -835,10 +917,14 @@ test('看板：复合路由、工具条渲染、面板卡片、服务变量与�
 
   const grid = h.byIdNode('signalsPanelGrid');
   assert.ok(grid, '看板网格容器应存在');
-  const cards = h.byClass(grid, 'signals-panel-card');
+  let cards = h.byClass(grid, 'signals-panel-card');
   assert.equal(cards.length, 2, '应渲染两张面板卡片');
-  assert.equal(h.byClass(cards[0], 'panel-time-select').length, 1, '面板头部应有时间选择');
+  assert.equal(h.byClass(cards[0], 'panel-actions').length, 0, '查看模式只呈现查询结果');
+  await h.byIdNode('boardEditBtn')!.dispatch('click');
+  cards = h.byClass(grid, 'signals-panel-card');
+  assert.equal(h.byClass(cards[0], 'panel-actions').length, 1, '编辑模式呈现面板操作，时间窗口在编辑器中定义');
 
+  h.setJsonResponse({ ok: true, board: fixture });
   const svc = h.byIdNode('boardServiceFilter');
   svc!.value = 'svc-a';
   await svc!.dispatch('change');
@@ -846,13 +932,14 @@ test('看板：复合路由、工具条渲染、面板卡片、服务变量与�
   assert.ok(putWithFilters, '服务变量变更应触发看板 PUT');
   assert.match(putWithFilters!.body!, /"filters":\{"service":"svc-a"\}/);
 
-  const del = h.byClass(cards[0], 'panel-actions')[0].children.find((c) => c.textContent === '删除');
+  const del = h.all(h.byClass(cards[0], 'panel-actions')[0]).find((c) => c.textContent === '删除');
   await del!.dispatch('click');
   const modal = h.byClass(h.body, 'board-modal')[0];
   assert.ok(modal, '删除应弹出确认弹窗');
   const modalDel = h.all(modal).find((n) => n.textContent === '删除' && n.tagName === 'BUTTON');
   assert.ok(modalDel, '确认弹窗应有删除按钮');
   await modalDel!.dispatch('click');
+  await new Promise((r) => setTimeout(r, 0));
   const putAfterDelete = [...h.fetchCalls].reverse().find((c) => c.method === 'PUT' && c.url.includes('/boards/b1'));
   const body = JSON.parse(putAfterDelete!.body!);
   assert.equal(body.spec.panels.length, 1, '删除面板后 spec 应只剩一张');

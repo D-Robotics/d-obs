@@ -1,0 +1,72 @@
+{
+  "schema": "rdk.camera-workshop2-release.v1",
+  "status": "active",
+  "verifiedAtUtc": "2026-10-15T08:11:26Z",
+  "entry": "https://rdkstudio.d-robotics.cc/rdkstudio/?tab=plugins#/plugins",
+  "components": {
+    "studio": {
+      "release": "/opt/rdstudio-web-opt/releases/camera-workshop2-20261015-2b99b382a61d",
+      "previousRelease": "/opt/rdstudio-web-opt/releases/camera-native-20261015-4c419036790a",
+      "manifestSha256": "2b99b382a61d70444b6dba1d4b53b134c345f48fc04be9c8cd90f51723876bdf",
+      "overlayFiles": 312
+    },
+    "dobs": {
+      "release": "/opt/d-obs/releases/camera-workshop2-20261015-2140e5a8bf23",
+      "previousRelease": "/opt/d-obs/releases/camera-native-20261015-acb03e1cdc6e",
+      "manifestSha256": "2140e5a8bf234b4f5fc1c33261b2e71e1d5132ac792ed851f87f667f3145b76c",
+      "overlayFiles": 9
+    }
+  },
+  "pluginVersions": {
+    "platform": "1.1.3",
+    "studio": "1.2.1"
+  },
+  "frontendNamespace": "assets/camera-delivery-20261015-1c271f43ca54",
+  "tests": {
+    "productionNodes": [
+      "v22.16.0",
+      "v22.19.0"
+    ],
+    "platformTestsPerNode": 59,
+    "studioTestsPerNode": 44,
+    "pairedHttpPythonZipPerNode": "passed",
+    "packageDownloadPerNode": "passed",
+    "publicChecks": 30,
+    "browser": {
+      "httpStatus": 200,
+      "pageErrors": 0,
+      "serverErrors": 0,
+      "newAssets": 24,
+      "authentication": "fresh_anonymous_browser"
+    },
+    "nativeSdkSoftware": {
+      "python": 127,
+      "http": 14,
+      "nativeShimGroups": 3,
+      "sourceOnly": true
+    }
+  },
+  "limits": {
+    "sdkFileBytes": 16777216,
+    "cameraTuningLoadAndMcpJsonBytes": 25165824,
+    "otherJsonLimits": "unchanged_host_configuration"
+  },
+  "verificationScope": {
+    "productionSsoEndToEnd": "unverified",
+    "targetBoardSdkLinkAndCandidateReload": "unverified",
+    "independentImageQuality": "unverified",
+    "hardwareOperations": 0,
+    "workshop225MinuteHardwareRehearsal": "pending_actual_target_hardware"
+  },
+  "sourceWorkspaceGate": "not_passed_unrelated_rdk_docs_dependency_and_concurrent_source_attestation; release_overlay_preserves_live_baseline",
+  "proofSha256": {
+    "publicRelease": "c643a852205d0c4eb84405f77d24437cdfff451ab0bfce3ab9bc18fa51054e70",
+    "publicBrowser": "f9c9999413f00f758a92465f60f61c7601d69389f0dc1a40207f6fb85ca3dd9e",
+    "platformAcceptance": "103bc780653a4e7f24f50ad7fc9915928c1415d58689db8256cfd990e138e480",
+    "studioAcceptance": "eeb0b4c1e939b8579b0a8e0bee1d47a7f04c9ce9d445912a4e522c651dff6263",
+    "mapping": "63d14528b6a2bac097a90d86efb5885f7112635882eca6ac47187f342fa56a75",
+    "packageIntegrity": "0fadc63c5e77bf7dd5bb8a798b45aa5e0307725e3b9069a515f884936ecfcb68",
+    "archive": "bc0e6bfd06508b179a18bc44028bb03b2569faf90ebcf74294878c4f110aa641"
+  },
+  "rollback": "Previous release and guarded controller backups retained; production rollback not exercised in this release."
+}

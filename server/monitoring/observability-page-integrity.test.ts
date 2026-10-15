@@ -54,16 +54,16 @@ test('页面不引用已下线功能的 DOM id / 端点', () => {
   }
 });
 
-test('页面明确区分云侧与端侧数据域', () => {
+test('页面用当前工作区表达云侧与端侧数据域', () => {
   const html = OPS_OBSERVABILITY_HTML;
-  assert.match(html, /data-domain-tab="cloud"/);
-  assert.match(html, /data-domain-tab="edge"/);
-  // 域差异由页头切换器表达（syncDomainSwitcher 的两套 hint 文案），不再依赖
-  // 视图内的说明条。
-  assert.match(html, /RDK Studio · 服务 · 服务器/);
-  assert.match(html, /机器人 · RDK 板 · edge-agent/);
+  assert.match(html, /id="domainContext"[^>]*aria-label="当前数据域"/);
+  assert.doesNotMatch(html, /<[^>]+data-domain-tab=/);
+  assert.doesNotMatch(html, /<[^>]+id="domainSwitcher"/);
+  assert.match(html, /data-view="devices"/);
+  assert.match(html, /context\.textContent=edge\?'端侧':'云侧'/);
+  assert.match(html, /机器人与 RDK 设备数据/);
+  assert.match(html, /服务与应用数据/);
   assert.match(html, /edge-agent/);
-  assert.match(html, /domain-switcher/);
 });
 
 test('Command Palette 是真正的模态：背景 inert、焦点可循环且搜索文案不夸大能力', () => {
@@ -73,7 +73,12 @@ test('Command Palette 是真正的模态：背景 inert、焦点可循环且搜�
   assert.match(html, /function commandPaletteFocusable\(\)/);
   assert.match(html, /function commandPaletteContains\(node,palette\)/);
   assert.match(html, /ensureNavigationLabels\(\)/);
-  assert.match(html, /搜索工作台模块/);
+  const searchTrigger = html.match(/<button\b[^>]*id="globalSearchTrigger"[^>]*>[\s\S]*?<\/button>/)?.[0];
+  assert.ok(searchTrigger, 'the real search trigger must remain reachable');
+  assert.match(searchTrigger, /aria-haspopup="dialog"/);
+  assert.match(searchTrigger, /aria-controls="commandPaletteBackdrop"/);
+  assert.match(searchTrigger, /<strong>搜索或跳转…<\/strong>/);
+  assert.match(searchTrigger, /aria-label="搜索工作台模块、对象与事故"/);
   assert.doesNotMatch(html, /指标、事故、Trace、SLO 或任意模块/);
   assert.doesNotMatch(html, /placeholder="搜索事故、告警、Trace、SLO…"/);
 });

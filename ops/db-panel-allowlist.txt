@@ -25,6 +25,7 @@ studio_alert_configuration_audit
 studio_alert_incident_activity
 studio_alert_incidents
 studio_alert_notifications
+studio_alert_evidence_snapshots
 studio_alert_worker_status
 studio_daily_usage
 studio_device_commands
@@ -69,3 +70,8 @@ studio_obs_object_bindings
 studio_alert_strategies
 studio_alert_strategy_rules
 studio_alert_strategy_states
+
+studio_public_observability_runs
+studio_public_observability_idempotency
+studio_public_observability_profiles
+studio_assistant_mutation_claims

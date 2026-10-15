@@ -7,7 +7,7 @@ import {
   resolveAiRunId,
   type AiObservabilityScalar,
 } from '../../shared/ai-observability-semantics.js';
-import { getPublicObservabilityStore } from '../public-api/public-observability-store.js';
+import { getPublicObservabilityStore, PublicObservabilityQuotaError } from '../public-api/public-observability-store.js';
 import {
   recordOtlpLogIngest,
   recordOtlpMetricIngest,
@@ -125,11 +125,19 @@ function resourceAttributes(value: unknown): Record<string, unknown> {
 }
 
 function otlpTime(value: unknown, fallback: number): number {
-  const numeric = Number(typeof value === 'string' ? value : scalar(value));
+  const raw = typeof value === 'string' ? value : scalar(value);
+  // uint64 nanoseconds exceed IEEE-754 precision. Divide the integer first so
+  // adjacent millisecond samples do not collapse into the same upsert key.
+  if (typeof raw === 'string' && /^[0-9]{1,20}$/.test(raw.trim())) {
+    const integer = BigInt(raw.trim());
+    if (integer <= 0n) return fallback;
+    const milliseconds = Number(integer > 1_000_000_000_000n ? integer / 1_000_000n : integer);
+    return Number.isSafeInteger(milliseconds) ? milliseconds : fallback;
+  }
+  const numeric = Number(raw);
   if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
-  // OTLP JSON encodes Unix nanoseconds as a string. Accept milliseconds as a
-  // convenience for lightweight exporters and tests.
-  return Math.trunc(numeric > 1_000_000_000_000 ? numeric / 1_000_000 : numeric);
+  const milliseconds = Math.trunc(numeric > 1_000_000_000_000 ? numeric / 1_000_000 : numeric);
+  return Number.isSafeInteger(milliseconds) ? milliseconds : fallback;
 }
 
 function stableId(value: unknown, bytes: number, fallback: string): string {
@@ -359,32 +367,67 @@ export async function ingestTracePayload(body: JsonObject, identity: Principal):
       }
     }
   }
+  const runGroups = new Map<string, NormalizedSpan[]>();
+  for (const group of groups.values()) {
+    for (const item of group) {
+      const key = `${item.runId}\u0000${item.scopeRef ?? ''}`;
+      const retained = runGroups.get(key) ?? [];
+      retained.push(item);
+      runGroups.set(key, retained);
+    }
+  }
   let accepted = 0;
   let rejected = rows.length - normalized.length;
   let runs = 0;
-  for (const group of groups.values()) {
+  for (const group of runGroups.values()) {
     const first = group[0];
     try {
-      const existing = await store.getRun(identity.owner, first.runId);
       const accountScopeId = first.scopeRef
         ? await resolveStudioScopeRefToAccountScopeId(first.scopeRef)
         : null;
-      const result = await store.appendSpans({
-        runId: first.runId,
-        owner: identity.owner,
-        keyId: identity.keyId,
-        traceId: first.traceId,
-        source: 'server',
-        spans: group.map((item) => item.span),
-        run: first.run,
+      const append = (retained: NormalizedSpan[]) => store.appendSpans({
+        runId: first.runId, owner: identity.owner, keyId: identity.keyId,
+        traceId: retained[0].traceId, source: 'server',
+        spans: retained.map(item => item.span), run: retained[0].run,
         ...(accountScopeId ? { accountScopeId } : {}),
       });
-      accepted += result.spans.length;
-      rejected += group.length - result.spans.length;
-      if (!existing) runs += 1;
-    } catch {
-      rejected += group.length;
-    }
+      // Public append writes at most 64 spans. Keep trace fragments intact so
+      // quota fallback retains the same per-trace acceptance as before batching.
+      const traces = new Map<string, NormalizedSpan[]>();
+      for (const item of group) { const trace = traces.get(item.traceId) ?? []; trace.push(item); traces.set(item.traceId, trace); }
+      const batches: NormalizedSpan[][] = [];
+      let batch: NormalizedSpan[] = [];
+      for (const trace of traces.values()) {
+        const retained = trace.slice(0,64);
+        rejected += trace.length - retained.length;
+        if (batch.length + retained.length > 64) { batches.push(batch); batch = []; }
+        batch.push(...retained);
+      }
+      if (batch.length) batches.push(batch);
+      for (const retained of batches) {
+        try {
+          const result = await append(retained);
+          accepted += result.spans.length;
+          rejected += retained.length - result.spans.length;
+          if (result.created) runs += 1;
+        } catch (error) {
+          if (!(error instanceof PublicObservabilityQuotaError)) { rejected += retained.length; continue; }
+          // A deterministic quota rejection writes nothing. Preserve the prior
+          // per-trace acceptance; never retry an uncertain commit.
+          const fragments = new Map<string, NormalizedSpan[]>();
+          for (const item of retained) { const trace = fragments.get(item.traceId) ?? []; trace.push(item); fragments.set(item.traceId, trace); }
+          if (fragments.size === 1) { rejected += retained.length; continue; }
+          for (const fragment of fragments.values()) {
+            try {
+              const result = await append(fragment);
+              accepted += result.spans.length;
+              rejected += fragment.length - result.spans.length;
+              if (result.created) runs += 1;
+            } catch { rejected += fragment.length; }
+          }
+        }
+      }
+    } catch { rejected += group.length; }
   }
   recordOtlpTraceIngest({ received: rows.length, accepted, rejected, runs });
   // 采样剔除不计入 rejected（OTLP 客户端会把 rejectedSpans 视为失败重试），只进自观测指标。
@@ -498,13 +541,12 @@ export async function ingestMetricPayload(body: JsonObject, identity: Principal)
     recordOtlpRequestError('metrics');
     return { valid: false, accepted: 0, rejected: 0, runs: 0 };
   }
-  for (const point of points) recordUpstreamMetric(point.name, point.value, point.timestampMs, point.labels);
-  // 内存 gauge 承担 /metrics 当前值；落库走有界异步队列（5s 批量 flush），
-  // 摄取延迟不再包含 DB。入队即视为接受，容量丢弃计入 rejected 并在
-  // rdk_observability_metric_queue_dropped_total 暴露。
-  const rejected = enqueueMetricPoints(identity.owner, points);
+  // HTTP and gRPC share this async boundary: accepted points are committed
+  // before the transport acknowledges them. A failed database write is retryable.
+  const rejected = await enqueueMetricPoints(identity.owner, points);
+  if (!String(process.env.RDK_CHAT_CREDITS_DB_URL ?? '').trim() || rejected < points.length) for (const point of points) recordUpstreamMetric(point.name, point.value, point.timestampMs, point.labels);
   recordMetricQueueGauges(metricQueueDepth(), metricQueueDroppedTotal());
-  recordOtlpMetricIngest(points.length);
+  recordOtlpMetricIngest(points.length - rejected);
   return { valid: true, accepted: points.length - rejected, rejected, runs: 0 };
 }
 
@@ -662,26 +704,26 @@ export function createAiEcosystemRouter(): Router {
   // OTLP/HTTP protobuf payloads bypass express.json and stay as bytes until
   // the signal-specific decoder below. JSON exporters continue through the
   // app-level express.json middleware.
-  router.use(express.raw({
+  const parseOtlpBody = express.raw({
     type: ['application/x-protobuf', 'application/protobuf', 'application/octet-stream'],
     limit: '2mb',
-  }));
+  });
   const tracePaths = ['/v1/traces', '/api/public/otel/v1/traces', '/api/v1/otel/v1/traces'];
   const metricPaths = ['/v1/metrics', '/api/public/otel/v1/metrics', '/api/v1/otel/v1/metrics'];
   const logPaths = ['/v1/logs', '/api/public/otel/v1/logs', '/api/v1/otel/v1/logs'];
-  router.post(tracePaths, (req, res) => {
+  router.post(tracePaths, parseOtlpBody, (req, res) => {
     void ingestTraces(req, res).catch(() => {
       recordOtlpRequestError('traces');
       if (!res.headersSent) res.status(503).json({ ok: false, error: 'otlp_trace_ingest_unavailable', code: 'otlp_trace_ingest_unavailable', retryable: true });
     });
   });
-  router.post(metricPaths, (req, res) => {
+  router.post(metricPaths, parseOtlpBody, (req, res) => {
     void ingestMetrics(req, res).catch(() => {
       recordOtlpRequestError('metrics');
       if (!res.headersSent) res.status(503).json({ ok: false, error: 'otlp_metric_ingest_unavailable', code: 'otlp_metric_ingest_unavailable', retryable: true });
     });
   });
-  router.post(logPaths, (req, res) => {
+  router.post(logPaths, parseOtlpBody, (req, res) => {
     void ingestLogs(req, res).catch(() => {
       recordOtlpRequestError('logs');
       if (!res.headersSent) res.status(503).json({ ok: false, error: 'otlp_log_ingest_unavailable', code: 'otlp_log_ingest_unavailable', retryable: true });
@@ -772,7 +814,10 @@ export function createAiEcosystemRouter(): Router {
           maxLogBodyCharacters: MAX_LOG_BODY,
           maxRequestsPerMinute: Number.parseInt(String(process.env.RDK_OTLP_MAX_REQUESTS_PER_MINUTE ?? '600'), 10) || 600,
         },
-        persistence: store.getPersistenceStatus(),
+        persistence: { ...store.getPersistenceStatus(),
+          metrics: { acknowledgement: 'postgres_commit', unconfigured: 'all_points_rejected', writeFailure: 'retryable_http_503_grpc_unavailable', inFlightPointLimit: 8192 },
+          index: { mutation: 'entity_transaction', read: 'refresh_owner_from_postgres', retentionDays: 35, rawContent: false },
+        },
         authentication: {
           ingestTokenEnv: 'RDK_PUBLIC_OBSERVABILITY_API_TOKEN',
           dynamicTokens: 'development_only',

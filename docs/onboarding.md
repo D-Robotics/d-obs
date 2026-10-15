@@ -21,6 +21,11 @@
 
 ## 1. RDK 边缘设备
 
+开发调试日志可使用工作台 **边缘设备 → RDK 日志调查**。平台后端通过 SSH
+探测设备、选择版本化模板并统一采集多源原文；支持复现标记、带引用 AI 分析和问题包，
+无需在板上安装 agent。先按 [SSH 接入配置](./ssh-log-collection.md) 配置真实设备，
+再按 [RDK 日志调查](./rdk-log-investigation.md) 使用网页或 MCP。长期指标与心跳按以下流程接入。
+
 1. 工作台「边缘设备」注册设备（如 `rdk-x5-01`），拿到一次性设备 token；
 2. 把 `tools/edge-agent.mjs` 复制到板子，token 存入 `0600` 文件；
 3. 板上运行（或装 `ops/edge-agent/rdk-edge-agent.service`）：

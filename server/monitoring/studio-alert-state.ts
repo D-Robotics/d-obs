@@ -1,12 +1,14 @@
 import type { AlertRuleKey } from './alert-config.js';
 import { sanitizeOpsSummary } from './ops-event-store.js';
 import type { SyntheticProbeResult } from './synthetic-probes.js';
+import type { AlertEvidence } from './studio-alert-evidence-types.js';
 
 const STATE_VERSION = 1;
 
 export type AlertSeverity = 'warning' | 'critical';
 
 export interface AlertObservation {
+  evidence?: AlertEvidence;
   key: AlertRuleKey;
   title: string;
   severity: AlertSeverity;
@@ -46,6 +48,8 @@ export interface AlertObservation {
 }
 
 export interface AlertKeyState {
+  /** Last unhealthy window, retained through recovery checks. */
+  evidence?: AlertEvidence;
   active: boolean;
   notified: boolean;
   failureStreak: number;
@@ -74,6 +78,9 @@ export interface AlertWorkerState {
 }
 
 export interface AlertTransition {
+  evidence?: AlertEvidence;
+  /** Facts remain useful when persistence failed, but no historical link may be promised. */
+  evidenceUnavailable?: boolean;
   kind: 'opened' | 'escalated' | 'reminder' | 'resolved';
   key: AlertRuleKey;
   title: string;
@@ -144,6 +151,7 @@ export function reconcileAlertState(
           at,
           firstSeenAt: next.firstSeenAt,
           durationMinutes: durationMinutesBetween(next.firstSeenAt, at, nowMs),
+          evidence: next.evidence,
         });
       }
       next.active = false;
@@ -151,10 +159,13 @@ export function reconcileAlertState(
       next.firstSeenAt = undefined;
       next.lastAttemptAt = undefined;
       next.lastNotifiedAt = undefined;
+      next.evidence = undefined;
     } else if (observation.unknown) {
       // Preserve the last conclusive state and both streaks. Treating "cannot
       // evaluate" as healthy would falsely close an active incident.
     } else if (observation.unhealthy) {
+      // A new incident cannot inherit the previous account's operational facts.
+      next.evidence = observation.evidence;
       next.failureStreak += 1;
       next.successStreak = 0;
       if (!next.firstSeenAt) next.firstSeenAt = at;
@@ -170,6 +181,7 @@ export function reconcileAlertState(
           at,
           firstSeenAt: next.firstSeenAt,
           failureStreak: next.failureStreak,
+          evidence: next.evidence,
         });
       } else if (
         shouldOpen &&
@@ -187,6 +199,7 @@ export function reconcileAlertState(
           at,
           firstSeenAt: next.firstSeenAt,
           failureStreak: next.failureStreak,
+          evidence: next.evidence,
         });
       } else if (
         shouldOpen &&
@@ -206,6 +219,7 @@ export function reconcileAlertState(
             at,
             firstSeenAt: next.firstSeenAt,
             failureStreak: next.failureStreak,
+            evidence: next.evidence,
           });
         }
       } else if (shouldOpen && next.active && !next.notified) {
@@ -221,12 +235,17 @@ export function reconcileAlertState(
             at,
             firstSeenAt: next.firstSeenAt,
             failureStreak: next.failureStreak,
+            evidence: next.evidence,
           });
         }
       }
     } else {
       next.failureStreak = 0;
       next.successStreak += 1;
+      if (!next.active) {
+        next.firstSeenAt = undefined;
+        next.evidence = undefined;
+      }
       if (next.active && next.successStreak >= (observation.resolveAfter ?? 2)) {
         const firstSeen = next.firstSeenAt ? Date.parse(next.firstSeenAt) : Number.NaN;
         const durationMinutes = Number.isFinite(firstSeen)
@@ -242,12 +261,14 @@ export function reconcileAlertState(
           firstSeenAt: next.firstSeenAt,
           durationMinutes,
           successStreak: next.successStreak,
+          evidence: next.evidence,
         });
         next.active = false;
         next.notified = false;
         next.firstSeenAt = undefined;
         next.lastAttemptAt = undefined;
         next.lastNotifiedAt = undefined;
+        next.evidence = undefined;
       }
     }
     keys[observation.key] = next;

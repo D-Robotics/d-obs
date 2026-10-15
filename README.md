@@ -16,10 +16,14 @@ Grafana、VictoriaMetrics 和外部探针按部署规模选配。未配置数据
 ## 文档导航
 
 - [产品文档](./docs/product-document.md)：定位、核心场景和验收标准
+- [数据闭环中心](./docs/data-center.md)：云端与终端采集、数据资产、固定数据集版本、视觉实验纳管和改善验收
 - [部署手册](./docs/deploy.md)：发布、反代、Grafana 和生产配置
 - [运维手册](./docs/operations.md)：API、告警规则、行动环和排障
 - [接入指南](./docs/onboarding.md)：新服务器 / 新应用 / 边缘设备 / 租户拨测的路径选择与步骤
+- [SSH 端侧日志](./docs/ssh-log-collection.md)：通过平台后端读取 RDK 运行日志、实时查看与导出
+- [RDK 日志调查](./docs/rdk-log-investigation.md)：版本模板、多源复现、带引用 AI 分析与 Agent MCP 原子能力
 - [AI 原生接入](./docs/ecosystem.md)：OTLP、边缘设备、MCP 和评估接口
+- [可编辑业务看板](./docs/editable-dashboards.md)：PromQL、业务变量、运营共享、Grafana JSON 与通用 OpenTelemetry Collector
 - [租户接入](./docs/tenant-onboarding.md)：自助注册、探针和数据隔离
 - [容量验收](./docs/capacity.md)：OTLP 压测门槛与扩容触发器
 - [架构边界](./docs/decisions/D-010-observability-domain-boundary.md)：与业务站点的依赖约束
