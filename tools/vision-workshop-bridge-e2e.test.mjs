@@ -57,7 +57,7 @@ test('bridge black box: doctor connects, tools round-trip, failure contract hold
     let stdout = ''; child.stdout.on('data', bytes => { stdout += bytes; });
     const exited = new Promise(resolve => child.on('close', resolve));
     child.stdin.end([rpc(0, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'bridge-e2e', version: '1.0.0' } }),
-      rpc(11, 'tools/call', { name: 'vision_experiment_list', arguments: { limit: 5 } })].join('\n') + '\n');
+      rpc(11, 'tools/call', { name: 'vision_experiment_list', arguments: {} })].join('\n') + '\n');
     assert.equal(await exited, 0);
     const call = stdout.trim().split('\n').map(line => JSON.parse(line)).find(item => item.id === 11);
     assert.equal(call.error, undefined);
