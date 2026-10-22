@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createServer } from 'node:http';
 import { spawnSync } from 'node:child_process';
-import { configure, doctor, clientConfig } from './setup.mjs';
+import { configure, doctor, clientConfig, wireErrorCode } from './setup.mjs';
 
 async function fixture(fn) {
   const directory = await mkdtemp(path.join(tmpdir(), 'camera-onboarding-'));
@@ -62,4 +62,12 @@ test('fallback configuration uses executable and bridge absolute paths independe
   assert.ok(path.isAbsolute(config.command)); assert.ok(path.isAbsolute(config.args[0]));
   const result = spawnSync(config.command, config.args, { cwd: tmpdir(), input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } }) + '\n', encoding: 'utf8' });
   assert.equal(result.status, 0); assert.equal(JSON.parse(result.stdout).result.protocolVersion, '2024-11-05');
+});
+
+test('wire messages with appended hints normalize to the bare CLI error code', () => {
+  assert.equal(wireErrorCode('camera_bridge_remote_transport_failed: 无法访问相机服务，请检查服务运行状态、地址和网络。'), 'camera_bridge_remote_transport_failed');
+  assert.equal(wireErrorCode('camera_bridge_unconfigured'), 'camera_bridge_unconfigured');
+  assert.equal(wireErrorCode('camera_bridge_remote_http_403: 认证失效，请在原服务更新凭据后重试。'), 'camera_bridge_remote_http_403');
+  assert.equal(wireErrorCode('Unexpected token < in JSON'), 'camera_setup_response_invalid');
+  assert.equal(wireErrorCode(undefined), 'camera_setup_response_invalid');
 });

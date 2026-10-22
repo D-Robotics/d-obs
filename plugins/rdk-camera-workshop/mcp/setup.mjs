@@ -49,7 +49,7 @@ async function probe(config) {
       while (output.includes('\n')) {
         const end = output.indexOf('\n'); const line = output.slice(0, end); output = output.slice(end + 1);
         let message; try { message = JSON.parse(line); } catch { return finish(new Error('camera_setup_response_invalid')); }
-        if (message.error) return finish(new Error(message.error.message));
+        if (message.error) return finish(new Error(wireErrorCode(message.error.message)));
         if (message.id === 0) {
           child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
           child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) + '\n');
@@ -73,6 +73,11 @@ async function probe(config) {
     child.stdin.on('error', () => {});
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'camera-connection-doctor', version: '1.0.0' } } }) + '\n');
   });
+}
+// Wire messages carry "code: hint"; the CLI contract keys advice and exit paths on the bare code.
+export function wireErrorCode(message) {
+  const match = typeof message === 'string' && /^camera_(?:bridge|setup)_[a-z0-9_]+/.exec(message);
+  return match ? match[0] : 'camera_setup_response_invalid';
 }
 export async function doctor(config = resolveConfigPath()) {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('camera_setup_node_22_required');
