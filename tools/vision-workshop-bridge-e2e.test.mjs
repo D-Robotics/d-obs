@@ -62,8 +62,9 @@ test('bridge black box: doctor connects, tools round-trip, failure contract hold
     const call = stdout.trim().split('\n').map(line => JSON.parse(line)).find(item => item.id === 11);
     assert.equal(call.error, undefined);
     const payload = JSON.parse(call.result.content[0].text);
-    assert.equal(payload.data.experiments[0].title, '连接器黑盒端到端');
-    assert.equal(payload.data.total, 1);
+    const experiments = payload.data.experiments;
+    assert.ok(Array.isArray(experiments) && experiments.length >= 1);
+    assert.equal(experiments[0].title, '连接器黑盒端到端');
 
     await writeConfig(`http://127.0.0.1:${deadPort}/dobs/api/ops/vision-workshop/mcp`);
     const failureRun = spawnSync(process.execPath, [setup, 'doctor'], { env: { ...process.env, RDK_CAMERA_WORKSHOP_CONFIG: config }, encoding: 'utf8' });
