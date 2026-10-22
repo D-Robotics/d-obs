@@ -76,6 +76,8 @@ X5 / 亚博 IMX415 的版本兼容、接口与 lane、旧 SDK、开流失败、�
 - 用户要求画面控制调优时，先核对 `controls_get` 的支持范围、可写/active 状态，
   原始配置与恢复能力。实际配置和模型具备所需能力时，用 `vision_ai_debug_start` 提交目标，
   用 status 轮询真实 Run。模型看原始、最佳与当前实际图像，不在技能中写死参数序列。
+  探索预算由 `maxRounds` 显式声明（1–6，默认 4）；限时演示、课堂或受控场景按授权压缩到 1–2，
+  并在目标中写明允许的调整上限，不依赖模型自行收敛。status 的 `adjustmentCount` 是实际写入轮数。
 - 原生 ISP AI 路径要求实际 probe.baseline 为本次声明 scope 的完整 `x5-hbn-isp-v2` 快照、真实允许 rules，
   且适配器支持 apply_tuning。模型的 adjust 只返回 `patches:[{path,value,reason}]`，
   每轮最多三个已列入规则的数值叶子；执行器将补丁合入完整快照后应用、独立回读和采新帧。

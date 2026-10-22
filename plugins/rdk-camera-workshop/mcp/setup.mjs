@@ -5,20 +5,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { resolveConfigPath, validateConfiguration } from './bridge.mjs';
+import { resolveConfigPath, validateConfiguration, describeError } from './bridge.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const tips = {
-  camera_bridge_unconfigured: '尚未配置连接。运行 configure，并指定服务 URL、认证类型和已有私有凭据文件。',
-  camera_bridge_private_file_permissions_invalid: '连接配置与凭据文件须由当前用户持有，POSIX 权限为 600。',
-  camera_bridge_private_file_inside_package: '将连接配置和凭据移到插件及源码仓库之外。',
-  camera_bridge_remote_http_401: '认证失效，请在原服务更新凭据后重试。',
-  camera_bridge_remote_http_403: '当前身份无权访问该服务，请核对服务权限与入口。',
-  camera_bridge_remote_transport_failed: '无法访问相机服务，请检查服务运行状态、地址和网络。',
-};
-export function describeError(code) {
-  return tips[code] ?? '检查服务地址、私有文件和认证类型；参阅 README 的连接与自检说明。';
-}
+export { describeError };
 export async function configure({ url, auth, credentialFile, config = resolveConfigPath() }) {
   if (!path.isAbsolute(config) || !path.isAbsolute(credentialFile ?? '') || !['sso', 'admin'].includes(auth)) throw new Error('camera_setup_arguments_invalid');
   // Runtime validator checks URL, private-file ownership and contents on a temporary file first.

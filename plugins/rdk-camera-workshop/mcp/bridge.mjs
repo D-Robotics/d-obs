@@ -60,6 +60,21 @@ const onlyKeys = (value, allowed) => record(value) && Object.keys(value).every(k
 const rpcError = (id, code, message) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 class BridgeError extends Error { constructor(code) { super(code); } }
 const fail = code => { throw new BridgeError(code); };
+const remediation = {
+  camera_bridge_unconfigured: '尚未配置连接。运行 configure，并指定服务 URL、认证类型和已有私有凭据文件。',
+  camera_bridge_config_invalid: '连接配置字段不完整：url、auth.type（sso/admin）、credentialFile（绝对路径）为必填，且不含其他字段。',
+  camera_bridge_url_invalid: '服务地址须为 HTTPS（本机可为 loopback HTTP），路径以 /api/ops/vision-workshop/mcp 结尾，且不含 query、hash 或内嵌凭据。',
+  camera_bridge_timeout_invalid: 'timeoutMs 须为 1–300000 的整数。',
+  camera_bridge_private_file_permissions_invalid: '连接配置与凭据文件须由当前用户持有，POSIX 权限为 600。',
+  camera_bridge_private_file_inside_package: '将连接配置和凭据移到插件及源码仓库之外。',
+  camera_bridge_credential_invalid: '凭据文件为空或含控制字符；在原服务重新导出后重试。',
+  camera_bridge_remote_http_401: '认证失效，请在原服务更新凭据后重试。',
+  camera_bridge_remote_http_403: '当前身份无权访问该服务，请核对服务权限与入口。',
+  camera_bridge_remote_transport_failed: '无法访问相机服务，请检查服务运行状态、地址和网络。',
+};
+export function describeError(code) {
+  return remediation[code] ?? '检查服务地址、私有文件和认证类型；参阅 README 的连接与自检说明。';
+}
 
 export function resolveConfigPath(env = process.env, home = homedir()) {
   return env.RDK_CAMERA_WORKSHOP_CONFIG || path.join(home, '.config', 'rdk-camera-workshop', 'connection.json');
@@ -196,7 +211,7 @@ async function dispatch(message) {
       if (!onlyKeys(params, ['name', 'arguments', '_meta']) || !onlyKeys(params.arguments ?? {}, [])) return rpcError(id, -32602, 'invalid params');
       let status;
       try { await validateConfiguration(); status = { configuration: 'configured', service: 'unverified', hardware: 'unverified', next: '运行插件 mcp/setup.mjs doctor，或读取远端 vision_workshop_runtime_status。' }; }
-      catch (error) { status = { configuration: 'unavailable', code: error instanceof BridgeError ? error.message : 'camera_bridge_unavailable', service: 'unverified', hardware: 'unverified', next: '阅读插件连接与自检说明，使用 mcp/setup.mjs configure 配置私有连接；不要在对话中发送凭据。' }; }
+      catch (error) { status = { configuration: 'unavailable', code: error instanceof BridgeError ? error.message : 'camera_bridge_unavailable', hint: describeError(error instanceof BridgeError ? error.message : 'camera_bridge_unavailable'), service: 'unverified', hardware: 'unverified', next: '阅读插件连接与自检说明，使用 mcp/setup.mjs configure 配置私有连接；不要在对话中发送凭据。' }; }
       return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(status) }], isError: false } };
     }
     const allowed = TOOL_ARGUMENTS.get(params.name);

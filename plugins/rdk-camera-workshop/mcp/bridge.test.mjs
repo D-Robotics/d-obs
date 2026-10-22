@@ -298,3 +298,19 @@ test('host onboarding keeps a local diagnostic tool available with no private co
     assert.ok(!stdout.includes(directory));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('connection status adds a path-free remediation hint for the reported code', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'camera-status-hint-'));
+  try {
+    const child = spawn(process.execPath, [bridge], { cwd: directory, env: { ...process.env, RDK_CAMERA_WORKSHOP_CONFIG: path.join(directory, 'missing.json'), RDK_CAMERA_WORKSHOP_ONBOARDING: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = ''; child.stdout.on('data', bytes => { stdout += bytes; });
+    const exited = new Promise(resolve => child.on('close', resolve));
+    child.stdin.end([rpc(0, 'initialize'), rpc(4, 'tools/call', { name: 'vision_connection_status', arguments: {} })].map(JSON.stringify).join('\n') + '\n');
+    assert.equal(await exited, 0);
+    const responses = stdout.trim().split('\n').map(line => JSON.parse(line));
+    const status = JSON.parse(responses.find(item => item.id === 4).result.content[0].text);
+    assert.equal(status.code, 'camera_bridge_unconfigured');
+    assert.match(status.hint, /configure/);
+    assert.ok(!stdout.includes(directory));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
