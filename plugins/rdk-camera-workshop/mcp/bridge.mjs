@@ -178,8 +178,9 @@ async function remote(message) {
     return result;
   } catch (error) {
     const code = error instanceof BridgeError ? error.message : 'camera_bridge_remote_transport_failed';
-    if (message.method === 'tools/call' && !READ_ONLY.has(message.params?.name)) return rpcError(message.id, -32002, code + ': execution outcome unknown; no automatic retry. Check experiment deviceRuns and actual camera state before another write. Restoration is unconfirmed.');
-    return rpcError(message.id, -32002, code);
+    const text = code + ': ' + describeError(code);
+    if (message.method === 'tools/call' && !READ_ONLY.has(message.params?.name)) return rpcError(message.id, -32002, text + ': execution outcome unknown; no automatic retry. Check experiment deviceRuns and actual camera state before another write. Restoration is unconfirmed.');
+    return rpcError(message.id, -32002, text);
   } finally { clearTimeout(timer); }
 }
 
@@ -239,7 +240,10 @@ export async function runBridge() {
     let message;
     try { message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
     catch { await output(rpcError(null, -32700, 'parse error')); return; }
-    const task = dispatch(message).catch(error => rpcError(message?.id, -32001, error instanceof BridgeError ? error.message : 'camera_bridge_unavailable')).then(output);
+    const task = dispatch(message).catch(error => {
+      const code = error instanceof BridgeError ? error.message : 'camera_bridge_unavailable';
+      return rpcError(message?.id, -32001, code + ': ' + describeError(code));
+    }).then(output);
     active.add(task); task.then(() => active.delete(task), () => active.delete(task));
   };
   let pending = Buffer.alloc(0); let oversized = false;

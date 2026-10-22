@@ -314,3 +314,19 @@ test('connection status adds a path-free remediation hint for the reported code'
     assert.ok(!stdout.includes(directory));
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('errors on every transport path carry the remediation hint without local paths', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'camera-error-hint-'));
+  try {
+    const child = spawn(process.execPath, [bridge], { cwd: directory, env: { ...process.env, RDK_CAMERA_WORKSHOP_CONFIG: path.join(directory, 'missing.json') }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = ''; child.stdout.on('data', bytes => { stdout += bytes; });
+    const exited = new Promise(resolve => child.on('close', resolve));
+    child.stdin.end([rpc(0, 'initialize'), rpc(6, 'tools/call', { name: 'vision_workshop_runtime_status', arguments: {} })].map(JSON.stringify).join('\n') + '\n');
+    assert.equal(await exited, 0);
+    const responses = stdout.trim().split('\n').map(line => JSON.parse(line));
+    const error = responses.find(item => item.id === 6).error;
+    assert.equal(error.code, -32001);
+    assert.match(error.message, /camera_bridge_unconfigured: 尚未配置连接/);
+    assert.ok(!stdout.includes(directory));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

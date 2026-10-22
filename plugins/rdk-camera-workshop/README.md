@@ -47,6 +47,18 @@ HTTPS 或 loopback HTTP 可以作为目标；拒绝重定向、userinfo、query/
 服务自身限额仍生效。工具调用串行、目录查询最多四路；写入不自动重试。
 配置缺失、身份无权、服务不可用或缺少工具均返回真实错误，不生成成功工具目录。
 
+### 自检与批量核验
+
+诊断输出统一为 JSON：`configure` 与 `doctor` 成功结果在 stdout，失败为
+`{"status":"failed","code","advice"}` 写入 stderr 并以非零码退出。
+`doctor` 同时校验配置与服务探活；退出码 0 表示配置与服务均可用。
+
+- 命令行：`node mcp/setup.mjs doctor`；批量核验按退出码逐台收集，失败台的
+  stderr JSON 含 `code` 与 `advice`，可直接汇总为工位清单。
+- 对话内：`vision_connection_status` 仅校验配置、不联网，失败返回 `code` 与
+  同一来源的 `hint` 修复提示；所有工具回执的错误码均附该提示，
+  写路径另保留 outcome unknown 与恢复警示。回执不包含本机路径。
+
 ## 点亮的实际范围
 
 当前点亮使用已经适配的传感器驱动与媒体模式启动设备，再检查实际出图。
