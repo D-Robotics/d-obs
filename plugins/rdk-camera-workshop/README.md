@@ -59,6 +59,20 @@ HTTPS 或 loopback HTTP 可以作为目标；拒绝重定向、userinfo、query/
   同一来源的 `hint` 修复提示；所有工具回执的错误码均附该提示，
   写路径另保留 outcome unknown 与恢复警示。回执不包含本机路径。
 
+### 课堂形态操作配方（提交面工具组合）
+
+以下配方只使用已提交的工具面，供彩排与助教排障；正式画质验收仍走 acceptance/quality 链路。
+
+- **白平衡有界对照**（V2 环节五的机制基础）：
+  `vision_camera_controls_get` 读取四通道增益与范围 → 对话描述偏色目标 →
+  `vision_camera_controls_set` 单次有界 B（或 R）增益调整 →
+  `preview_frame` 取新帧 → 前后 B/G、R/G 比值对照（留样统计直方图或
+  `wb_paper_observation.py`；课堂演练复算用 `tools/vision-x5-wb-drill.py`）→
+  恢复原值并复核比值回落。2026-10-16 实机正例与 10-22 归档复算见课程方案 V2 文档。
+- **检测计数对照**（为下游检测调优的最小组合，服务器侧反馈接线为研发项）：
+  `vision_camera_preview_start`（mode `bpu-detection`）逐帧回执含检测数与哈希 →
+  调参前后各取数帧 → 对照基线/候选检测数。检测计数尚未进入 AI 调参上下文（见课程方案 V2 §8）。
+
 ## 点亮的实际范围
 
 当前点亮使用已经适配的传感器驱动与媒体模式启动设备，再检查实际出图。
