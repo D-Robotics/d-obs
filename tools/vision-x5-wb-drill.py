@@ -100,6 +100,36 @@ def confirm_restore(before, after, key):
     return value is not None and value == extract(after)
 
 
+def preflight_adjustment_route(controls_result, tuning_probe):
+    """Classify why (or whether) the bounded WB adjustment can run on this daemon posture.
+
+    Returns a verdict dict; blocked is True with a reason when the operator must change
+    qualification posture (modeReadbackEvidence) before the adjustment leg can run."""
+    controls = (controls_result or {}).get("controls", controls_result) if isinstance(controls_result, dict) else {}
+    entries = controls.get("values", controls) if isinstance(controls, dict) else {}
+    writable = [key for key, entry in (entries or {}).items()
+                if isinstance(entry, dict) and entry.get("writable") and key.lower() not in ("autoexposure", "autowhitebalance")]
+    blue = None
+    try:
+        blue = pick_blue_gain(entries or {})
+    except ValueError:
+        blue = None
+    full_isp = isinstance(tuning_probe, dict) and tuning_probe.get("ok")
+    if blue is not None and blue.get("writable", True):
+        return {"blocked": False, "route": "controls", "blueKey": blue["key"]}
+    if full_isp:
+        return {"blocked": False, "route": "tuning", "blueKey": None}
+    reasons = []
+    if not writable:
+        reasons.append("controls_not_writable")
+    if blue is None:
+        reasons.append("per_channel_wb_gain_absent")
+    if not full_isp:
+        reasons.append("full_isp_readback_gated: " + json.dumps((tuning_probe or {}).get("error", ""))[:160])
+    return {"blocked": True, "route": None, "reasons": reasons,
+            "remedy": "configure modeReadbackEvidence (exposure+awb) in the daemon private config per qualification flow"}
+
+
 def load_camera_module(root):
     spec = importlib.util.spec_from_file_location("camera", root / "vision-x5-camera.py")
     module = importlib.util.module_from_spec(spec)
@@ -221,6 +251,12 @@ def main():
             if not controls.get("ok"):
                 raise RuntimeError("controls_get_failed")
             receipt["controlsBefore"] = controls.get("result")
+            tuning_probe = call("tuning_get")
+            verdict = preflight_adjustment_route(receipt["controlsBefore"], tuning_probe)
+            receipt["adjustmentRoute"] = verdict
+            if verdict.get("blocked"):
+                print(json.dumps({"phase": "B", "verdict": verdict, "ok": False}))
+                sys.exit(2)
             blue = pick_blue_gain(receipt["controlsBefore"])
             adjustment = bounded_adjust(blue["value"], blue["low"], blue["high"], arguments.step)
             receipt["adjustment"] = adjustment

@@ -114,6 +114,31 @@ class BlueGainTests(unittest.TestCase):
         self.assertTrue(drill.confirm_restore(before, {"values": {"wb_bgain": {"value": 2.6}}}, "wb_bgain"))
         self.assertFalse(drill.confirm_restore(before, {"values": {"wb_bgain": {"value": 2.4}}}, "wb_bgain"))
 
+class PreflightTests(unittest.TestCase):
+    def test_writable_blue_gain_routes_through_controls(self):
+        controls = {"controls": {"autoWhiteBalance": {"value": True, "writable": False, "active": True},
+                                 "blueGain": {"value": 2.6, "writable": True, "min": 1.0, "max": 4.0}}}
+        verdict = drill.preflight_adjustment_route(controls, {"ok": False, "error": "full_isp_unavailable"})
+        self.assertFalse(verdict["blocked"])
+        self.assertEqual(verdict["route"], "controls")
+
+    def test_read_only_posture_reports_actionable_remedy(self):
+        controls = {"controls": {"autoWhiteBalance": {"value": True, "writable": False, "active": True},
+                                 "saturation": {"value": 1.1, "writable": False, "min": 0, "max": 2}}}
+        verdict = drill.preflight_adjustment_route(controls, {"ok": False, "error": "full_isp_unavailable"})
+        self.assertTrue(verdict["blocked"])
+        self.assertIn("controls_not_writable", verdict["reasons"])
+        self.assertIn("per_channel_wb_gain_absent", verdict["reasons"])
+        self.assertIn("modeReadbackEvidence", verdict["remedy"])
+
+    def test_full_isp_snapshot_opens_tuning_route(self):
+        controls = {"controls": {"autoWhiteBalance": {"value": True, "writable": False, "active": True}}}
+        verdict = drill.preflight_adjustment_route(controls, {"ok": True, "result": {}})
+        self.assertFalse(verdict["blocked"])
+        self.assertEqual(verdict["route"], "tuning")
+
+if __name__ == "__main__":
+    unittest.main()
 
 if __name__ == "__main__":
     unittest.main()
