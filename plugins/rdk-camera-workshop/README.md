@@ -69,6 +69,11 @@ HTTPS 或 loopback HTTP 可以作为目标；拒绝重定向、userinfo、query/
   `preview_frame` 取新帧 → 前后 B/G、R/G 比值对照（留样统计直方图或
   `wb_paper_observation.py`；课堂演练复算用 `tools/vision-x5-wb-drill.py`）→
   恢复原值并复核比值回落。2026-10-16 实机正例与 10-22 归档复算见课程方案 V2 文档。
+  **X5 机制精确图**（10-23 真机测绘）：WB 增益字段路径为 `awb.manual_attr.gain.{rgain,grgain,gbgain,bgain}`
+  （vision-x5-isp.py 编译器描述），可写性由 `modeReadbackEvidence.awb/exposure` 授予，
+  数值边界用 `awbGainLimits` 运营者策略；保存前提为核心模块读回往返（exposure/awb/cproc，
+  journal schema `x5-mode-roundtrip-qualification-v1`）。通用 controls 面在该证据缺位时全只读。
+  演练工具 `wb-drill.py` Phase B 预检会输出结构化 verdict 指示此门禁。
 - **检测计数对照**（为下游检测调优的最小组合，服务器侧反馈接线为研发项）：
   `vision_camera_preview_start`（mode `bpu-detection`）逐帧回执含检测数与哈希 →
   调参前后各取数帧 → 对照基线/候选检测数。检测计数尚未进入 AI 调参上下文（见课程方案 V2 §8）。
