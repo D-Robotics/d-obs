@@ -124,7 +124,8 @@ class DrillEndToEndTests(unittest.TestCase):
             self.assertTrue(output_a["A1"]["usable"])
             self.assertEqual(output_a["A1"]["BoverGMedian"], 1.0)
 
-            phase_b = subprocess.run([sys.executable, str(DRILL), "--config", str(config_path), "--phase", "B"],
+            phase_b = subprocess.run([sys.executable, str(DRILL), "--config", str(config_path), "--phase", "B",
+                                      "--step", "-0.25"],
                                      capture_output=True, text=True, env=environment, timeout=120)
             self.assertEqual(phase_b.returncode, 0, phase_b.stderr)
             output_b = json.loads(phase_b.stdout)

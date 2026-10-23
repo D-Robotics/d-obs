@@ -165,11 +165,12 @@ def main():
         out.mkdir(mode=0o700, exist_ok=True)
     cfg = json.loads(pathlib.Path(arguments.config).read_text())
     module = load_camera_module(root)
-    qualified, boot = binding_checks(root, cfg, module, boot_id=os.environ.get("WB_DRILL_TEST_BOOT_ID"))
     state_path = root / "wb-drill-state.json"
-    receipt = {"schema": "rdk.wb-classroom-drill.v1", "phase": arguments.phase, "bootId": boot, "frames": {}, "calls": []}
+    receipt = {"schema": "rdk.wb-classroom-drill.v1", "phase": arguments.phase, "frames": {}, "calls": []}
 
     if arguments.phase == "A":
+        qualified, boot = binding_checks(root, cfg, module, boot_id=os.environ.get("WB_DRILL_TEST_BOOT_ID"))
+        receipt["bootId"] = boot
         (root / "camera-before.json").write_text(json.dumps(cfg))
         (root / "camera.json").write_text(json.dumps(qualified))
         pathlib.Path(root / "camera.json").chmod(0o600)
@@ -182,11 +183,13 @@ def main():
         except RuntimeError:
             daemon.terminate()
             raise
-        state_path.write_text(json.dumps({"port": cfg["port"], "token": cfg["token"], "out": str(out)}))
+        state_path.write_text(json.dumps({"port": cfg["port"], "token": cfg["token"], "out": str(out), "bootId": boot}))
         token = cfg["token"]
     else:
         state = json.loads(state_path.read_text())
-        cfg["port"], token = state["port"], state["token"]
+        cfg["port"], token, boot = state["port"], state["token"], state["bootId"]
+        receipt["bootId"] = boot
+        out.mkdir(mode=0o700, exist_ok=True)
         phase_a_receipt = json.loads((pathlib.Path(state["out"]) / "receipt.json").read_text())
         if "A1" not in phase_a_receipt.get("frames", {}):
             raise RuntimeError("phase_a_baseline_missing")
@@ -219,7 +222,7 @@ def main():
                 raise RuntimeError("controls_get_failed")
             receipt["controlsBefore"] = controls.get("result")
             blue = pick_blue_gain(receipt["controlsBefore"])
-            adjustment = bounded_adjust(blue["value"], blue["low"], blue["high"], -abs(arguments.step))
+            adjustment = bounded_adjust(blue["value"], blue["low"], blue["high"], arguments.step)
             receipt["adjustment"] = adjustment
             applied = call("controls_set", {"values": {blue["key"]: adjustment["to"]}})
             if not applied.get("ok"):
