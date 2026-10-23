@@ -14,6 +14,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import socket
 import subprocess
@@ -106,10 +107,10 @@ def load_camera_module(root):
     return module
 
 
-def binding_checks(root, cfg, module):
+def binding_checks(root, cfg, module, boot_id=None):
     """Boot, native library, profile binding and camera ownership checks; returns the qualified config."""
     binding = json.loads((root / "formal-qualified-config-patch-binding.json").read_text())
-    boot = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    boot = boot_id or pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     if boot != binding["bootId"]:
         raise RuntimeError("boot_changed_requalify")
     if hashlib.sha256(pathlib.Path(cfg["nativeLibrary"]).read_bytes()).hexdigest() != binding["nativeLibrarySha256"]:
@@ -160,9 +161,11 @@ def main():
     out = pathlib.Path(arguments.out) if arguments.out else root / ("wb-drill-" + arguments.phase.lower())
     if arguments.phase == "A":
         out.mkdir(mode=0o700, exist_ok=False)
+    else:
+        out.mkdir(mode=0o700, exist_ok=True)
     cfg = json.loads(pathlib.Path(arguments.config).read_text())
     module = load_camera_module(root)
-    qualified, boot = binding_checks(root, cfg, module)
+    qualified, boot = binding_checks(root, cfg, module, boot_id=os.environ.get("WB_DRILL_TEST_BOOT_ID"))
     state_path = root / "wb-drill-state.json"
     receipt = {"schema": "rdk.wb-classroom-drill.v1", "phase": arguments.phase, "bootId": boot, "frames": {}, "calls": []}
 
@@ -172,7 +175,7 @@ def main():
         pathlib.Path(root / "camera.json").chmod(0o600)
         cfg = qualified
         log = (out / "daemon.log").open("wb")
-        daemon = subprocess.Popen(["/usr/bin/python3", str(root / "vision-x5-camera.py"), "--config", str(root / "camera.json")],
+        daemon = subprocess.Popen([sys.executable, str(root / "vision-x5-camera.py"), "--config", str(root / "camera.json")],
                                   stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             wait_for_port(cfg["port"])
