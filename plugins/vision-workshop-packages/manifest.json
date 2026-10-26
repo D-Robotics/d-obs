@@ -2,11 +2,22 @@
   "schema": "rdk.vision-plugin-packages.v1",
   "packages": [
     {
+      "kind": "platform",
+      "name": "RDK Camera Workshop",
+      "version": "1.2.1",
+      "bytes": 835127,
+      "sha256": "ae285588e54f545510986ce3f9c8805bf29b42d07a48ddceb92e30fc332beaa2",
+      "requirements": [
+        "Matching Studio native camera build and configured account bridge",
+        "Knowledge 2.0.3; hardware and quality require current-device acceptance"
+      ]
+    },
+    {
       "kind": "studio",
-      "name": "RDK 相机接入与 ISP 调优助手",
-      "version": "1.2.0",
+      "name": "RDK Camera Workshop",
+      "version": "1.3.0",
       "bytes": 162779,
-      "sha256": "59e74a01d33078aa035bba3e7ffd2c5b0ea964840c128e6b140084e3d99e1a8f",
+      "sha256": "359d4e4cf03ec5e294ce6ee33d01288c7c707bc507773549cd2e84702a9deb05",
       "requirements": [
         "Node.js 22+",
         "RDK Studio 1.4+ 或兼容 MCP 宿主",
