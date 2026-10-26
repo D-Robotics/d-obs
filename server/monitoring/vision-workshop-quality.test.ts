@@ -36,6 +36,26 @@ test('actual grayscale output uses normalized code values and fixed endpoint thr
   assert.match(result.limitations.join(' '), /不代表 Sensor 饱和/);
 });
 
+test('histograms distribute sampled code values across 32 bounded bins', () => {
+  const result = analyzeVisionProcessedPng(gray(3, 2, [0, 1, 2, 253, 254, 255]));
+  assert.equal(result.lumaHistogram.length, 32);
+  approx(result.lumaHistogram.reduce((sum, value) => sum + value, 0), 1);
+  approx(result.lumaHistogram[0]!, 0.5); approx(result.lumaHistogram[31]!, 0.5);
+  assert.deepEqual(result.channelHistograms.r, result.channelHistograms.g);
+  assert.deepEqual(result.channelHistograms.r, result.channelHistograms.b);
+  approx(result.channelHistograms.r[0]!, 0.5); approx(result.channelHistograms.r[31]!, 0.5);
+  assert.match(result.limitations.join(' '), /直方图/);
+});
+
+test('uniform mid-gray output concentrates every histogram in a single bin and comparison carries both', () => {
+  const result = analyzeVisionProcessedPng(gray(2, 2, [128, 128, 128, 128]));
+  result.lumaHistogram.forEach((value, index) => approx(value, index === 16 ? 1 : 0));
+  approx(result.channelHistograms.g[16]!, 1);
+  const comparison = compareVisionProcessedPng(gray(1, 1, [128]), gray(1, 1, [10]));
+  assert.equal(comparison.baseline.lumaHistogram.length, 32);
+  assert.equal(comparison.candidate.channelHistograms.b.length, 32);
+});
+
 test('RGB observations use the declared luma weights without pretending to be calibrated color', () => {
   const result = analyzeVisionProcessedPng(png(3, 1, 2, Buffer.from([0, 255, 0, 0, 0, 255, 0, 0, 0, 255])));
   approx(result.meanLuma, 1 / 3);

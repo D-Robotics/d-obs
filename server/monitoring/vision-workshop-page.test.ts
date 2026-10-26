@@ -13,6 +13,7 @@ class Node {
   value = '';
   id = '';
   type = '';
+  checked = false;
   disabled = false;
   hidden = false;
   open = false;
@@ -46,12 +47,15 @@ const content = (node: Node): string => all(node).map(item => item.textContent).
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const capability = { bringup: { status: 'unavailable', reason: 'adapter_not_configured' }, capture: { status: 'unavailable' }, apply: { status: 'unavailable' }, limits: { maxRawBytes: 67108864 } };
 const sample = { id: 'sample-1', filename: 'backlight.raw', metadata: { scene: '逆光', width: 2, height: 2, bitDepth: 10, bayer: 'RGGB', packing: 'unpacked16le', stride: 4, blackLevel: 0, whiteLevel: 1023 } };
+const frameAnalysis = { pixelCount: 6, sampledPixels: 6, meanLuma: 0.5, stdLuma: 0.5, nearBlackRatio: 0.5, nearWhiteRatio: 0.5, channelMeans: { r: 0.5, g: 0.5, b: 0.5 }, lumaHistogram: [0.5, ...new Array<number>(30).fill(0), 0.5], channelHistograms: { r: [0.5, ...new Array<number>(30).fill(0), 0.5], g: [0.5, ...new Array<number>(30).fill(0), 0.5], b: [0.5, ...new Array<number>(30).fill(0), 0.5] }, roi: { x: 0, y: 0, width: 3, height: 2 }, method: 'png-output-statistics', limitations: ['fixture'] };
+const trendSeries = [ { frameId: 'frame-1', scene: '目标卡基线档', capturedAt: '2026-10-22T09:00:00Z', meanDeltaE: 6.4, maxDeltaE: 8, grayMaxLumaDelta: 1.2, whiteBalanceOffset: { aStar: 0, bStar: 0 }, sampledPixels: 64896 }, { frameId: 'frame-2', scene: '目标卡调参后', capturedAt: '2026-10-22T09:10:00Z', meanDeltaE: 2.1, maxDeltaE: 3, grayMaxLumaDelta: 0.4, whiteBalanceOffset: { aStar: 0, bStar: 0 }, sampledPixels: 64896 } ];
+const targetAnalysis = { patches: [ { name: '灰阶01', kind: 'gray', reference: { r: 0, g: 0, b: 0 }, observed: { r: 2.1, g: 1.8, b: 1.9 }, deltaE: 0.41 }, { name: '纯红', kind: 'color', reference: { r: 255, g: 0, b: 0 }, observed: { r: 248.2, g: 3.4, b: 5.1 }, deltaE: 3.12 } ], meanDeltaE: 1.76, maxDeltaE: 3.12, grayMaxLumaDelta: 0.41, whiteBalanceOffset: { aStar: 0.21, bStar: -0.14 }, sampledPixels: 46080, method: 'target-chart-v1', limitations: ['参考值为模块定义的 sRGB 数值', '不构成画质总分'] };
 const baseline = { id: 'baseline-1', hash: 'baseline-hash', tuning: { sharpen: { strength: 0 } }, rules: [{ path: '/sharpen/strength', label: '锐化强度', min: 0, max: 10 }] };
 const candidate = { id: 'candidate-1', title: '细节候选', hash: 'a'.repeat(64), baselineHash: baseline.hash, patches: [{ path: '/sharpen/strength', value: 2, reason: '保留边缘细节' }], source: 'model', model: 'test-model', verification: 'unverified' };
 const experiment = () => ({ id: 'experiment-1', title: '逆光实验', goal: '减少噪声，保留细节', targetId: undefined as string | undefined, board: undefined as string | undefined, sensorVendor: undefined as string | undefined, sensorModel: undefined as string | undefined, sdkVersion: undefined as string | undefined, cameraInterface: undefined as string | undefined, cameraMode: undefined as string | undefined, createdAt: '2026-10-12T01:00:00Z', baseline: null as any, baselineHistory: [] as any[], samples: [] as any[], candidates: [] as any[], processedImages: [] as any[], cameraFrames: [] as any[], evaluations: [] as any[], comparisons: [] as any[], deviceRuns: [] as any[], aiDebugRuns: [] as any[], selectedCandidateId: null as string | null });
 type Experiment = ReturnType<typeof experiment>;
 type Request = { path: string; options: { method?: string; headers: Record<string, string>; body?: unknown; credentials: string } };
-function setup(options: { experiment?: Experiment; failedList?: boolean; failedCandidate?: boolean; failedCapabilities?: boolean; capabilities?: Record<string, unknown>; token?: string; session?: string; deviceResults?: Record<string, unknown>; failedDevice?: string; debugRun?: any; debugPollRun?: any; failedDebug?: boolean; failedDebugPoll?: boolean; readiness?: any; failedReadiness?: boolean; calibrationTasks?: any[]; calibrationAssets?: any[]; failedCalibrationList?: boolean; failedCalibrationRun?: boolean; pluginPackages?: any[]; failedPluginPackages?: boolean; packageBlob?: Blob } = {}) {
+function setup(options: { experiment?: Experiment; failedList?: boolean; failedCandidate?: boolean; failedCapabilities?: boolean; capabilities?: Record<string, unknown>; token?: string; session?: string; deviceResults?: Record<string, unknown>; failedDevice?: string; debugRun?: any; debugPollRun?: any; failedDebug?: boolean; failedDebugPoll?: boolean; readiness?: any; failedReadiness?: boolean; calibrationTasks?: any[]; calibrationAssets?: any[]; failedCalibrationList?: boolean; failedCalibrationRun?: boolean; pluginPackages?: any[]; failedPluginPackages?: boolean; packageBlob?: Blob; frameAnalysis?: any; failedFrameAnalysis?: boolean; targetAnalysis?: any; trendSeries?: any[] } = {}) {
   const ids = new Map<string, Node>();
   const body = new Node('body');
   ['logsLink', 'consoleLink', 'experimentCount', 'newExperiment', 'experimentList', 'workspace', 'feedback', 'hardwareNotice', 'atomicCapabilities', 'pluginPackageLinks', 'createModal', 'closeModal', 'createForm', 'createSubmit', 'createError', 'experimentTitle', 'experimentGoal', 'sensorModel', 'sdkVersion', 'experimentBoard', 'sensorVendor', 'cameraInterface', 'cameraMode', 'adapterTarget', 'createReadiness', 'createDeviceDetails'].forEach(id => { const node = new Node(id.endsWith('Form') ? 'form' : 'div'); node.id = id; ids.set(id, node); body.appendChild(node); });
@@ -65,6 +69,7 @@ function setup(options: { experiment?: Experiment; failedList?: boolean; failedC
     document: {
       body, activeElement: null,
       createElement: (tag: string) => new Node(tag),
+      createElementNS: (_ns: string, tag: string) => new Node(tag),
       getElementById: (id: string) => ids.get(id) || all(body).find(node => node.id === id),
       addEventListener() {},
       querySelectorAll: (selector: string) => selector === '[data-step]' ? steps : selector.includes('#workspace') ? all(ids.get('workspace')!).filter(node => ['button', 'input', 'select', 'textarea'].includes(node.tagName)) : [],
@@ -88,6 +93,9 @@ function setup(options: { experiment?: Experiment; failedList?: boolean; failedC
       else if (path.endsWith('/experiments') && requestOptions.method === 'POST') { current = { ...experiment(), ...JSON.parse(String(requestOptions.body)) }; data = { ok: true, experiment: current }; }
       else if (path.endsWith('/experiments')) { status = options.failedList ? 503 : 200; data = options.failedList ? { ok: false, error: 'storage_unavailable' } : { ok: true, experiments: current ? [current] : [] }; }
       else if (path.endsWith('/experiments/experiment-1')) data = { ok: true, experiment: current };
+      else if (path.endsWith('/analysis')) { status = options.failedFrameAnalysis ? 503 : 200; data = options.failedFrameAnalysis ? { ok: false, error: 'analysis_unavailable' } : { ok: true, statistics: options.frameAnalysis || frameAnalysis }; }
+      else if (path.endsWith('/target-trend')) data = { ok: true, series: options.trendSeries || trendSeries, method: 'target-chart-v1' };
+      else if (path.endsWith('/target-analysis')) data = { ok: true, imageId: 'frame-1', kind: 'frame', analysis: options.targetAnalysis || targetAnalysis };
       else if (path.endsWith('/samples') && current) { current = { ...current, samples: [sample] }; data = { ok: true, sample }; }
       else if (path.endsWith('/candidates') && options.failedCandidate) { status = 503; data = { ok: false, error: 'model_gateway_unavailable' }; }
       else if (path.endsWith('/selection') && current) { current = { ...current, selectedCandidateId: JSON.parse(String(requestOptions.body)).candidateId }; data = { ok: true, experiment: current }; }
@@ -796,4 +804,61 @@ test('package download uses authenticated fixed paths and verifies the real arch
   await byText(h.ids.get('pluginPackageLinks')!, '下载 Studio 插件包').fire('click'); for (let i = 0; i < 8; i++) await settle();
   const request = h.requests.find(request => request.path.endsWith('/plugin-packages/studio/download'))!; assert.ok(request); assert.equal(request.options.headers['x-admin-token'], 'token-fixture');
   assert.match(content(h.feedback), /插件包哈希已核对并下载/);
+});
+
+test('frame statistics render a bounded code-value histogram beside the numeric summary', async () => {
+  const h = setup({ experiment: { ...cameraExperiment(), cameraFrames: [{ id: 'frame-1', filename: 'frame.png', width: 2, height: 1, mimeType: 'image/png' }] }, capabilities: cameraCapabilities });
+  await settle(); await h.step(0);
+  await byText(h.workspace, '读取画面统计').fire('click'); await settle();
+  const svg = all(h.workspace).find(node => node.tagName === 'svg');
+  assert.ok(svg, 'histogram svg missing');
+  assert.equal(svg!.attributes['aria-label'], '采样码值分布直方图');
+  assert.equal(svg!.children.filter(node => node.tagName === 'rect').length, 32);
+  assert.equal(svg!.children.filter(node => node.tagName === 'polyline').length, 3);
+  assert.match(content(h.workspace), /不构成画质评分/);
+  assert.ok(h.requests.some(request => request.path.endsWith('/frames/frame-1/analysis')), 'analysis request missing');
+});
+
+test('camera frames can be evaluated against the target chart with bounded summaries and explicit limitations', async () => {
+  const h = setup({ experiment: { ...cameraExperiment(), cameraFrames: [{ id: 'frame-1', filename: 'frame.png', width: 2, height: 1, mimeType: 'image/png' }] }, capabilities: cameraCapabilities });
+  await settle(); await h.step(0);
+  await byText(h.workspace, '按测试卡评估').fire('click'); await settle();
+  assert.match(content(h.workspace), /目标卡客观评估/);
+  assert.match(content(h.workspace), /色块平均 ΔE76/);
+  assert.match(content(h.workspace), /1\.76/);
+  assert.match(content(h.workspace), /逐色块明细（2 块 · 采样 46080 像素）/);
+  assert.match(content(h.workspace), /不构成画质总分/);
+  const request = h.requests.find(request => request.path.endsWith('/frames/frame-1/target-analysis'))!;
+  assert.ok(request, 'target-analysis request missing');
+  assert.equal(request.options.method, 'POST');
+  assert.equal(request.options.body, undefined, 'frame identity lives in the path, not the body');
+});
+
+test('candidate generation can pass a target chart frame for server-side objective scoring', async () => {
+  const h = setup({ experiment: { ...cameraExperiment(), baseline, cameraFrames: [{ id: 'chart-frame', filename: 'chart.png', width: 2, height: 1, mimeType: 'image/png', tuningHash: baseline.hash }] }, capabilities: cameraCapabilities });
+  await settle(); await h.step(2);
+  const chartSelect = fieldControl(h.workspace, '目标卡评估帧（可选）');
+  chartSelect.value = 'chart-frame';
+  await byText(h.workspace, '生成 AI 参数候选').fire('click'); await settle();
+  const request = h.requests.find(request => request.path.endsWith('/candidates'))!;
+  assert.ok(request, 'candidates request missing');
+  const body = JSON.parse(String(request.options.body));
+  assert.equal(body.targetAnalysisFrameId, 'chart-frame');
+  assert.match(content(h.workspace), /逐色块 ΔE/);
+});
+
+test('target trend draws the server-computed deltaE series over selected chart frames', async () => {
+  const trendSeries = [ { frameId: 'frame-1', scene: '目标卡基线档', capturedAt: '2026-10-22T09:00:00Z', meanDeltaE: 6.4, maxDeltaE: 8, grayMaxLumaDelta: 1.2, whiteBalanceOffset: { aStar: 0, bStar: 0 }, sampledPixels: 64896 }, { frameId: 'frame-2', scene: '目标卡调参后', capturedAt: '2026-10-22T09:10:00Z', meanDeltaE: 2.1, maxDeltaE: 3, grayMaxLumaDelta: 0.4, whiteBalanceOffset: { aStar: 0, bStar: 0 }, sampledPixels: 64896 } ];
+  const h = setup({ experiment: { ...cameraExperiment(), cameraFrames: [{ id: 'frame-1', filename: 'a.png', width: 2, height: 1, mimeType: 'image/png', capturedAt: '2026-10-22T09:00:00Z' }, { id: 'frame-2', filename: 'b.png', width: 2, height: 1, mimeType: 'image/png', capturedAt: '2026-10-22T09:10:00Z' }] }, capabilities: cameraCapabilities });
+  await settle(); await h.step(0);
+  const boxes = all(h.workspace).filter(node => node.tagName === 'input' && node.type === 'checkbox');
+  assert.equal(boxes.length, 2, 'checkbox per png frame');
+  boxes.forEach(box => { box.checked = true; box.fire('change'); });
+  await byText(h.workspace, '绘制 ΔE 趋势').fire('click'); await settle();
+  const svg = all(h.workspace).find(node => node.tagName === 'svg' && node.attributes['aria-label'] === '目标卡 ΔE 趋势');
+  assert.ok(svg, 'trend svg missing');
+  assert.equal(svg!.children.filter(node => node.tagName === 'circle').length, 2);
+  assert.ok(h.requests.some(request => request.path.endsWith('/target-trend') && request.options.method === 'POST'), 'trend request missing');
+  assert.match(content(h.workspace), /调参有效的客观证据/);
+  assert.match(content(h.workspace), /末帧 2\.10/);
 });

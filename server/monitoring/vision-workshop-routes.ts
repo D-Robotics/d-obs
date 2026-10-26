@@ -8,7 +8,7 @@ import { requireOpsMutationGuard } from './observability-route-kit.js';
 import { VisionWorkshopService, VisionWorkshopError, buildVisionHandbook, imageDimensions, type VisionJsonObject, type VisionRawMetadata, type VisionRawSample, type VisionProcessedImage, type VisionCameraFrame, type VisionDeviceCapability, type VisionCapabilities } from './vision-workshop-service.js';
 import { generateVisionIspCandidate, visionModelEnabled, type VisionModelInput, type VisionIspCandidate } from './vision-workshop-model.js';
 import { analyzeVisionRaw } from './vision-workshop-raw.js';
-import { compareVisionProcessedPng, analyzeVisionProcessedPng, VisionQualityError } from './vision-workshop-quality.js';
+import { compareVisionProcessedPng, analyzeVisionProcessedPng, analyzeVisionTargetChart, VisionQualityError } from './vision-workshop-quality.js';
 import { VisionDeviceRegistry, VisionDeviceExecutionError, configuredVisionDevices, VISION_DEVICE_OPERATIONS, type VisionDeviceOperation, type VisionCameraControls, validateVisionControlValues } from './vision-workshop-device.js';
 import { createVisionArchive, renderVisionHandbook, buildVisionAiDebugExport, buildVisionWorkshopDeliveryExport, type VisionArchiveEntry } from './vision-workshop-export.js';
 import { renderVisionWorkshopPage } from './vision-workshop-page.js';
@@ -42,7 +42,7 @@ const streamAnalysisQuery = z.object({
 const experimentInput = z.object({ title: z.string().trim().min(1).max(120), goal: goalSchema, board: shortText.optional(), sensorVendor: shortText.optional(), sensorModel: shortText.optional(), sdkVersion: shortText.optional(), cameraInterface: shortText.optional(), cameraMode: shortText.optional(), targetId: id.optional() }).strict();
 const cameraIdentityFields = ['board', 'sensorVendor', 'sensorModel', 'sdkVersion', 'cameraInterface', 'cameraMode'] as const;
 const baselineInput = z.object({ config: z.record(z.unknown()), rules: z.array(z.object({ path: z.string().min(1).max(300), label: shortText, min: z.number().finite(), max: z.number().finite(), step: z.number().finite().positive().optional(), precision: z.enum(['float32', 'seconds-float32-us']).optional() }).strict()).min(1).max(128) }).strict();
-const candidateInput = z.object({ goal: goalSchema.optional(), frameIds: z.array(id).min(1).max(16).refine(values => new Set(values).size === values.length).optional() }).strict();
+const candidateInput = z.object({ goal: goalSchema.optional(), frameIds: z.array(id).min(1).max(16).refine(values => new Set(values).size === values.length).optional(), targetAnalysisFrameId: id.optional() }).strict();
 const resultInput = z.object({ sampleId: id, candidateId: id.optional(), filename: z.string().max(200).optional(), mimeType: z.enum(['image/png', 'image/jpeg']).optional() }).strict();
 const rawMetadataInput = z.object({ scene: z.string().trim().min(1).max(120), width: z.number().int(), height: z.number().int(), bitDepth: z.union([z.literal(8), z.literal(10), z.literal(12), z.literal(14), z.literal(16)]), bayer: z.enum(['RGGB', 'BGGR', 'GRBG', 'GBRG']), packing: z.enum(['unpacked16le', 'mipi-raw10', 'mipi-raw12']), stride: z.number().int(), blackLevel: z.number().int(), whiteLevel: z.number().int(), exposureUs: z.number().finite().optional(), gain: z.number().finite().optional() }).strict();
 
@@ -319,7 +319,15 @@ export function registerVisionWorkshopRoutes(router: Router, options: Options = 
       const cameraContext = Object.fromEntries(cameraIdentityFields.filter((field) => experiment[field] !== undefined).map((field) => [field, experiment[field]]));
       const frameStatistics = [];
       if (!useRaw) for (const frame of evidenceFrames) { const stored = await service().readCameraFrame(owner, experimentId, frame.id); frameStatistics.push(analyzeVisionProcessedPng(stored.data)); }
-      const proposal = await generate({ baseline: experiment.baseline.tuning, rules: experiment.baseline.rules, ...(useRaw ? { rawStatistics: statistics } : { frameStatistics }), goal: input.goal ?? experiment.goal, cameraContext });
+      let targetAnalysis;
+      if (input.targetAnalysisFrameId) {
+        const chartFrame = experiment.cameraFrames.find(frame => frame.id === input.targetAnalysisFrameId);
+        if (!chartFrame || chartFrame.mimeType !== 'image/png') throw new VisionWorkshopError('vision_target_frame_required', 'The target chart evidence must be an actual archived PNG camera frame of this experiment', 404);
+        const stored = await service().readCameraFrame(owner, experimentId, chartFrame.id);
+        const analysis = analyzeVisionTargetChart(stored.data);
+        targetAnalysis = { method: analysis.method, meanDeltaE: analysis.meanDeltaE, maxDeltaE: analysis.maxDeltaE, grayMaxLumaDelta: analysis.grayMaxLumaDelta, whiteBalanceOffset: analysis.whiteBalanceOffset, patchDeltaE: analysis.patches.map(patch => ({ name: patch.name, deltaE: patch.deltaE })) };
+      }
+      const proposal = await generate({ baseline: experiment.baseline.tuning, rules: experiment.baseline.rules, ...(useRaw ? { rawStatistics: statistics } : { frameStatistics }), ...(targetAnalysis ? { targetAnalysis } : {}), goal: input.goal ?? experiment.goal, cameraContext });
       const current = await service().getExperiment(owner, experimentId);
       if (current.baseline?.id !== experiment.baseline.id || current.baseline?.hash !== experiment.baseline.hash) throw new VisionWorkshopError('vision_baseline_changed', 'Baseline changed while the model was generating; inspect versions before regenerating', 409);
       const candidate = await service().createCandidate(owner, experimentId, { baselineHash: experiment.baseline.hash, baselineId: experiment.baseline.id, patches: proposal.patches, sampleIds: useRaw ? experiment.samples.map((sample) => sample.id) : [], frameIds: useRaw ? [] : evidenceFrames.map(frame => frame.id), modelInput: proposal.modelInput, source: 'model', model: proposal.model });
@@ -361,6 +369,24 @@ export function registerVisionWorkshopRoutes(router: Router, options: Options = 
     const metrics = compareVisionProcessedPng(before.data, after.data, input.roi);
     const comparison = await service().recordComparison(owner, experimentId, { baselineImageId: baselineImage.id, candidateImageId: candidateImage.id, metrics: metrics as unknown as VisionJsonObject });
     res.status(201).json({ ok: true, comparison, method: metrics.method });
+  });
+  post('/experiments/:id/frames/:frameId/target-analysis', async (req, res) => {
+    const stored = await service().readCameraFrame(visionWorkshopOwner(req), String(req.params.id), String(req.params.frameId));
+    res.json({ ok: true, frameId: stored.frame.id, analysis: analyzeVisionTargetChart(stored.data) });
+  });
+  post('/experiments/:id/target-trend', async (req, res) => {
+    const input = z.object({ frameIds: z.array(id).min(2).max(16).refine(values => new Set(values).size === values.length) }).strict().parse(req.body);
+    const owner = visionWorkshopOwner(req); const experimentId = String(req.params.id); const experiment = await service().getExperiment(owner, experimentId);
+    const series = [];
+    for (const frameId of input.frameIds) {
+      const frame = experiment.cameraFrames.find(entry => entry.id === frameId);
+      if (!frame || frame.mimeType !== 'image/png') throw new VisionWorkshopError('vision_target_frame_required', 'Target trend frames must be actual archived PNG camera frames of this experiment', 404);
+      const stored = await service().readCameraFrame(owner, experimentId, frameId);
+      const analysis = analyzeVisionTargetChart(stored.data);
+      series.push({ frameId, scene: frame.scene, capturedAt: frame.capturedAt ?? frame.createdAt, meanDeltaE: analysis.meanDeltaE, maxDeltaE: analysis.maxDeltaE, grayMaxLumaDelta: analysis.grayMaxLumaDelta, whiteBalanceOffset: analysis.whiteBalanceOffset, sampledPixels: analysis.sampledPixels });
+    }
+    series.sort((first, second) => String(first.capturedAt).localeCompare(String(second.capturedAt)));
+    res.json({ ok: true, series, method: 'target-chart-v1' });
   });
   post('/experiments/:id/selection', async (req, res) => { const input = z.object({ candidateId: id }).strict().parse(req.body); res.json({ ok: true, experiment: await service().selectCandidate(visionWorkshopOwner(req), String(req.params.id), input.candidateId) }); });
   get('/experiments/:id/tuning', async (req, res) => {

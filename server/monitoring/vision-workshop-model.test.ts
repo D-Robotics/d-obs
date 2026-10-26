@@ -124,6 +124,8 @@ test('processed camera observations stay separate from Bayer RAW and redact arbi
   const frameStatistics = { method: 'png-output-statistics', pixelCount: 4, sampledPixels: 4,
     meanLuma: 0.3, stdLuma: 0.1, nearBlackRatio: 0, nearWhiteRatio: 0,
     channelMeans: { r: 0.3, g: 0.3, b: 0.3 }, roi: { x: 0, y: 0, width: 2, height: 2 },
+    lumaHistogram: [1, ...new Array<number>(31).fill(0)],
+    channelHistograms: { r: [1, ...new Array<number>(31).fill(0)], g: [1, ...new Array<number>(31).fill(0)], b: [1, ...new Array<number>(31).fill(0)] },
     limitations: ['UNTRUSTED_PROVIDER_METADATA'], privateKey: 'UNRELATED_SECRET' };
   const candidate = await generateVisionIspCandidate(input({ rawStatistics: undefined, frameStatistics }), async messages => {
     assert.match(messages[0]!.content, /不能冒充 Bayer Raw/);
@@ -211,4 +213,33 @@ test('default gateway call has a timeout signal, rejects redirects and oversized
       assert.equal(cancelled, true);
     } finally { globalThis.fetch = savedFetch; }
   });
+});
+
+test('server-computed target chart evidence reaches prompt and payload; client metrics fail closed', async () => {
+  const frameStatistics = { method: 'png-output-statistics', pixelCount: 4, sampledPixels: 4,
+    meanLuma: 0.3, stdLuma: 0.1, nearBlackRatio: 0, nearWhiteRatio: 0,
+    channelMeans: { r: 0.3, g: 0.3, b: 0.3 }, roi: { x: 0, y: 0, width: 2, height: 2 },
+    lumaHistogram: [1, ...new Array<number>(31).fill(0)],
+    channelHistograms: { r: [1, ...new Array<number>(31).fill(0)], g: [1, ...new Array<number>(31).fill(0)], b: [1, ...new Array<number>(31).fill(0)] },
+    limitations: ['fixture'] };
+  const targetAnalysis = { method: 'target-chart-v1', meanDeltaE: 6.4, maxDeltaE: 18.2, grayMaxLumaDelta: 3.1, whiteBalanceOffset: { aStar: -1.2, bStar: 4.8 }, patchDeltaE: [{ name: '纯蓝', deltaE: 18.2 }, { name: '灰阶06', deltaE: 2.9 }] };
+  const candidate = await generateVisionIspCandidate(input({ rawStatistics: undefined, frameStatistics, targetAnalysis }), async messages => {
+    assert.match(messages[0]!.content, /目标卡/);
+    assert.match(messages[0]!.content, /不是画质总分/);
+    const body = JSON.parse(messages[1]!.content);
+    assert.equal(body.targetAnalysis.method, 'target-chart-v1');
+    assert.equal(body.targetAnalysis.patchDeltaE[0].name, '纯蓝');
+    assert.equal(body.targetAnalysis.maxDeltaE, 18.2);
+    return { model: 'fixture', text: JSON.stringify({ patches: [{ path: rules[0]!.path, value: 1.4, reason: '按目标卡蓝向偏移定向补偿，待设备回读验证' }] }) };
+  });
+  assert.equal(candidate.source, 'model');
+  const injected = { ...targetAnalysis, method: 'client-claimed-score', meanDeltaE: -5 };
+  await assert.rejects(
+    generateVisionIspCandidate(input({ rawStatistics: undefined, frameStatistics, targetAnalysis: injected }), async () => ({ model: 'fixture', text: JSON.stringify({ patches: [] }) })),
+    /vision_target_analysis_invalid/,
+  );
+  await assert.rejects(
+    generateVisionIspCandidate(input({ rawStatistics: undefined, frameStatistics, targetAnalysis: { ...targetAnalysis, patchDeltaE: [{ name: 'x'.repeat(80), deltaE: 1 }] } }), async () => ({ model: 'fixture', text: JSON.stringify({ patches: [] }) })),
+    /vision_target_analysis_invalid/,
+  );
 });

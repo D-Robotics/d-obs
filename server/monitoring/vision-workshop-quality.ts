@@ -11,6 +11,8 @@ export interface VisionOutputStatistics {
   nearBlackRatio: number;
   nearWhiteRatio: number;
   channelMeans: { r: number; g: number; b: number };
+  lumaHistogram: number[];
+  channelHistograms: { r: number[]; g: number[]; b: number[] };
   roi: VisionOutputRoi;
   method: 'png-output-statistics';
   limitations: string[];
@@ -33,6 +35,7 @@ export class VisionQualityError extends Error {
 const MAX_ENCODED_BYTES = 64 * 1024 * 1024;
 const MAX_DECODED_BYTES = 64 * 1024 * 1024;
 const MAX_SAMPLES = 65_536;
+const HISTOGRAM_BINS = 32;
 const SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const INVALID = (reason: string): never => { throw new VisionQualityError('vision_quality_invalid_png', reason, 400); };
 const UNAVAILABLE = (reason: string): never => { throw new VisionQualityError('vision_quality_unavailable', reason, 415); };
@@ -161,12 +164,15 @@ const OBSERVATION_LIMITS = [
   'stdLuma 表示 ROI 内亮度变化，不能当作噪声或 SNR；这些统计不是画质总分。',
   'nearBlackRatio 与 nearWhiteRatio 分别使用输出亮度 ≤1/255、≥254/255，不代表 Sensor 饱和或黑电平状态。',
   '未进行标定，不能给出校准 SNR、MTF 或色差；仍需结合人工评价和真实场景验证。',
+  '直方图为采样像素的码值占比分布，未做线性化或校准，不构成色度测量或画质总分。',
 ];
 function statistics(png: ParsedPng, roi: VisionOutputRoi): VisionOutputStatistics {
   const pixels = decodePixels(png);
   const pixelCount = roi.width * roi.height; const sampledPixels = Math.min(pixelCount, MAX_SAMPLES);
   const stride = 1 + png.width * png.channels;
   let rSum = 0; let gSum = 0; let bSum = 0; let mean = 0; let sumSquares = 0; let nearBlack = 0; let nearWhite = 0;
+  const lumaBins = new Array<number>(HISTOGRAM_BINS).fill(0);
+  const rBins = new Array<number>(HISTOGRAM_BINS).fill(0); const gBins = new Array<number>(HISTOGRAM_BINS).fill(0); const bBins = new Array<number>(HISTOGRAM_BINS).fill(0);
   for (let index = 0; index < sampledPixels; index++) {
     // Equal intervals span the complete ROI; small ROIs inspect every pixel.
     const pixel = pixelCount <= MAX_SAMPLES ? index : Math.floor((index + 0.5) * pixelCount / sampledPixels);
@@ -181,14 +187,20 @@ function statistics(png: ParsedPng, roi: VisionOutputRoi): VisionOutputStatistic
     rSum += r; gSum += g; bSum += b;
     if (luma <= 1 / 255) nearBlack++;
     if (luma >= 254 / 255) nearWhite++;
+    lumaBins[Math.min(HISTOGRAM_BINS - 1, Math.floor(luma * HISTOGRAM_BINS))]!++;
+    rBins[Math.min(HISTOGRAM_BINS - 1, (r * HISTOGRAM_BINS) >> 8)]!++;
+    gBins[Math.min(HISTOGRAM_BINS - 1, (g * HISTOGRAM_BINS) >> 8)]!++;
+    bBins[Math.min(HISTOGRAM_BINS - 1, (b * HISTOGRAM_BINS) >> 8)]!++;
   }
   const limitations = [...OBSERVATION_LIMITS];
   if (png.alpha) limitations.push('输出含 Alpha 通道；仅在全图 Alpha 均为 255 时统计，不进行背景合成。');
   if (sampledPixels < pixelCount) limitations.push('大 ROI 使用最多 65,536 个等间距像素采样，可能遗漏局部细节或周期性结构。');
+  const share = (bins: number[]) => bins.map(count => count / sampledPixels);
   return {
     pixelCount, sampledPixels, meanLuma: mean, stdLuma: Math.sqrt(Math.max(0, sumSquares / sampledPixels)),
     nearBlackRatio: nearBlack / sampledPixels, nearWhiteRatio: nearWhite / sampledPixels,
     channelMeans: { r: rSum / sampledPixels / 255, g: gSum / sampledPixels / 255, b: bSum / sampledPixels / 255 },
+    lumaHistogram: share(lumaBins), channelHistograms: { r: share(rBins), g: share(gBins), b: share(bBins) },
     roi: { ...roi }, method: 'png-output-statistics', limitations,
   };
 }
@@ -249,4 +261,115 @@ export function compareVisionProcessedPng(before: Buffer, after: Buffer, roi?: V
     ...new Set([...baseline.limitations, ...candidate.limitations]),
     'delta 为候选减基线，不表示好坏或达标；对比需同一 Raw、匹配 SDK 与可追溯的基础配置。',
   ] };
+}
+
+/** d-obs 目标卡 v1：参考值由本模块定义并可追溯，屏显或打印后拍摄评估；非 ColorChecker 复刻。 */
+export interface VisionTargetPatch { name: string; kind: 'gray' | 'color'; reference: { r: number; g: number; b: number } }
+export const VISION_TARGET_COLUMNS = 12;
+export const VISION_TARGET_ROWS = 2;
+const VISION_TARGET_GRAY_STEPS = [0, 23, 46, 70, 93, 116, 139, 162, 186, 209, 232, 255];
+const VISION_TARGET_COLORS: Array<[string, number, number, number]> = [
+  ['纯红', 255, 0, 0], ['纯绿', 0, 255, 0], ['纯蓝', 0, 0, 255], ['青', 0, 255, 255],
+  ['品红', 255, 0, 255], ['黄', 255, 255, 0], ['橙', 255, 128, 0], ['紫', 128, 0, 255],
+  ['肤色近似', 166, 124, 91], ['植物绿', 94, 132, 89], ['深蓝', 60, 90, 160], ['暖白', 245, 242, 235],
+];
+export const VISION_TARGET_PATCHES: VisionTargetPatch[] = [
+  ...VISION_TARGET_GRAY_STEPS.map((value, index) => ({ name: '灰阶' + String(index + 1).padStart(2, '0'), kind: 'gray' as const, reference: { r: value, g: value, b: value } })),
+  ...VISION_TARGET_COLORS.map(([name, r, g, b]) => ({ name, kind: 'color' as const, reference: { r, g, b } })),
+];
+
+const srgbLinear = (value: number) => { const c = value / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+/** sRGB(D65) → CIE L*a*b*；未做色适应变换，参考与实测同空间直接比较。 */
+export function srgbToLab(red: number, green: number, blue: number): { L: number; a: number; b: number } {
+  const rl = srgbLinear(red), gl = srgbLinear(green), bl = srgbLinear(blue);
+  const x = (0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl) / 0.95047;
+  const y = 0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl;
+  const z = (0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl) / 1.08883;
+  const f = (t: number) => (t > 216 / 24389 ? Math.cbrt(t) : (841 / 108) * t + 4 / 29);
+  const fx = f(x), fy = f(y), fz = f(z);
+  return { L: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) };
+}
+export function deltaE76(first: { L: number; a: number; b: number }, second: { L: number; a: number; b: number }): number {
+  return Math.sqrt((first.L - second.L) ** 2 + (first.a - second.a) ** 2 + (first.b - second.b) ** 2);
+}
+
+function encodePng(width: number, height: number, rgbRows: Buffer): Buffer {
+  const chunk = (kind: string, payload: Buffer): Buffer => {
+    const type = Buffer.from(kind); const size = Buffer.alloc(4); size.writeUInt32BE(payload.length);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([type, payload])));
+    return Buffer.concat([size, type, payload, crc]);
+  };
+  const header = Buffer.alloc(13); header.writeUInt32BE(width); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 2;
+  return Buffer.concat([SIGNATURE, chunk('IHDR', header), chunk('IDAT', deflateSync(rgbRows)), chunk('IEND', Buffer.alloc(0))]);
+}
+
+/** 无文字目标卡资产：纯色块栅格，参考值即像素值，供屏显或打印后拍摄。 */
+export function buildVisionTargetChartPng(): Buffer {
+  const cell = 130; const width = VISION_TARGET_COLUMNS * cell; const height = VISION_TARGET_ROWS * cell;
+  const rows = Buffer.alloc((1 + width * 3) * height);
+  for (let y = 0; y < height; y++) {
+    const row = y * (1 + width * 3); rows[row] = 0;
+    const gridRow = Math.floor(y / cell);
+    for (let x = 0; x < width; x++) {
+      const patch = VISION_TARGET_PATCHES[gridRow * VISION_TARGET_COLUMNS + Math.floor(x / cell)]!;
+      const position = row + 1 + x * 3;
+      rows[position] = patch.reference.r; rows[position + 1] = patch.reference.g; rows[position + 2] = patch.reference.b;
+    }
+  }
+  return encodePng(width, height, rows);
+}
+
+export interface VisionTargetPatchObservation { name: string; kind: 'gray' | 'color'; reference: { r: number; g: number; b: number }; observed: { r: number; g: number; b: number }; deltaE: number }
+export interface VisionTargetAnalysis {
+  patches: VisionTargetPatchObservation[];
+  meanDeltaE: number; maxDeltaE: number;
+  grayMaxLumaDelta: number;
+  whiteBalanceOffset: { aStar: number; bStar: number };
+  sampledPixels: number;
+  method: 'target-chart-v1';
+  limitations: string[];
+}
+
+/** 目标卡客观评估：假定卡片满幅、正对、无畸变（构图要求见协议文档）；输出为与参考 sRGB 的 Lab 距离，非画质总分。 */
+export function analyzeVisionTargetChart(data: Buffer): VisionTargetAnalysis {
+  const png = parsePng(data);
+  if (png.width < 240 || png.height < 80) return INVALID('目标卡分析需要至少 240×80 的图像');
+  const pixels = decodePixels(png);
+  const stride = 1 + png.width * png.channels;
+  const cellW = png.width / VISION_TARGET_COLUMNS; const cellH = png.height / VISION_TARGET_ROWS;
+  const patches: VisionTargetPatchObservation[] = [];
+  let sampledPixels = 0; let grayASum = 0; let grayBSum = 0; let grayCount = 0; let grayMaxLumaDelta = 0;
+  let colorDeltaESum = 0; let colorDeltaEMax = 0; let colorCount = 0;
+  VISION_TARGET_PATCHES.forEach((patch, index) => {
+    const gridRow = Math.floor(index / VISION_TARGET_COLUMNS); const column = index % VISION_TARGET_COLUMNS;
+    const halfW = cellW * 0.2; const halfH = cellH * 0.2;
+    const x0 = Math.max(0, Math.round((column + 0.5) * cellW - halfW)); const x1 = Math.min(png.width, Math.round((column + 0.5) * cellW + halfW));
+    const y0 = Math.max(0, Math.round((gridRow + 0.5) * cellH - halfH)); const y1 = Math.min(png.height, Math.round((gridRow + 0.5) * cellH + halfH));
+    const total = (x1 - x0) * (y1 - y0); const step = Math.max(1, Math.floor(Math.sqrt(total / 2048)));
+    let rSum = 0; let gSum = 0; let bSum = 0; let count = 0;
+    for (let y = y0; y < y1; y += step) for (let x = x0; x < x1; x += step) {
+      const position = y * stride + 1 + x * png.channels;
+      const red = pixels[position]!; const green = png.channels < 3 ? red : pixels[position + 1]!; const blue = png.channels < 3 ? red : pixels[position + 2]!;
+      rSum += red; gSum += green; bSum += blue; count++;
+    }
+    sampledPixels += count;
+    const observed = { r: rSum / count, g: gSum / count, b: bSum / count };
+    const observedLab = srgbToLab(observed.r, observed.g, observed.b);
+    const referenceLab = srgbToLab(patch.reference.r, patch.reference.g, patch.reference.b);
+    const deltaE = deltaE76(observedLab, referenceLab);
+    if (patch.kind === 'gray') { grayASum += observedLab.a; grayBSum += observedLab.b; grayCount++; grayMaxLumaDelta = Math.max(grayMaxLumaDelta, Math.abs(observedLab.L - referenceLab.L)); }
+    else { colorDeltaESum += deltaE; colorCount++; colorDeltaEMax = Math.max(colorDeltaEMax, deltaE); }
+    patches.push({ name: patch.name, kind: patch.kind, reference: { ...patch.reference }, observed, deltaE });
+  });
+  return {
+    patches,
+    meanDeltaE: colorDeltaESum / colorCount, maxDeltaE: colorDeltaEMax,
+    grayMaxLumaDelta, whiteBalanceOffset: { aStar: grayASum / grayCount, bStar: grayBSum / grayCount },
+    sampledPixels, method: 'target-chart-v1',
+    limitations: [
+      '参考值为模块定义的 sRGB 数值；屏显或打印介质未经光谱校准，ΔE 含显示与拍摄路径的全部偏差。',
+      '采样假定目标卡满幅、正对且无畸变；未做自动定位，构图偏差会直接进入误差。',
+      'ΔE76 为 Lab 欧氏距离，非感知精确度量；灰阶亮度偏差与白平衡偏移同样不构成画质总分。',
+    ],
+  };
 }
