@@ -1,11 +1,20 @@
 {
   "name": "rdk-camera-workshop",
-  "displayName": "相机点亮与 ISP 调优助手",
+  "displayName": "RDK Camera AI",
   "version": "1.2.0",
   "description": "将新型号相机的资料、驱动适配、点亮、采流诊断、AI 看图 ISP 调优、恢复与验收组织为可调用原子能力和证据流程。模型只修改实际 SDK 允许字段；未知 Sensor 的驱动与时序需完成开发和实机验证。",
-  "author": { "name": "D-Robotics" },
+  "author": {
+    "name": "D-Robotics"
+  },
   "category": "device",
-  "tags": ["camera", "bringup", "ai-debug", "isp", "raw", "sensor-adaptation"],
+  "tags": [
+    "camera",
+    "bringup",
+    "ai-debug",
+    "isp",
+    "raw",
+    "sensor-adaptation"
+  ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "defaultEnabled": false

@@ -1,6 +1,6 @@
-# RDK Camera Workshop 插件 · 产品说明
+# RDK Camera AI · 产品说明
 
-**名称**：rdk-camera-workshop（相机点亮与 ISP 调优助手）· 版本 1.2.0 · 作者 D-Robotics
+**名称**：rdk-camera-workshop（RDK Camera AI）· 版本 1.2.0 · 作者 D-Robotics
 **一句话定位**：在 RDK Studio 或兼容 MCP 宿主中，用自然语言完成相机点亮、有界 ISP 调参、客观测量、恢复与交付的 AI 执行与测量系统——每一步有回执、可复现、可审计。
 
 ## 1. 解决什么问题

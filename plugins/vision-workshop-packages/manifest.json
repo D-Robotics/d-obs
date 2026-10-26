@@ -14,10 +14,10 @@
     },
     {
       "kind": "studio",
-      "name": "RDK Camera Workshop",
+      "name": "RDK Camera AI",
       "version": "1.3.0",
-      "bytes": 162779,
-      "sha256": "359d4e4cf03ec5e294ce6ee33d01288c7c707bc507773549cd2e84702a9deb05",
+      "bytes": 163823,
+      "sha256": "1ca77a4d9632ed115a0826808286ad73a39b1ed08a84ce401dafcf67b6e9a880",
       "requirements": [
         "Node.js 22+",
         "RDK Studio 1.4+ 或兼容 MCP 宿主",
