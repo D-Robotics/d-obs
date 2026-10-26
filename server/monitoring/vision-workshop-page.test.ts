@@ -862,3 +862,15 @@ test('target trend draws the server-computed deltaE series over selected chart f
   assert.match(content(h.workspace), /调参有效的客观证据/);
   assert.match(content(h.workspace), /末帧 2\.10/);
 });
+
+test('delivery view carries the target chart trend as objective evidence', async () => {
+  const h = setup({ experiment: { ...cameraExperiment(), baseline, cameraFrames: [{ id: 'frame-1', filename: 'a.png', width: 2, height: 1, mimeType: 'image/png', capturedAt: '2026-10-22T09:00:00Z' }, { id: 'frame-2', filename: 'b.png', width: 2, height: 1, mimeType: 'image/png', capturedAt: '2026-10-22T09:10:00Z' }] }, capabilities: cameraCapabilities });
+  await settle(); await h.step(3);
+  assert.match(content(h.workspace), /目标卡 ΔE 趋势/);
+  const boxes = all(h.workspace).filter(node => node.tagName === 'input' && node.type === 'checkbox');
+  assert.equal(boxes.length, 2, 'checkbox per png frame in delivery');
+  boxes.forEach(box => { box.checked = true; });
+  await byText(h.workspace, '绘制 ΔE 趋势').fire('click'); await settle();
+  assert.ok(all(h.workspace).find(node => node.tagName === 'svg' && node.attributes['aria-label'] === '目标卡 ΔE 趋势'), 'delivery trend svg missing');
+  assert.ok(h.requests.some(request => request.path.endsWith('/target-trend')), 'trend request missing in delivery');
+});
