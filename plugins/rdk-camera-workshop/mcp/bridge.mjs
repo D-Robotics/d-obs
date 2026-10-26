@@ -15,32 +15,39 @@ const ENDPOINT = '/api/ops/vision-workshop/mcp';
 const modulePath = fileURLToPath(import.meta.url);
 const protocols = new Set(['2024-11-05', '2025-03-26', '2025-06-18']);
 const onboarding = process.env.RDK_CAMERA_WORKSHOP_ONBOARDING === '1';
+const PLUGIN_VERSION = '1.3.0';
 const connectionTool = {
   name: 'vision_connection_status', description: '检查本机相机服务连接配置。首次安装或远端工具缺失时先调用；仅验证配置，不表示设备在线。',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
 };
+const versionTool = {
+  name: 'vision_plugin_version', description: '返回本插件版本号。用于检查是否有更新版本可用。',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+};
 // Deliberately omit vision_workshop_execute: this transport has no arbitrary operation executor.
 const TOOL_ARGUMENTS = new Map(Object.entries({
-  vision_workshop_capabilities: [], vision_workshop_runtime_status: [], vision_experiment_list: [],
+  vision_workshop_capabilities: ['search', 'limit', 'offset'], vision_workshop_runtime_status: [], vision_experiment_list: ['limit', 'offset'],
   vision_experiment_get: ['experimentId'], vision_camera_readiness: ['experimentId'], vision_camera_workflow: ['experimentId'],
   vision_camera_stream_analyze: ['experimentId', 'runIds', 'expectedFps', 'tolerancePercent', 'minimumDurationSeconds'], vision_workshop_delivery: ['experimentId'],
+  vision_camera_response_analyze: ['experimentId', 'baselineFrameIds', 'candidateFrameIds', 'restoredFrameIds', 'roi'],
   vision_delivery_target_select: ['experimentId', 'targetId'], vision_acceptance_plan_save: ['experimentId', 'plan'], vision_acceptance_record: ['experimentId', 'record'],
   vision_experiment_create: ['title', 'goal', 'board', 'sensorVendor', 'sensorModel', 'sdkVersion', 'cameraInterface', 'cameraMode', 'targetId'],
   vision_tuning_baseline_import: ['experimentId', 'config', 'rules'],
-  vision_camera_knowledge_search: ['q', 'board', 'sensorModel'], vision_camera_knowledge_get: ['knowledgeId'],
+  vision_camera_knowledge_search: ['q', 'board', 'sensorModel'], vision_camera_knowledge_get: ['knowledgeId', 'section'],
   vision_ai_debug_start: ['experimentId', 'goal', 'maxRounds'],
   vision_ai_debug_status: ['experimentId', 'runId'], vision_ai_debug_cancel: ['experimentId', 'runId'],
   vision_ai_debug_restore_original: ['experimentId', 'runId'],
   vision_camera_probe: ['experimentId'], vision_pipeline_validate: ['experimentId'], vision_camera_bringup: ['experimentId'],
-  vision_camera_preview_start: ['experimentId'], vision_camera_preview_stop: ['experimentId'], vision_camera_preview_frame: ['experimentId'],
+  vision_camera_preview_start: ['experimentId', 'mode'], vision_camera_preview_stop: ['experimentId'], vision_camera_preview_frame: ['experimentId', 'afterSdkTimestampNs'],
   vision_camera_controls_get: ['experimentId'], vision_camera_controls_set: ['experimentId', 'values'],
   vision_camera_capture_frame: ['experimentId', 'scene', 'candidateId'], vision_raw_capture: ['experimentId', 'scene'],
   vision_isp_generate: ['experimentId', 'goal', 'frameIds'], vision_isp_process_raw: ['experimentId', 'sampleId', 'candidateId'],
   vision_isp_apply: ['experimentId', 'candidateId'], vision_isp_restore: ['experimentId', 'baselineId', 'candidateId'],
   vision_image_evaluate: ['experimentId', 'imageId', 'rating', 'notes'],
   vision_image_compare: ['experimentId', 'baselineImageId', 'candidateImageId', 'roi'], vision_workshop_export: ['experimentId', 'includeRaw'],
-  vision_isp_tuning_get: ['experimentId'], vision_isp_tuning_load: ['experimentId', 'contentBase64', 'sha256', 'artifactRole'], vision_isp_tuning_export: ['experimentId'],
+  vision_isp_tuning_get: ['experimentId'], vision_isp_tuning_load: ['experimentId', 'contentBase64', 'sha256', 'artifactRole', 'artifactId'], vision_isp_tuning_export: ['experimentId'],
   vision_calibration_asset_import: ['experimentId', 'measurement'], vision_calibration_asset_list: ['experimentId'],
   vision_calibration_task_create: ['experimentId', 'operation', 'inputs', 'options'], vision_calibration_task_list: ['experimentId'],
   vision_calibration_task_get: ['experimentId', 'taskId'], vision_calibration_task_run: ['experimentId', 'taskId'],
@@ -50,7 +57,7 @@ const TOOL_ARGUMENTS = new Map(Object.entries({
 const READ_ONLY = new Set([
   'vision_workshop_capabilities', 'vision_workshop_runtime_status', 'vision_experiment_list', 'vision_experiment_get',
   'vision_camera_knowledge_search', 'vision_camera_knowledge_get', 'vision_ai_debug_status', 'vision_camera_readiness',
-  'vision_camera_workflow', 'vision_camera_stream_analyze',
+  'vision_camera_workflow', 'vision_camera_stream_analyze', 'vision_camera_response_analyze',
   'vision_workshop_delivery', 'vision_camera_probe', 'vision_pipeline_validate', 'vision_camera_preview_frame', 'vision_camera_controls_get', 'vision_workshop_export',
   'vision_isp_tuning_get', 'vision_isp_tuning_export', 'vision_calibration_asset_list', 'vision_calibration_task_list',
   'vision_calibration_task_get', 'vision_calibration_task_result', 'vision_calibration_apply_plan',
@@ -204,8 +211,8 @@ async function dispatch(message) {
     }
     if (!onboarding) return response;
     // Keep a usable diagnostic entrypoint when remote auth/configuration is missing.
-    if (response.error) return { jsonrpc: '2.0', id, result: { tools: [connectionTool] } };
-    return { ...response, result: { ...response.result, tools: [connectionTool, ...response.result.tools] } };
+    if (response.error) return { jsonrpc: '2.0', id, result: { tools: [connectionTool, versionTool] } };
+    return { ...response, result: { ...response.result, tools: [versionTool, connectionTool, ...response.result.tools] } };
   }
   if (message.method === 'tools/call') {
     if (onboarding && params.name === connectionTool.name) {
@@ -214,6 +221,10 @@ async function dispatch(message) {
       try { await validateConfiguration(); status = { configuration: 'configured', service: 'unverified', hardware: 'unverified', next: '运行插件 mcp/setup.mjs doctor，或读取远端 vision_workshop_runtime_status。' }; }
       catch (error) { status = { configuration: 'unavailable', code: error instanceof BridgeError ? error.message : 'camera_bridge_unavailable', hint: describeError(error instanceof BridgeError ? error.message : 'camera_bridge_unavailable'), service: 'unverified', hardware: 'unverified', next: '阅读插件连接与自检说明，使用 mcp/setup.mjs configure 配置私有连接；不要在对话中发送凭据。' }; }
       return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(status) }], isError: false } };
+    }
+    if (params.name === versionTool.name) {
+      if (!onlyKeys(params, ['name', 'arguments', '_meta']) || !onlyKeys(params.arguments ?? {}, [])) return rpcError(id, -32602, 'invalid params');
+      return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify({ version: PLUGIN_VERSION }) }], isError: false } };
     }
     const allowed = TOOL_ARGUMENTS.get(params.name);
     const args = params.arguments ?? {};

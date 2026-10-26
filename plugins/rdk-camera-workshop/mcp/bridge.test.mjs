@@ -116,6 +116,22 @@ test('workflow tools are discoverable read-only atoms and forward only owned-evi
   });
 });
 
+test('A1/B/A2 response atom is discoverable read-only and forwards archive selectors, never paths or metrics', async () => {
+  await withFixture((_request, response, message) => {
+    if (message.method === 'tools/list') reply(response, message, { tools: [tool('vision_camera_response_analyze')] });
+    else reply(response, message, { content: [{ type: 'text', text: JSON.stringify(message.params.arguments) }], isError: false });
+  }, async ({ configFile, requests }) => {
+    const args = { experimentId: 'owned-experiment', baselineFrameIds: ['a1', 'a2', 'a3'], candidateFrameIds: ['b1', 'b2', 'b3'], restoredFrameIds: ['r1', 'r2', 'r3'], roi: { x: 0, y: 0, width: 10, height: 10 } };
+    const { responses } = await run([rpc(1, 'tools/list'), rpc(2, 'tools/call', { name: 'vision_camera_response_analyze', arguments: args }), ...[{ path: '/private/frame.png' }, { metrics: { improved: true } }, { contentBase64: 'ZmFrZQ==' }].map((extra, index) => rpc(index + 3, 'tools/call', { name: 'vision_camera_response_analyze', arguments: { ...args, ...extra } }))], configFile);
+    const byId = new Map(responses.map(response => [response.id, response]));
+    assert.equal(byId.get(1).result.tools[0].annotations.readOnlyHint, true); assert.equal(byId.get(1).result.tools[0].annotations.idempotentHint, true);
+    assert.equal(byId.get(1).result.tools[0].annotations.destructiveHint, false);
+    assert.deepEqual(JSON.parse(byId.get(2).result.content[0].text), args);
+    for (const id of [3, 4, 5]) assert.ok(byId.get(id).error);
+    assert.equal(requests.length, 2, 'only discovery and bounded archive selectors reach the server');
+  });
+});
+
 test('unknown tools, generic execution, arbitrary target fields and malformed argument containers are rejected locally', async () => {
   await withFixture((_request, response) => response.end(), async ({ configFile, requests }) => {
     const inputs = [
@@ -134,9 +150,27 @@ test('unknown tools, generic execution, arbitrary target fields and malformed ar
 test('reviewed experiment and baseline aliases can be forwarded without a generic operation executor', async () => {
   await withFixture((_request, response, message) => reply(response, message, { content: [{ type: 'text', text: JSON.stringify(message.params) }], isError: false }), async ({ configFile, requests }) => {
     const names = ['vision_workshop_runtime_status', 'vision_experiment_list', 'vision_experiment_get', 'vision_experiment_create', 'vision_tuning_baseline_import'];
-    const args = [{}, {}, { experimentId: 'fixture' }, { title: 'IMX415', goal: '资料核对', board: 'RDK X5' }, { experimentId: 'fixture', config: { exposure: 1 }, rules: [] }];
+    const args = [{}, { limit: 10, offset: 10 }, { experimentId: 'fixture' }, { title: 'IMX415', goal: '资料核对', board: 'RDK X5' }, { experimentId: 'fixture', config: { exposure: 1 }, rules: [] }];
     const { responses } = await run(names.map((name, index) => rpc(index, 'tools/call', { name, arguments: args[index] })), configFile);
     assert.ok(responses.every(item => item.result.isError === false)); assert.deepEqual(requests.map(item => item.message.params.name), names);
+    assert.deepEqual(requests[1].message.params.arguments, { limit: 10, offset: 10 });
+  });
+});
+
+test('a saved tuning artifact ID is forwarded without requiring model-supplied file bytes', async () => {
+  await withFixture((_request, response, message) => reply(response, message, { content: [{ type: 'text', text: 'fixture' }], isError: false }), async ({ configFile, requests }) => {
+    const args = { experimentId: 'experiment', artifactId: 'saved-artifact' };
+    const { responses } = await run([rpc(1, 'tools/call', { name: 'vision_isp_tuning_load', arguments: args })], configFile);
+    assert.equal(responses[0].result.isError, false); assert.deepEqual(requests[0].message.params.arguments, args);
+  });
+});
+
+test('bounded catalog pages and named knowledge sections retain their exact typed arguments', async () => {
+  await withFixture((_request, response, message) => reply(response, message, { content: [{ type: 'text', text: 'fixture' }], isError: false }), async ({ configFile, requests }) => {
+    const inputs = [{ name: 'vision_workshop_capabilities', arguments: { search: 'tuning', limit: 4, offset: 4 } }, { name: 'vision_camera_knowledge_get', arguments: { knowledgeId: 'x5-yahboom-imx415', section: 'facts' } }];
+    const { responses } = await run(inputs.map((params, index) => rpc(index, 'tools/call', params)), configFile);
+    assert.ok(responses.every(item => item.result.isError === false));
+    assert.deepEqual(requests.map(item => item.message.params), inputs);
   });
 });
 
@@ -292,7 +326,7 @@ test('host onboarding keeps a local diagnostic tool available with no private co
     child.stdin.end([rpc(0, 'initialize'), rpc(1, 'tools/list'), rpc(2, 'tools/call', { name: 'vision_connection_status', arguments: {} })].map(JSON.stringify).join('\n') + '\n');
     assert.equal(await exited, 0);
     const responses = stdout.trim().split('\n').map(line => JSON.parse(line));
-    assert.deepEqual(responses.find(item => item.id === 1).result.tools.map(tool => tool.name), ['vision_connection_status']);
+    assert.deepEqual(responses.find(item => item.id === 1).result.tools.map(tool => tool.name), ['vision_connection_status', 'vision_plugin_version']);
     const status = JSON.parse(responses.find(item => item.id === 2).result.content[0].text);
     assert.equal(status.code, 'camera_bridge_unconfigured'); assert.equal(status.hardware, 'unverified');
     assert.ok(!stdout.includes(directory));
