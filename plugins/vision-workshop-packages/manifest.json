@@ -1,0 +1,18 @@
+{
+  "schema": "rdk.vision-plugin-packages.v1",
+  "packages": [
+    {
+      "kind": "studio",
+      "name": "RDK 相机接入与 ISP 调优助手",
+      "version": "1.2.0",
+      "bytes": 162779,
+      "sha256": "59e74a01d33078aa035bba3e7ffd2c5b0ea964840c128e6b140084e3d99e1a8f",
+      "requirements": [
+        "Node.js 22+",
+        "RDK Studio 1.4+ 或兼容 MCP 宿主",
+        "d-obs 相机服务访问权限（用户自备凭据文件）",
+        "已登记的开发板与相机适配器（服务端配置）"
+      ]
+    }
+  ]
+}
