@@ -381,6 +381,16 @@ test('actual camera frames can seed bounded AI candidates and be rated without c
   assert.ok(h.requests.some(request => request.path.endsWith('/frames/frame-1')));
 });
 
+test('comparison options stay distinguishable when several outputs share one RAW sample', async () => {
+  const first = { id: 'first', sampleId: sample.id, width: 100, height: 80, filename: 'target-baseline.png', mimeType: 'image/png', tuningHash: baseline.hash };
+  const second = { ...first, id: 'second', filename: 'target-candidate.png' };
+  const h = setup({ experiment: { ...experiment(), baseline, samples: [sample], processedImages: [first, second] } }); await settle(); await h.step(3);
+  const options = fieldControl(h.workspace, '左侧结果').children.map(option => option.textContent);
+  assert.ok(options.includes('基础输出 · target-baseline.png'), 'labels: ' + options.join(' | '));
+  assert.ok(options.includes('基础输出 · target-candidate.png'), 'labels: ' + options.join(' | '));
+  assert.equal(new Set(options).size, options.length);
+});
+
 test('same RAW comparison sends an exact bounded ROI and retains output-version evidence', async () => {
   const before = { id: 'before', sampleId: sample.id, width: 100, height: 80, filename: 'before.png', mimeType: 'image/png', tuningHash: baseline.hash };
   const after = { ...before, id: 'after', filename: 'after.png', candidateId: candidate.id, tuningHash: candidate.hash };

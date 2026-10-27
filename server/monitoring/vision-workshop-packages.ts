@@ -26,14 +26,16 @@ export function registerVisionPluginPackageRoutes(router: Router, options: Optio
     if (bytes.length !== stat.size || bytes.length > limit) throw new Error('package_unavailable');
     return bytes;
   }
-  async function published() {
+  async function verifiedPackages() {
     const manifest = manifestSchema.parse(JSON.parse((await regularFile('manifest.json', 16 * 1024)).toString('utf8')));
     if (new Set(manifest.packages.map(p => p.kind)).size !== manifest.packages.length) throw new Error('package_unavailable');
-    return Promise.all(manifest.packages.map(async item => {
+    // 逐包校验：单个包文件缺失或哈希不符只降级剔除该条目，不拖垮整个清单。
+    const results = await Promise.allSettled(manifest.packages.map(async item => {
       const bytes = await regularFile(filenames[item.kind], 32 * 1024 * 1024);
       if (bytes.length !== item.bytes || createHash('sha256').update(bytes).digest('hex') !== item.sha256) throw new Error('package_unavailable');
       return { item, bytes };
     }));
+    return results.flatMap(entry => entry.status === 'fulfilled' ? [entry.value] : []);
   }
   const ownerGuard: RequestHandler = (req, res, next) => {
     if (req.opsTenantAccess || options.owner(req) === 'ops-admin') { res.status(403).json({ ok: false, error: 'vision_identity_required' }); return; }
@@ -41,14 +43,15 @@ export function registerVisionPluginPackageRoutes(router: Router, options: Optio
   };
   router.get(VISION_WORKSHOP_API + '/plugin-packages', options.access, ownerGuard, async (_req, res) => {
     try {
-      const packages = (await published()).map(({ item }) => ({ ...item, downloadPath: VISION_WORKSHOP_API + '/plugin-packages/' + item.kind + '/download' }));
+      const packages = (await verifiedPackages()).map(({ item }) => ({ ...item, downloadPath: VISION_WORKSHOP_API + '/plugin-packages/' + item.kind + '/download' }));
+      if (!packages.length) { res.status(503).json({ ok: false, error: 'vision_plugin_package_unavailable' }); return; }
       res.json({ ok: true, schema: 'rdk.vision-plugin-packages.v1', packages });
     } catch { res.status(503).json({ ok: false, error: 'vision_plugin_package_unavailable' }); }
   });
   router.get(VISION_WORKSHOP_API + '/plugin-packages/:kind/download', options.access, ownerGuard, async (req, res) => {
     if (!Object.hasOwn(filenames, String(req.params.kind))) { res.status(404).json({ ok: false, error: 'vision_plugin_package_not_found' }); return; }
     try {
-      const entry = (await published()).find(({ item }) => item.kind === req.params.kind);
+      const entry = (await verifiedPackages()).find(({ item }) => item.kind === req.params.kind);
       if (!entry) { res.status(404).json({ ok: false, error: 'vision_plugin_package_not_found' }); return; }
       res.setHeader('Cache-Control', 'private, no-store');
       res.setHeader('ETag', '"' + entry.item.sha256 + '"');

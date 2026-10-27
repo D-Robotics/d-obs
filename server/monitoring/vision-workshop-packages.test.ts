@@ -33,7 +33,28 @@ test('published plugin downloads enforce identity, fixed kinds, exact bytes and 
   assert.equal((await fetch(base + '/studio/download', { headers })).status, 404);
   await writeFile(join(dir, 'platform.zip'), Buffer.from('changed'));
   assert.equal((await fetch(base, { headers })).status, 503);
-  assert.equal((await fetch(base + '/platform/download', { headers })).status, 503);
+  assert.equal((await fetch(base + '/platform/download', { headers })).status, 404);
   await rm(join(dir, 'platform.zip')); await symlink(join(dir, 'manifest.json'), join(dir, 'platform.zip'));
-  assert.equal((await fetch(base + '/platform/download', { headers })).status, 503);
+  assert.equal((await fetch(base + '/platform/download', { headers })).status, 404);
+});
+
+test('plugin package list degrades per entry when a declared package file is missing', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'vision-partial-packages-'));
+  const studioBytes = Buffer.from('studio fixture zip');
+  const studio = { kind: 'studio', name: 'RDK Camera AI · Studio', version: '1.3.0', bytes: studioBytes.length, sha256: createHash('sha256').update(studioBytes).digest('hex'), requirements: ['RDK Studio'] };
+  const platform = { kind: 'platform', name: '相机工作坊平台包', version: '1.2.1', bytes: 11, sha256: 'a'.repeat(64), requirements: ['d-obs'] };
+  await writeFile(join(dir, 'manifest.json'), JSON.stringify({ schema: 'rdk.vision-plugin-packages.v1', packages: [platform, studio] }));
+  await writeFile(join(dir, 'studio.zip'), studioBytes);
+  const app = express(); const router = express.Router();
+  registerVisionPluginPackageRoutes(router, { packageDir: dir, access: (_req, _res, next) => next(), owner: () => 'alice' });
+  app.use('/dobs', router);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const base = 'http://127.0.0.1:' + address.port + '/dobs' + VISION_WORKSHOP_API + '/plugin-packages';
+  t.after(async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await rm(dir, { recursive: true, force: true }); });
+  const metadata = await (await fetch(base)).json() as { packages: Array<{ kind: string }> };
+  assert.deepEqual(metadata.packages.map(entry => entry.kind), ['studio']);
+  assert.equal((await fetch(base + '/studio/download')).status, 200);
+  assert.equal((await fetch(base + '/platform/download')).status, 404);
 });
