@@ -5,7 +5,7 @@ import path from 'node:path';
 import { z, ZodError } from 'zod';
 import { requireVisionWorkshopAccess, requireVisionWorkshopUploadAccess, visionWorkshopOwner, visionWorkshopDevices } from './vision-workshop-access.js';
 import { requireOpsMutationGuard } from './observability-route-kit.js';
-import { VisionWorkshopService, VisionWorkshopError, buildVisionHandbook, imageDimensions, type VisionJsonObject, type VisionRawMetadata, type VisionRawSample, type VisionProcessedImage, type VisionCameraFrame, type VisionDeviceCapability, type VisionCapabilities } from './vision-workshop-service.js';
+import { VisionWorkshopService, VisionWorkshopError, buildVisionHandbook, imageDimensions, visionWorkshopLimitsFromEnv, type VisionJsonObject, type VisionRawMetadata, type VisionRawSample, type VisionProcessedImage, type VisionCameraFrame, type VisionDeviceCapability, type VisionCapabilities } from './vision-workshop-service.js';
 import { generateVisionIspCandidate, visionModelEnabled, type VisionModelInput, type VisionIspCandidate } from './vision-workshop-model.js';
 import { analyzeVisionRaw } from './vision-workshop-raw.js';
 import { compareVisionProcessedPng, analyzeVisionProcessedPng, analyzeVisionTargetChart, VisionQualityError } from './vision-workshop-quality.js';
@@ -26,7 +26,7 @@ import { VISION_WORKSHOP_API, VISION_WORKSHOP_CONTRACT, VISION_WORKSHOP_MCP, VIS
 export { VISION_WORKSHOP_API, VISION_WORKSHOP_CONTRACT, VISION_WORKSHOP_MCP, VISION_WORKSHOP_OPERATIONS } from './vision-workshop-operations.js';
 let configuredService: VisionWorkshopService | undefined;
 export function getConfiguredVisionWorkshopService(): VisionWorkshopService {
-  return configuredService ??= new VisionWorkshopService({ dataDir: process.env.RDK_VISION_STATE_DIR || path.join(homedir(), '.local', 'state', 'd-obs', 'vision-workshop') });
+  return configuredService ??= new VisionWorkshopService({ dataDir: process.env.RDK_VISION_STATE_DIR || path.join(homedir(), '.local', 'state', 'd-obs', 'vision-workshop'), ...visionWorkshopLimitsFromEnv() });
 }
 type Options = { getService?: () => VisionWorkshopService; getDevices?: () => VisionDeviceRegistry; modelEnabled?: () => boolean; generateCandidate?: (input: VisionModelInput) => Promise<VisionIspCandidate>; planDebug?: VisionAiDebugPlanner };
 const shortText = z.string().trim().min(1).max(100);

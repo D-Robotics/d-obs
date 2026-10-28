@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { deflateSync } from 'node:zlib';
-import { VisionWorkshopError, VisionWorkshopService, type VisionRawMetadata, type VisionWorkshopOptions } from './vision-workshop-service.js';
+import { VisionWorkshopError, VisionWorkshopService, visionWorkshopLimitsFromEnv, type VisionRawMetadata, type VisionWorkshopOptions } from './vision-workshop-service.js';
 import { analyzeVisionRaw } from './vision-workshop-raw.js';
 import { compareVisionProcessedPng } from './vision-workshop-quality.js';
 import { createVisionArchive, renderVisionHandbook } from './vision-workshop-export.js';
@@ -184,6 +184,25 @@ test('vision bounded quota checks remain correct across simultaneous service ins
     await assert.rejects(limited.createExperiment('account-b', input), errorCode('quota_exceeded'));
     await assert.rejects(limited.addRawSample('account-a', experiment.id, { metadata }, raw), errorCode('file_too_large'));
   } finally { await env.cleanup(); }
+});
+
+test('storage limits are deployable per host, default unchanged and never exceed their ceilings', () => {
+  assert.deepEqual(visionWorkshopLimitsFromEnv({}), { maxExperimentBytes: undefined, maxExperiments: undefined });
+  assert.deepEqual(visionWorkshopLimitsFromEnv({ RDK_VISION_MAX_EXPERIMENT_BYTES: '536870912', RDK_VISION_MAX_EXPERIMENTS: '20' }), { maxExperimentBytes: 512 * 1024 * 1024, maxExperiments: 20 });
+  for (const bad of ['0', '-1', '1.5', 'abc', '1073741825']) assert.throws(() => visionWorkshopLimitsFromEnv({ RDK_VISION_MAX_EXPERIMENT_BYTES: bad }), /RDK_VISION_MAX_EXPERIMENT_BYTES/);
+  for (const bad of ['0', '101']) assert.throws(() => visionWorkshopLimitsFromEnv({ RDK_VISION_MAX_EXPERIMENTS: bad }), /RDK_VISION_MAX_EXPERIMENTS/);
+  const limits = (options: VisionWorkshopOptions) => new VisionWorkshopService({ dataDir: join(tmpdir(), `d-obs-vision-limits-${randomUUID()}`), ...options }).capabilities().limits;
+  const defaults = limits({});
+  assert.equal(defaults.maxExperimentBytes, 128 * 1024 * 1024);
+  assert.equal(defaults.maxExperiments, 100);
+  assert.equal(defaults.maxTotalBytes, 128 * 1024 * 1024 * 100);
+  const loopback = limits(visionWorkshopLimitsFromEnv({ RDK_VISION_MAX_EXPERIMENT_BYTES: String(512 * 1024 * 1024), RDK_VISION_MAX_EXPERIMENTS: '20' }));
+  assert.equal(loopback.maxExperimentBytes, 512 * 1024 * 1024);
+  assert.equal(loopback.maxExperiments, 20);
+  assert.equal(loopback.maxTotalBytes, 10 * 1024 * 1024 * 1024);
+  // A raised per-experiment limit alone must not raise the host disk budget.
+  assert.equal(limits({ maxExperimentBytes: 512 * 1024 * 1024 }).maxTotalBytes, 128 * 1024 * 1024 * 100);
+  assert.throws(() => new VisionWorkshopService({ maxExperimentBytes: 1024 * 1024 * 1024 + 1 }), /between 1 and 1073741824/);
 });
 
 test('vision recovery removes crash orphans and detects corrupted assets without returning unchecked bytes', async () => {

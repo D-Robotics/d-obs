@@ -147,6 +147,21 @@ function configuredLimit(value: number | undefined, fallback: number, ceiling: n
   if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new Error(`Vision Workshop limit must be an integer between 1 and ${ceiling}`);
   return value;
 }
+// A single-machine loopback install must archive 4K frames; the shared server keeps the 128 MiB default.
+export const VISION_WORKSHOP_LIMIT_CEILINGS = { maxExperimentBytes: 1024 * MIB, maxExperiments: 100, maxTotalBytes: 128 * MIB * 100 } as const;
+function envInteger(name: string, ceiling: number, env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new Error(`${name} must be an integer between 1 and ${ceiling}`);
+  return value;
+}
+export function visionWorkshopLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): Pick<VisionWorkshopOptions, 'maxExperimentBytes' | 'maxExperiments'> {
+  return {
+    maxExperimentBytes: envInteger('RDK_VISION_MAX_EXPERIMENT_BYTES', VISION_WORKSHOP_LIMIT_CEILINGS.maxExperimentBytes, env),
+    maxExperiments: envInteger('RDK_VISION_MAX_EXPERIMENTS', VISION_WORKSHOP_LIMIT_CEILINGS.maxExperiments, env),
+  };
+}
 function sleep(ms: number): Promise<void> { return new Promise((done) => setTimeout(done, ms)); }
 function isCode(error: unknown, code: string): boolean { return (error as NodeJS.ErrnoException)?.code === code; }
 
@@ -163,12 +178,13 @@ export class VisionWorkshopService {
 
   constructor(options: VisionWorkshopOptions = {}) {
     this.dataDir = resolve(options.dataDir ?? process.env.D_OBS_VISION_WORKSHOP_DIR ?? 'var/vision-workshop');
-    const maxExperiments = configuredLimit(options.maxExperiments, 100, 100);
-    const maxExperimentBytes = configuredLimit(options.maxExperimentBytes, 128 * MIB, 128 * MIB);
+    const maxExperiments = configuredLimit(options.maxExperiments, 100, VISION_WORKSHOP_LIMIT_CEILINGS.maxExperiments);
+    const maxExperimentBytes = configuredLimit(options.maxExperimentBytes, 128 * MIB, VISION_WORKSHOP_LIMIT_CEILINGS.maxExperimentBytes);
     this.limits = {
       maxRawBytes: configuredLimit(options.maxRawBytes, 64 * MIB, 64 * MIB),
       maxExperimentBytes,
-      maxTotalBytes: configuredLimit(options.maxTotalBytes, maxExperimentBytes * maxExperiments, 128 * MIB * 100),
+      // Raising the per-experiment limit must not multiply the host disk budget by the experiment count.
+      maxTotalBytes: configuredLimit(options.maxTotalBytes, Math.min(maxExperimentBytes * maxExperiments, VISION_WORKSHOP_LIMIT_CEILINGS.maxTotalBytes), VISION_WORKSHOP_LIMIT_CEILINGS.maxTotalBytes),
       maxExperiments,
       maxImageBytes: configuredLimit(options.maxImageBytes, 16 * MIB, 16 * MIB),
     };
