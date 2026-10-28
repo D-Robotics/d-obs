@@ -152,8 +152,9 @@ export const VISION_WORKSHOP_LIMIT_CEILINGS = { maxExperimentBytes: 1024 * MIB, 
 function envInteger(name: string, ceiling: number, env: NodeJS.ProcessEnv): number | undefined {
   const raw = env[name];
   if (raw === undefined || raw === '') return undefined;
+  if (!/^\d+$/.test(raw)) throw new Error(`${name} must be an integer between 1 and ${ceiling}`);
   const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new Error(`${name} must be an integer between 1 and ${ceiling}`);
+  if (value < 1 || value > ceiling) throw new Error(`${name} must be an integer between 1 and ${ceiling}`);
   return value;
 }
 export function visionWorkshopLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): Pick<VisionWorkshopOptions, 'maxExperimentBytes' | 'maxExperiments'> {
@@ -497,7 +498,13 @@ export class VisionWorkshopService {
       const cited = new Set<string>([
         ...experiment.candidates.flatMap(candidate => candidate.frameIds),
         ...experiment.evaluations.map(evaluation => evaluation.imageId),
-        ...experiment.aiDebugRuns.flatMap(run => run.final?.frameId ? [run.final.frameId] : []),
+        ...experiment.aiDebugRuns.flatMap(run => [
+          ...(run.original?.frameId ? [run.original.frameId] : []),
+          ...(run.best?.frameId ? [run.best.frameId] : []),
+          ...(run.final?.frameId ? [run.final.frameId] : []),
+          ...run.iterations.flatMap(iteration => [iteration.before.frameId, ...(iteration.after?.frameId ? [iteration.after.frameId] : [])]),
+          ...run.operations.flatMap(operation => typeof operation.receipt?.frameId === 'string' ? [operation.receipt.frameId] : []),
+        ]),
         ...(experiment.acceptanceRecords ?? []).flatMap(record => record.evidenceImages.map(image => image.id)),
       ]);
       const frames = wanted.map(frameId => {

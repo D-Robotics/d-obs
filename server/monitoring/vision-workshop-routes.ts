@@ -43,7 +43,7 @@ const experimentInput = z.object({ title: z.string().trim().min(1).max(120), goa
 const cameraIdentityFields = ['board', 'sensorVendor', 'sensorModel', 'sdkVersion', 'cameraInterface', 'cameraMode'] as const;
 // Only these operations can leave device state unconfirmed; a failed read or a
 // local storage rejection must not be reported as a possible pending ISP write.
-const deviceWriteOperations = new Set<VisionDeviceOperation>(['apply_tuning', 'tuning_load', 'controls_set', 'calibration_apply', 'restore_tuning']);
+const deviceWriteOperations = new Set<VisionDeviceOperation>(['bringup', 'apply_tuning', 'tuning_load', 'controls_set', 'calibration_apply', 'restore_tuning']);
 const baselineInput = z.object({ config: z.record(z.unknown()), rules: z.array(z.object({ path: z.string().min(1).max(300), label: shortText, min: z.number().finite(), max: z.number().finite(), step: z.number().finite().positive().optional(), precision: z.enum(['float32', 'seconds-float32-us']).optional() }).strict()).min(1).max(128) }).strict();
 const candidateInput = z.object({ goal: goalSchema.optional(), frameIds: z.array(id).min(1).max(16).refine(values => new Set(values).size === values.length).optional(), targetAnalysisFrameId: id.optional() }).strict();
 const resultInput = z.object({ sampleId: id, candidateId: id.optional(), filename: z.string().max(200).optional(), mimeType: z.enum(['image/png', 'image/jpeg']).optional() }).strict();

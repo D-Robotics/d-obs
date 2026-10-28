@@ -230,6 +230,13 @@ test('camera frame deletion reclaims quota while cited evidence frames are prese
     const restarted = new VisionWorkshopService({ dataDir: env.dataDir });
     assert.equal((await restarted.getExperiment('account-a', experiment.id)).bytesStored, after.bytesStored);
     assert.ok((await readdir(join(env.dataDir, 'assets'))).includes(`${citedByCandidate.id}.png`));
+    const citedByIteration = await env.service.addCameraFrame('account-a', experiment.id, { mimeType: 'image/png', adapterId: 'adapter-fixture', scene: 'AI 调试迭代引用' }, png(4, 2, undefined, 120));
+    const manifestPath = join(env.dataDir, 'manifest.json');
+    const stored = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const record = stored.experiments.find((entry: any) => entry.experiment.id === experiment.id);
+    record.experiment.aiDebugRuns.push({ id: 'run-iteration', status: 'completed', cancelRequested: false, iterations: [{ index: 0, before: { frameId: citedByIteration.id } }], operations: [] });
+    await writeFile(manifestPath, JSON.stringify(stored));
+    await assert.rejects(new VisionWorkshopService({ dataDir: env.dataDir }).deleteCameraFrames('account-a', experiment.id, [citedByIteration.id]), errorCode('frame_in_use'));
   } finally { await env.cleanup(); }
 });
 

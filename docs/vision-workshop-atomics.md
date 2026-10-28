@@ -281,7 +281,7 @@ SDK 操作能力列表必须与 runner 实现一致。远程 endpoint 需 HTTPS�
 
 ## 保存、身份与交付
 
-`RDK_VISION_STATE_DIR` 指定持久目录，默认 `~/.local/state/d-obs/vision-workshop`。元数据原子落盘，Raw/图像读回校验 SHA-256。额度包含文件与元数据；单 Raw 最大 64 MiB、每实验默认 128 MiB。共享服务保持默认；单机 loopback 部署用 `RDK_VISION_MAX_EXPERIMENT_BYTES`（上限 1 GiB）与 `RDK_VISION_MAX_EXPERIMENTS`（上限 100）放宽，4K 帧约 9.4 MB/帧，512 MiB 约容纳 50 帧；未显式指定总盘额度时按 min(每实验 × 实验数, 12.8 GiB) 取，避免放大磁盘预算。具体以 capabilities.limits 为准。不可变候选保留各自基础配置和 Raw 版本；更换基础配置会清除当前选定状态。
+`RDK_VISION_STATE_DIR` 指定持久目录，默认 `~/.local/state/d-obs/vision-workshop`。元数据原子落盘，Raw/图像读回校验 SHA-256。额度包含文件与元数据；单 Raw 最大 64 MiB、每实验默认 128 MiB。共享服务保持默认；单机 loopback 部署用 `RDK_VISION_MAX_EXPERIMENT_BYTES`（上限 1 GiB）放宽每实验额度，并可按需用 `RDK_VISION_MAX_EXPERIMENTS`（上限 100）下调实验数控制总盘，4K 帧约 9.4 MB/帧，512 MiB 约容纳 50 帧；未显式指定总盘额度时按 min(每实验 × 实验数, 12.8 GiB) 取，避免放大磁盘预算。具体以 capabilities.limits 为准。不可变候选保留各自基础配置和 Raw 版本；更换基础配置会清除当前选定状态。
 
 沿用运营管理员 SSO 或 `x-admin-token`，所有 POST 需要 `x-rdk-ops-action: observability` 与既有同源守卫。`x-rdk-ops-read-only:1` 禁止修改。账号身份由请求确定，不能从 body 覆盖；所有实验、样本、回执和下载按身份隔离。共享运营令牌仍意味着共享账号，Workshop 分组应配置独立身份。
 
