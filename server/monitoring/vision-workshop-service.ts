@@ -488,6 +488,34 @@ export class VisionWorkshopService {
     });
   }
 
+  /** Reclaims experiment storage; frames still cited by candidates, evaluations, AI runs or acceptance records stay as evidence. */
+  async deleteCameraFrames(accountId: string, experimentId: string, frameIds: string[]): Promise<{ removed: Array<{ id: string; reclaimedBytes: number }>; experiment: VisionExperiment }> {
+    if (!Array.isArray(frameIds) || frameIds.length < 1 || frameIds.length > 32 || frameIds.some(entry => typeof entry !== 'string') || new Set(frameIds).size !== frameIds.length) fail('invalid_input', 'frameIds 必须是 1–32 个不重复的相机帧ID');
+    const wanted = frameIds.map(entry => id(entry));
+    return this.transaction(accountId, async (store, owner) => {
+      const experiment = this.owned(store, owner, experimentId);
+      const cited = new Set<string>([
+        ...experiment.candidates.flatMap(candidate => candidate.frameIds),
+        ...experiment.evaluations.map(evaluation => evaluation.imageId),
+        ...experiment.aiDebugRuns.flatMap(run => run.final?.frameId ? [run.final.frameId] : []),
+        ...(experiment.acceptanceRecords ?? []).flatMap(record => record.evidenceImages.map(image => image.id)),
+      ]);
+      const frames = wanted.map(frameId => {
+        const frame = experiment.cameraFrames.find(entry => entry.id === frameId);
+        if (!frame) fail('not_found', '相机帧不存在', 404);
+        if (cited.has(frameId)) fail('frame_in_use', '相机帧仍被候选、人工评价、AI 调试或验收记录引用，保留为证据', 409);
+        return frame;
+      });
+      const reclaimedBytes = frames.reduce((total, frame) => total + frame.byteLength, 0);
+      experiment.cameraFrames = experiment.cameraFrames.filter(entry => !frames.some(frame => frame.id === entry.id));
+      experiment.bytesStored -= reclaimedBytes;
+      await this.save(store, experiment);
+      // The manifest is the ledger; a crash between save and unlink leaves a reaped orphan.
+      for (const frame of frames) await unlink(join(this.dataDir, 'assets', assetName(frame.id, frame.mimeType === 'image/png' ? 'png' : 'jpeg'))).catch(() => undefined);
+      return { removed: frames.map(frame => ({ id: frame.id, reclaimedBytes: frame.byteLength })), experiment };
+    });
+  }
+
   async addEvaluation(accountId: string, experimentId: string, input: { imageId: string; rating: 1 | 2 | 3 | 4 | 5; notes: string }): Promise<VisionEvaluation> {
     return this.transaction(accountId, async (store, owner) => {
       const experiment = this.owned(store, owner, experimentId);

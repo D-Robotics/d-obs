@@ -373,6 +373,11 @@ export function registerVisionWorkshopRoutes(router: Router, options: Options = 
     const comparison = await service().recordComparison(owner, experimentId, { baselineImageId: baselineImage.id, candidateImageId: candidateImage.id, metrics: metrics as unknown as VisionJsonObject });
     res.status(201).json({ ok: true, comparison, method: metrics.method });
   });
+  post('/experiments/:id/frames/delete', async (req, res) => {
+    const input = z.object({ frameIds: z.array(id).min(1).max(32).refine(values => new Set(values).size === values.length) }).strict().parse(req.body);
+    const result = await service().deleteCameraFrames(visionWorkshopOwner(req), String(req.params.id), input.frameIds);
+    res.json({ ok: true, ...result });
+  });
   post('/experiments/:id/frames/:frameId/target-analysis', async (req, res) => {
     const stored = await service().readCameraFrame(visionWorkshopOwner(req), String(req.params.id), String(req.params.frameId));
     res.json({ ok: true, frameId: stored.frame.id, analysis: analyzeVisionTargetChart(stored.data) });

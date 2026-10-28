@@ -34,6 +34,7 @@ export const VISION_WORKSHOP_OPERATIONS: Record<string, PlatformOperationMetadat
   ['GET ' + VISION_WORKSHOP_API + '/experiments/:id/samples/:sampleId']: meta('分析保存Raw的真实字节，返回统计、SHA-256与预览/下载地址；预览不是ISP输出。'),
   ['GET ' + VISION_WORKSHOP_API + '/experiments/:id/frames/:frameId']: meta('读取归档的实际相机PNG/JPEG帧；不作为Bayer Raw或校准ISP验收证明。'),
   ['GET ' + VISION_WORKSHOP_API + '/experiments/:id/frames/:frameId/analysis']: meta('从归档相机PNG实际字节计算输出码值统计，可选ROI；不是校准噪声、MTF或色差，不声明不同采集帧为相同Raw。', undefined, { roi: '可选JSON字符串{x,y,width,height}，像素矩形须在图像内。' }),
+  ['POST ' + VISION_WORKSHOP_API + '/experiments/:id/frames/delete']: meta('按ID删除本实验未被引用的归档相机帧并回收存储额度；被候选、人工评价、AI调试或验收记录引用的帧保留为证据不可删，删除不可恢复。', { frameIds: '1–32个本实验相机帧ID，去重；仅未引用帧可删。' }),
   ['POST ' + VISION_WORKSHOP_API + '/experiments/:id/frames/:frameId/target-analysis']: meta('对满幅拍摄的d-obs目标卡v1 PNG帧计算逐色块Lab ΔE76、灰阶亮度偏差与白平衡偏移；假定卡片满幅正对且无畸变，参考介质未经光谱校准，不构成画质总分或验收。'),
   ['POST ' + VISION_WORKSHOP_API + '/experiments/:id/target-trend']: meta('对2–16张同实验归档目标卡PNG帧按采集时间顺序逐帧计算ΔE序列；各帧须同介质同照明档位拍摄才可比较，不构成画质总分。', { frameIds: '2–16个本实验PNG相机帧ID，去重；服务端按capturedAt升序返回序列。' }),
   ['POST ' + VISION_WORKSHOP_API + '/experiments/:id/candidates']: meta('用保存Raw统计或实际相机帧输出统计和受限基础参数生成AI候选；关联原配置/Raw哈希，未上板，不会回退规则伪装模型。', { goal: '可选本轮优化目标，默认实验目标。', frameIds: '可选1–16个当前基线配置哈希匹配的PNG相机帧ID；省略且无Raw时使用最新最多16张匹配帧。旧帧不冒充当前配置证据。', targetAnalysisFrameId: '可选PNG相机帧ID，须为满幅 d-obs 目标卡 v1 拍摄；服务端从归档字节计算 Lab ΔE76 摘要供模型定向参考，不接受客户端指标，不构成画质验收。' }),

@@ -205,6 +205,34 @@ test('storage limits are deployable per host, default unchanged and never exceed
   assert.throws(() => new VisionWorkshopService({ maxExperimentBytes: 1024 * 1024 * 1024 + 1 }), /between 1 and 1073741824/);
 });
 
+test('camera frame deletion reclaims quota while cited evidence frames are preserved', async () => {
+  const env = await fixture();
+  try {
+    const experiment = await env.service.createExperiment('account-a', input);
+    const baseline = await env.service.setBaseline('account-a', experiment.id, baselineInput);
+    const redundant = await env.service.addCameraFrame('account-a', experiment.id, { mimeType: 'image/png', adapterId: 'adapter-fixture', scene: '未被引用' }, png());
+    const citedByCandidate = await env.service.addCameraFrame('account-a', experiment.id, { mimeType: 'image/png', adapterId: 'adapter-fixture', scene: '候选引用' }, png(4, 2, undefined, 40));
+    const citedByEvaluation = await env.service.addCameraFrame('account-a', experiment.id, { mimeType: 'image/png', adapterId: 'adapter-fixture', scene: '评价引用' }, png(4, 2, undefined, 80));
+    await env.service.createCandidate('account-a', experiment.id, { baselineHash: baseline.hash, sampleIds: [], frameIds: [citedByCandidate.id], patches: [{ path: '/denoise/strength', value: 3, reason: '引用帧的候选' }], source: 'manual' });
+    await env.service.addEvaluation('account-a', experiment.id, { imageId: citedByEvaluation.id, rating: 3, notes: '人工留证' });
+    const usedBefore = (await env.service.getExperiment('account-a', experiment.id)).bytesStored;
+    await assert.rejects(env.service.deleteCameraFrames('account-a', experiment.id, [citedByCandidate.id]), errorCode('frame_in_use'));
+    await assert.rejects(env.service.deleteCameraFrames('account-a', experiment.id, [citedByEvaluation.id]), errorCode('frame_in_use'));
+    await assert.rejects(env.service.deleteCameraFrames('account-a', experiment.id, ['missing']), errorCode('not_found'));
+    await assert.rejects(env.service.deleteCameraFrames('account-a', experiment.id, [redundant.id, redundant.id]), errorCode('invalid_input'));
+    const result = await env.service.deleteCameraFrames('account-a', experiment.id, [redundant.id]);
+    assert.deepEqual(result.removed, [{ id: redundant.id, reclaimedBytes: redundant.byteLength }]);
+    const after = await env.service.getExperiment('account-a', experiment.id);
+    assert.deepEqual(after.cameraFrames.map(frame => frame.id), [citedByCandidate.id, citedByEvaluation.id]);
+    assert.equal(after.bytesStored, usedBefore - redundant.byteLength);
+    assert.ok(!(await readdir(join(env.dataDir, 'assets'))).includes(`${redundant.id}.png`));
+    await assert.rejects(env.service.readCameraFrame('account-a', experiment.id, redundant.id), errorCode('not_found'));
+    const restarted = new VisionWorkshopService({ dataDir: env.dataDir });
+    assert.equal((await restarted.getExperiment('account-a', experiment.id)).bytesStored, after.bytesStored);
+    assert.ok((await readdir(join(env.dataDir, 'assets'))).includes(`${citedByCandidate.id}.png`));
+  } finally { await env.cleanup(); }
+});
+
 test('vision recovery removes crash orphans and detects corrupted assets without returning unchecked bytes', async () => {
   const env = await fixture();
   try {

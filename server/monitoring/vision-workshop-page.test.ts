@@ -52,7 +52,7 @@ const trendSeries = [ { frameId: 'frame-1', scene: '目标卡基线档', capture
 const targetAnalysis = { patches: [ { name: '灰阶01', kind: 'gray', reference: { r: 0, g: 0, b: 0 }, observed: { r: 2.1, g: 1.8, b: 1.9 }, deltaE: 0.41 }, { name: '纯红', kind: 'color', reference: { r: 255, g: 0, b: 0 }, observed: { r: 248.2, g: 3.4, b: 5.1 }, deltaE: 3.12 } ], meanDeltaE: 1.76, maxDeltaE: 3.12, grayMaxLumaDelta: 0.41, whiteBalanceOffset: { aStar: 0.21, bStar: -0.14 }, sampledPixels: 46080, method: 'target-chart-v1', limitations: ['参考值为模块定义的 sRGB 数值', '不构成画质总分'] };
 const baseline = { id: 'baseline-1', hash: 'baseline-hash', tuning: { sharpen: { strength: 0 } }, rules: [{ path: '/sharpen/strength', label: '锐化强度', min: 0, max: 10 }] };
 const candidate = { id: 'candidate-1', title: '细节候选', hash: 'a'.repeat(64), baselineHash: baseline.hash, patches: [{ path: '/sharpen/strength', value: 2, reason: '保留边缘细节' }], source: 'model', model: 'test-model', verification: 'unverified' };
-const experiment = () => ({ id: 'experiment-1', title: '逆光实验', goal: '减少噪声，保留细节', targetId: undefined as string | undefined, board: undefined as string | undefined, sensorVendor: undefined as string | undefined, sensorModel: undefined as string | undefined, sdkVersion: undefined as string | undefined, cameraInterface: undefined as string | undefined, cameraMode: undefined as string | undefined, createdAt: '2026-10-12T01:00:00Z', baseline: null as any, baselineHistory: [] as any[], samples: [] as any[], candidates: [] as any[], processedImages: [] as any[], cameraFrames: [] as any[], evaluations: [] as any[], comparisons: [] as any[], deviceRuns: [] as any[], aiDebugRuns: [] as any[], selectedCandidateId: null as string | null });
+const experiment = () => ({ id: 'experiment-1', title: '逆光实验', goal: '减少噪声，保留细节', targetId: undefined as string | undefined, board: undefined as string | undefined, sensorVendor: undefined as string | undefined, sensorModel: undefined as string | undefined, sdkVersion: undefined as string | undefined, cameraInterface: undefined as string | undefined, cameraMode: undefined as string | undefined, createdAt: '2026-10-12T01:00:00Z', baseline: null as any, baselineHistory: [] as any[], samples: [] as any[], candidates: [] as any[], processedImages: [] as any[], cameraFrames: [] as any[], evaluations: [] as any[], comparisons: [] as any[], deviceRuns: [] as any[], aiDebugRuns: [] as any[], selectedCandidateId: null as string | null, bytesStored: 0 as number });
 type Experiment = ReturnType<typeof experiment>;
 type Request = { path: string; options: { method?: string; headers: Record<string, string>; body?: unknown; credentials: string } };
 function setup(options: { experiment?: Experiment; failedList?: boolean; failedCandidate?: boolean; failedCapabilities?: boolean; capabilities?: Record<string, unknown>; token?: string; session?: string; deviceResults?: Record<string, unknown>; failedDevice?: string; debugRun?: any; debugPollRun?: any; failedDebug?: boolean; failedDebugPoll?: boolean; readiness?: any; failedReadiness?: boolean; calibrationTasks?: any[]; calibrationAssets?: any[]; failedCalibrationList?: boolean; failedCalibrationRun?: boolean; pluginPackages?: any[]; failedPluginPackages?: boolean; packageBlob?: Blob; frameAnalysis?: any; failedFrameAnalysis?: boolean; targetAnalysis?: any; trendSeries?: any[] } = {}) {
@@ -95,6 +95,7 @@ function setup(options: { experiment?: Experiment; failedList?: boolean; failedC
       else if (path.endsWith('/experiments/experiment-1')) data = { ok: true, experiment: current };
       else if (path.endsWith('/analysis')) { status = options.failedFrameAnalysis ? 503 : 200; data = options.failedFrameAnalysis ? { ok: false, error: 'analysis_unavailable' } : { ok: true, statistics: options.frameAnalysis || frameAnalysis }; }
       else if (path.endsWith('/target-trend')) data = { ok: true, series: options.trendSeries || trendSeries, method: 'target-chart-v1' };
+      else if (path.endsWith('/frames/delete') && current) { const body = JSON.parse(String(requestOptions.body)); const removed = current.cameraFrames.filter(frame => body.frameIds.includes(frame.id)); current = { ...current, cameraFrames: current.cameraFrames.filter(frame => !body.frameIds.includes(frame.id)), bytesStored: Math.max(0, Number(current.bytesStored || 0) - removed.reduce((total, frame) => total + Number(frame.byteLength || 0), 0)) }; data = { ok: true, removed: removed.map(frame => ({ id: frame.id, reclaimedBytes: frame.byteLength || 0 })), experiment: current }; }
       else if (path.endsWith('/target-analysis')) data = { ok: true, imageId: 'frame-1', kind: 'frame', analysis: options.targetAnalysis || targetAnalysis };
       else if (path.endsWith('/samples') && current) { current = { ...current, samples: [sample] }; data = { ok: true, sample }; }
       else if (path.endsWith('/candidates') && options.failedCandidate) { status = 503; data = { ok: false, error: 'model_gateway_unavailable' }; }
@@ -379,6 +380,26 @@ test('actual camera frames can seed bounded AI candidates and be rated without c
   const selection = fieldControl(h.workspace, '交付候选');
   assert.ok(selection.children.some(option => option.value === candidate.id));
   assert.ok(h.requests.some(request => request.path.endsWith('/frames/frame-1')));
+});
+
+test('storage usage is visible and unreferenced frames need an explicit confirm before deletion', async () => {
+  const redundant = { id: 'frame-1', filename: 'redundant.png', width: 100, height: 80, mimeType: 'image/png', byteLength: 9437184, createdAt: '2026-10-28T09:00:00Z', hash: 'hash-1' };
+  const cited = { id: 'frame-2', filename: 'cited.png', width: 100, height: 80, mimeType: 'image/png', byteLength: 9437184, createdAt: '2026-10-28T09:05:00Z', hash: 'hash-2', tuningHash: baseline.hash };
+  const h = setup({ experiment: { ...cameraExperiment(), baseline, candidates: [{ ...candidate, frameIds: [cited.id], frameHashes: [cited.hash] }], cameraFrames: [redundant, cited], bytesStored: 18874368 }, capabilities: { ...cameraCapabilities, limits: { ...cameraCapabilities.limits, maxExperimentBytes: 536870912 } } });
+  await settle(); await h.step(1);
+  assert.match(content(h.workspace), /实验存储额度 已用 18\.0 MB \/ 上限 512 MB/);
+  const cardOf = (name: string) => { const heading = all(h.workspace).find(node => node.tagName === 'h3' && node.textContent === name); assert.ok(heading, 'card missing: ' + name); return heading.parent!; };
+  const remove = all(cardOf('redundant.png')).find(node => node.tagName === 'button' && node.textContent === '删除留样')!;
+  await remove.click(); await settle();
+  assert.equal(h.requests.filter(request => request.path.endsWith('/frames/delete')).length, 0);
+  assert.ok(all(h.workspace).some(node => node.textContent === '确认删除（不可恢复）'));
+  await remove.click(); await settle();
+  const call = h.requests.find(request => request.path.endsWith('/frames/delete'));
+  assert.ok(call); assert.deepEqual(JSON.parse(String(call.options.body)), { frameIds: ['frame-1'] });
+  assert.match(h.feedback.textContent, /留样已删除，存储额度已回收/);
+  assert.match(content(h.workspace), /cited\.png/);
+  assert.doesNotMatch(content(h.workspace), /redundant\.png/);
+  assert.match(content(h.workspace), /已用 9\.0 MB \/ 上限 512 MB/);
 });
 
 test('comparison options stay distinguishable when several outputs share one RAW sample', async () => {

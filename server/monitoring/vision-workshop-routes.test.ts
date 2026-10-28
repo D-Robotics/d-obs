@@ -139,6 +139,22 @@ test('a storage quota rejection on a read-only capture is not recorded as an unc
   assert.equal(run.operation, 'capture_frame'); assert.equal(run.status, 'failed');
   assert.equal(run.evidence.outcome, undefined); assert.equal(run.evidence.code, 'quota_exceeded');
 });
+test('frame deletion route reclaims storage while cited frames stay as evidence', async () => {
+  const experiment = await create();
+  const redundant = await service.addCameraFrame('sso:alice', experiment.id, { mimeType: 'image/png', adapterId: 'adapter-fixture', scene: '未被引用' }, png());
+  const cited = await service.addCameraFrame('sso:alice', experiment.id, { mimeType: 'image/png', adapterId: 'adapter-fixture', scene: '评价引用' }, png(4, 2, 40));
+  await expectJson(await post('/experiments/' + experiment.id + '/evaluations', { imageId: cited.id, rating: 4, notes: '人工留证' }), 201);
+  const blocked = await expectJson(await post('/experiments/' + experiment.id + '/frames/delete', { frameIds: [cited.id] }), 409);
+  assert.equal(blocked.error, 'frame_in_use');
+  const deleted = await expectJson(await post('/experiments/' + experiment.id + '/frames/delete', { frameIds: [redundant.id] }));
+  assert.equal(deleted.removed.length, 1);
+  assert.equal(deleted.removed[0].reclaimedBytes, redundant.byteLength);
+  assert.equal(deleted.experiment.bytesStored, cited.byteLength);
+  const after = (await expectJson(await get('/experiments/' + experiment.id))).experiment;
+  assert.deepEqual(after.cameraFrames.map((frame: { id: string }) => frame.id), [cited.id]);
+  await expectJson(await post('/experiments/' + experiment.id + '/frames/delete', { frameIds: ['missing'] }), 404);
+  await expectJson(await post('/experiments/' + experiment.id + '/frames/delete', { frameIds: [] }), 400);
+});
 test('experiment readiness is account-scoped persisted evidence and never calls an adapter', async () => {
   const experiment = await create({ targetId: adapter.profile.id });
   const response = await expectJson(await get('/experiments/' + experiment.id + '/readiness'));
