@@ -41,6 +41,9 @@ const streamAnalysisQuery = z.object({
 }).strict();
 const experimentInput = z.object({ title: z.string().trim().min(1).max(120), goal: goalSchema, board: shortText.optional(), sensorVendor: shortText.optional(), sensorModel: shortText.optional(), sdkVersion: shortText.optional(), cameraInterface: shortText.optional(), cameraMode: shortText.optional(), targetId: id.optional() }).strict();
 const cameraIdentityFields = ['board', 'sensorVendor', 'sensorModel', 'sdkVersion', 'cameraInterface', 'cameraMode'] as const;
+// Only these operations can leave device state unconfirmed; a failed read or a
+// local storage rejection must not be reported as a possible pending ISP write.
+const deviceWriteOperations = new Set<VisionDeviceOperation>(['apply_tuning', 'tuning_load', 'controls_set', 'calibration_apply', 'restore_tuning']);
 const baselineInput = z.object({ config: z.record(z.unknown()), rules: z.array(z.object({ path: z.string().min(1).max(300), label: shortText, min: z.number().finite(), max: z.number().finite(), step: z.number().finite().positive().optional(), precision: z.enum(['float32', 'seconds-float32-us']).optional() }).strict()).min(1).max(128) }).strict();
 const candidateInput = z.object({ goal: goalSchema.optional(), frameIds: z.array(id).min(1).max(16).refine(values => new Set(values).size === values.length).optional(), targetAnalysisFrameId: id.optional() }).strict();
 const resultInput = z.object({ sampleId: id, candidateId: id.optional(), filename: z.string().max(200).optional(), mimeType: z.enum(['image/png', 'image/jpeg']).optional() }).strict();
@@ -487,7 +490,7 @@ export function registerVisionWorkshopRoutes(router: Router, options: Options = 
       if (checksFailed) { res.status(422).json({ ok: false, error: 'vision_device_checks_failed', operation, deviceRun, result: safeReceipt(run.result) }); return; }
       res.json({ ok: true, operation, deviceRun, result: safeReceipt(run.result), ...(asset ? { asset } : {}), ...(vendorArtifact ? { vendorArtifact } : {}), ...(operation==='tuning_export' && typeof run.result.contentBase64==='string' ? {artifact:{ filename:run.result.filename,mimeType:run.result.mimeType,sha256:run.result.sha256,contentBase64:run.result.contentBase64,artifactRole:run.result.artifactRole ?? 'sdk_declared_library' }} : {}) });
     } catch (error) {
-      if (!['preview_frame', 'controls_get'].includes(operation)) await service().recordDeviceRun(owner, experimentId, { operation, adapterId: adapter.profile.id, board: adapter.profile.board, sensorVendor: adapter.profile.sensorVendor, sensorModel: adapter.profile.sensorModel, sdkVersion: adapter.profile.sdkVersion, cameraInterface: adapter.profile.cameraInterface, cameraMode: adapter.profile.cameraMode, status: 'failed', evidence: { outcome: 'unconfirmed', ...(error instanceof VisionDeviceExecutionError ? error.receipt : {}), code: error instanceof VisionWorkshopError ? error.code : 'vision_device_execution_failed' } }).catch(() => undefined);
+      if (!['preview_frame', 'controls_get'].includes(operation)) await service().recordDeviceRun(owner, experimentId, { operation, adapterId: adapter.profile.id, board: adapter.profile.board, sensorVendor: adapter.profile.sensorVendor, sensorModel: adapter.profile.sensorModel, sdkVersion: adapter.profile.sdkVersion, cameraInterface: adapter.profile.cameraInterface, cameraMode: adapter.profile.cameraMode, status: 'failed', evidence: { ...(deviceWriteOperations.has(operation) ? { outcome: 'unconfirmed' as const } : {}), ...(error instanceof VisionDeviceExecutionError ? error.receipt : {}), code: error instanceof VisionWorkshopError ? error.code : 'vision_device_execution_failed' } }).catch(() => undefined);
       throw error;
     }
   });

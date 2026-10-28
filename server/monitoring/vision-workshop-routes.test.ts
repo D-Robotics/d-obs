@@ -35,6 +35,18 @@ function png(width = 4, height = 2, pixel = 0): Buffer {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
 }
 
+function noisePng(width = 256, height = 256): Buffer {
+  const chunk = (name: string, bytes: Buffer) => {
+    const header = Buffer.alloc(8); header.writeUInt32BE(bytes.length); Buffer.from(name).copy(header, 4);
+    const trailer = Buffer.alloc(4); trailer.writeUInt32BE(visionCrc32(Buffer.concat([Buffer.from(name), bytes])));
+    return Buffer.concat([header, bytes, trailer]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(width); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const rows = Buffer.alloc((1 + width * 3) * height); let seed = 123456789;
+  for (let y = 0; y < height; y++) for (let i = 1; i <= width * 3; i++) { seed = (1103515245 * seed + 12345) & 0x7fffffff; rows[y * (1 + width * 3) + i] = seed >>> 16; }
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
+}
+
 class FixtureAdapter implements VisionDeviceAdapter {
   profile = { id: 'x5-imx415', label: '本地受控适配器', board: 'RDK X5' as const, sensorModel: 'IMX415' as const, sdkVersion: 'fixture-sdk', operations: [...VISION_DEVICE_OPERATIONS] };
   calls: Array<{ operation: VisionDeviceOperation; context: VisionDeviceContext; inputs: Record<string, unknown> }> = [];
@@ -114,6 +126,19 @@ function unzipStored(bytes: Buffer): Map<string, Buffer> {
   assert.equal(bytes.readUInt32LE(offset), 0x02014b50); return files;
 }
 
+test('a storage quota rejection on a read-only capture is not recorded as an unconfirmed device write', async () => {
+  const experiment = await create({ targetId: adapter.profile.id });
+  const savedBaseline = (await expectJson(await post('/experiments/' + experiment.id + '/baseline', baseline))).baseline;
+  const docBytes = Buffer.byteLength(JSON.stringify(await service.getExperiment('sso:alice', experiment.id)));
+  service = new VisionWorkshopService({ dataDir: dir, maxExperimentBytes: docBytes + 8192, maxTotalBytes: 1024 * 1024 });
+  const frame = noisePng();
+  adapter.reply = (operation: VisionDeviceOperation) => operation === 'capture_frame' ? { filename: 'fixture-camera.png', mimeType: 'image/png', contentBase64: frame.toString('base64'), sha256: hash(frame), tuningHash: savedBaseline.hash, capturedAt: '2026-10-13T00:00:01.000Z' } : { facts: { source: 'protocol-fixture-only' } };
+  const failed = await expectJson(await post('/experiments/' + experiment.id + '/device/capture_frame', { scene: '存储额度不足' }), 409);
+  assert.equal(failed.error, 'quota_exceeded');
+  const run = (await service.getExperiment('sso:alice', experiment.id)).deviceRuns.at(-1)!;
+  assert.equal(run.operation, 'capture_frame'); assert.equal(run.status, 'failed');
+  assert.equal(run.evidence.outcome, undefined); assert.equal(run.evidence.code, 'quota_exceeded');
+});
 test('experiment readiness is account-scoped persisted evidence and never calls an adapter', async () => {
   const experiment = await create({ targetId: adapter.profile.id });
   const response = await expectJson(await get('/experiments/' + experiment.id + '/readiness'));

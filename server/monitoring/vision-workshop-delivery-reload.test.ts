@@ -107,6 +107,20 @@ test('matching original hash without native new-frame evidence or original gette
     const e = fixture(); edit(e); const result = buildVisionWorkshopDelivery(e); assert.equal(result.workshopReady, false); assert.ok(result.blockers.includes('original_baseline_restore_and_new_frame_required'));
   }
 });
+test('original restoration targets the baseline in effect at apply time, not an older re-anchored one', () => {
+  const withOlder = () => {
+    const e = fixture();
+    e.baselineHistory.unshift({ id: randomUUID(), hash: h(5), tuning: { kind: 'x5-hbn-isp-v2', snapshotId: 'PRIVATE_OLDER_SNAPSHOT' }, rules: [], createdAt: at(-1) });
+    e.deviceRuns.unshift(run('tuning_get', -1, { readbackHash: h(5) }));
+    return e;
+  };
+  const result = buildVisionWorkshopDelivery(withOlder());
+  assert.equal(result.restoration.status, 'original_restoration_recorded'); assert.equal(result.restoration.baselineHash, h(0)); assert.equal(result.workshopReady, true);
+  const stale = withOlder();
+  obj(stale.deviceRuns[5].evidence.result).readbackHash = h(5); obj(stale.deviceRuns[5].evidence.result).appliedHash = h(5);
+  const blocked = buildVisionWorkshopDelivery(stale);
+  assert.equal(blocked.workshopReady, false); assert.ok(blocked.blockers.includes('original_baseline_restore_and_new_frame_required'));
+});
 test('new threshold versions, failed numbers and missing required observations remain authoritative', () => {
   for (const edit of [(e: VisionExperiment) => { e.acceptancePlan!.id = randomUUID(); }, (e: VisionExperiment) => { e.acceptanceRecords![0].observations[1].value = 29; },
     (e: VisionExperiment) => { e.acceptanceRecords![0].observations.pop(); }]) {

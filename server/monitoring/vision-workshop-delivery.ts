@@ -151,7 +151,9 @@ export function buildVisionWorkshopDelivery(experiment: VisionExperiment) {
   if (!bringup) blockers.push('bringup_evidence_required');
   if (!applied || !frame) blockers.push('applied_config_and_new_frame_required');
   const exportAt = selected?.vendor?.exportCreatedAt ?? applied?.createdAt;
-  const original = [...experiment.baselineHistory].sort((a,b) => a.createdAt.localeCompare(b.createdAt)).find(base => exportAt && base.createdAt <= exportAt && runs.some(run =>
+  // Re-anchored baselines supersede older ones; the undo target is the baseline
+  // in effect when the candidate was applied, and older layout hashes no longer load.
+  const original = [...experiment.baselineHistory].sort((a,b) => b.createdAt.localeCompare(a.createdAt)).find(base => exportAt && base.createdAt <= exportAt && runs.some(run =>
     matchedDevice(experiment, run) && run.status === 'completed' && ['tuning_get', 'bringup'].includes(run.operation) && run.createdAt <= exportAt &&
     (resultOf(run).readbackHash === base.hash || object(object(resultOf(run).baseline).config).sha256 === base.hash)));
   const restored = original && applied ? runs.findLast(run => matchedDevice(experiment, run) && run.operation === 'restore_tuning' && run.status === 'completed' && run.createdAt > applied.createdAt &&
