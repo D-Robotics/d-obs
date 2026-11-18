@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "rdk-vision-workshop": {
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "mcp/server.mjs"
+      ],
+      "requestTimeoutMs": 30000,
+      "permissions": {
+        "default": "deny",
+        "tools": {
+          "vision_course_plan": "readonly",
+          "vision_course_stage": "readonly",
+          "vision_course_next": "readonly",
+          "vision_course_view": "readonly",
+          "vision_course_sync": "approval",
+          "vision_course_camera": "approval",
+          "vision_course_camera_status": "readonly"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,164 @@
+{
+  "schema": "rdk.vision-workshop-course.v2",
+  "executionStatus": "planning_only",
+  "course": "AI Native 工作坊 —— 视觉 Pipeline 开发",
+  "totalMinutes": 180,
+  "referenceStart": "09:30",
+  "source": "视觉 Pipeline AI Native 开发 Workshop 方案",
+  "sourceRevision": "195",
+  "kit": "RDK X5 + Sony IMX415",
+  "classSize": 30,
+  "deadlines": {
+    "submitBy": 50,
+    "runCheckpoint": 120,
+    "deployAt": 130,
+    "deliverAt": 160,
+    "perBoardMinutes": 2,
+    "submitStart": 45
+  },
+  "breakPolicy": {
+    "startMinute": 100,
+    "endMinute": 110
+  },
+  "training": {
+    "platform": "RoboGO",
+    "dataset": "/personal/yolo_dataset",
+    "model": "YOLOv8s",
+    "classes": [
+      "park",
+      "qrcode",
+      "obstacle"
+    ],
+    "imgsz": 640,
+    "epochs": 100,
+    "opset": 11,
+    "target": "X5 Bayes-e",
+    "input": "NV12"
+  },
+  "schedule": [
+    {
+      "id": "intro",
+      "topic": "找到观察目标",
+      "start": 0,
+      "end": 15,
+      "minutes": 15,
+      "lane": "class",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "connect",
+      "topic": "连接与点亮",
+      "start": 15,
+      "end": 35,
+      "minutes": 20,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "baseline",
+      "topic": "基线采集",
+      "start": 35,
+      "end": 50,
+      "minutes": 15,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "formats",
+      "topic": "格式辨认与 ISP 原理",
+      "start": 50,
+      "end": 65,
+      "minutes": 15,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "gamma_demo",
+      "topic": "一次有界 Gamma 调整",
+      "start": 65,
+      "end": 85,
+      "minutes": 20,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "gamma_trial",
+      "topic": "自主对照与取舍",
+      "start": 85,
+      "end": 100,
+      "minutes": 15,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "break",
+      "topic": "茶歇与助教核对 Run",
+      "start": 100,
+      "end": 110,
+      "minutes": 10,
+      "lane": "class",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "blind",
+      "topic": "盲选与记录偏好",
+      "start": 110,
+      "end": 115,
+      "minutes": 5,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "reproduce",
+      "topic": "保存与个人复现",
+      "start": 115,
+      "end": 130,
+      "minutes": 15,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "deploy",
+      "topic": "训练结果与模型部署",
+      "start": 130,
+      "end": 160,
+      "minutes": 30,
+      "lane": "model",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "deliver",
+      "topic": "打包与带走",
+      "start": 160,
+      "end": 180,
+      "minutes": 20,
+      "lane": "class",
+      "executionStatus": "not_executed"
+    }
+  ],
+  "parallel": [
+    {
+      "id": "train",
+      "topic": "核对数据集并分批提交 RoboGO",
+      "start": 35,
+      "end": 50,
+      "minutes": 15,
+      "lane": "model",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "wait_run",
+      "topic": "后台训练与 Run 检查",
+      "start": 45,
+      "end": 130,
+      "minutes": 85,
+      "lane": "model",
+      "executionStatus": "not_executed"
+    }
+  ],
+  "limitations": [
+    "课程进度引用由学员、助教或宿主提供。真实设备和算力操作由各自执行工具完成。"
+  ],
+  "groupCount": 15,
+  "studioVersion": "1.5.0"
+}

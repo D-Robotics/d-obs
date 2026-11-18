@@ -1,7 +1,7 @@
 ---
 name: rdk-camera-workshop
 description: 在 RDK Studio 或兼容 MCP 宿主中，将新型号资料核对、适配缺口、点亮、稳定性检查、看图 ISP 调试和恢复交付串成有证据的 AI 相机流程。用于“新相机适配”“相机全流程 AI 化”“从 Datasheet 点亮相机”“自然语言相机调试”“ISP 调优”“camera bringup”，也处理已支持相机、USB 最小闭环、MIPI 失败及相关闪连排查。通用方法可复用；实际驱动和可执行能力取当前适配器与回执，不宣称自动支持任意 Sensor。不用于 YOLO 或 VLM 部署。
-trigger: 相机点亮, 新相机适配, 新sensor, 相机全流程AI, Datasheet点亮, 相机调试, ISP, IMX415, MIPI, USB 闪连, RAW, camera bringup, camera tuning
+trigger: RDK Camera AI, 帮我拍张照, 相机拍照, 相机点亮, 新相机适配, 新sensor, 相机全流程AI, Datasheet点亮, 相机调试, ISP, IMX415, MIPI, USB 闪连, RAW, camera bringup, camera tuning
 version: 1.2.0
 risk: medium
 requires_board: false
@@ -11,6 +11,14 @@ enabled: true
 ---
 
 # 相机点亮与 ISP 调优
+
+## Studio 拍照和课程基线
+
+- 查询插件能做什么时，从本轮工具目录加载 `vision_workshop_runtime_status`；有已绑定实验才读取 `vision_camera_workflow`。按目录、适配器和实际回执回答。连接失败时用 `vision_connection_status` 说明配置缺口。
+- 合并版工位拍照用 `vision_course_camera` 的 `photo`。展示已拍照片或基线图时用只读的 `vision_course_camera_status` 打开工作台结果。只有用户明确要求重拍才新采图。
+- 独立相机版使用实际绑定实验的 `vision_camera_capture_frame`，从相机服务的归档入口查看、下载原件。能力缺失时给出未完成项，禁止改用板端脚本猜路径、下载整段命令输出或临时切换 ISP 模式。只读请求保持只读。
+
+## 能力与操作范围
 
 使用当前运行中发现的 `vision_*` 工具；Studio 原生桥的名称前缀为
 `mcp__rdk-camera-workshop__`。安装插件不安装 Sensor 驱动或原生 ISP adapter。
