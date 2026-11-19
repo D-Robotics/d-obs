@@ -115,11 +115,15 @@ export function createCameraSource(configFile=process.env.RDK_CAMERA_WORKSHOP_CO
     if(!Array.isArray(experiments)) throw new Error('camera_response_invalid');
     return experiments.filter(exp=>cameraId.test(exp?.id)&&typeof exp.title==='string').map(exp=>({id:exp.id,title:exp.title,sensorModel:exp.sensorModel,updatedAt:exp.updatedAt}));
   }
-  async function inspect(binding) {
+  async function experimentArchive(binding) {
     if(!cameraId.test(binding?.experimentId)||binding.runId!==undefined&&!cameraId.test(binding.runId)) throw new Error('camera_binding_invalid');
-    const route='/experiments/'+binding.experimentId;
-    const {experiment}=await json(route);
+    const {experiment}=await json('/experiments/'+binding.experimentId);
     if(experiment?.id!==binding.experimentId||!Array.isArray(experiment.cameraFrames)||!Array.isArray(experiment.deviceRuns)) throw new Error('camera_response_invalid');
+    return experiment;
+  }
+  async function inspect(binding) {
+    const experiment=await experimentArchive(binding);
+    const route='/experiments/'+experiment.id;
     const target=typeof experiment.targetId==='string'&&experiment.targetId;
     const receipts=target?experiment.deviceRuns.filter(item=>item?.adapterId===target):[];
     const latestProbe=receipts.findLast(item=>item.operation==='probe');
@@ -172,7 +176,155 @@ export function createCameraSource(configFile=process.env.RDK_CAMERA_WORKSHOP_CO
       data.deviceRun.adapterId!==experiment.targetId||!cameraId.test(data.deviceRun.id)) throw new Error('camera_response_invalid');
     return data;
   }
-  async function capture(binding,kind,{scene,raw}={}) {
+  async function ispReadback(experiment,{captureSnapshot=false}={}) {
+    if(!experiment.targetId) throw new Error('vision_device_adapter_required');
+    // tuning_get creates a new SDK snapshot ID. Verification must read the
+    // current modules while preserving the snapshot bound to the candidate.
+    const receipt=await device(experiment,captureSnapshot?'tuning_get':'tuning_export',{});
+    const config=receipt.result?.baseline?.config??receipt.result?.config;
+    const readbackHash=receipt.result?.readbackHash;
+    if(!record(config)||!hash.test(readbackHash)||sha256(JSON.stringify(config))!==readbackHash) {
+      throw new Error('camera_isp_readback_invalid');
+    }
+    return {config,hash:readbackHash,receiptId:receipt.deviceRun.id,recordedAt:new Date().toISOString()};
+  }
+  async function saveOriginalIsp(binding) {
+    const experiment=await experimentArchive(binding);
+    if(!experiment.targetId) throw new Error('vision_device_adapter_required');
+    const {result}=await device(experiment,'probe',{});
+    if(result.facts?.cleanupRequired===true||result.facts?.writeOutcome==='unconfirmed') throw new Error('camera_recovery_required');
+    if(result.facts?.streaming!==true) throw new Error('camera_isp_stream_required');
+    const original=await ispReadback(experiment,{captureSnapshot:true});
+    const saved=await experimentArchive(binding);
+    const version=[saved.baseline,...(saved.baselineHistory??[])].find(entry=>entry?.hash===original.hash&&cameraId.test(entry.id));
+    if(saved.targetId!==experiment.targetId||!version||sha256(JSON.stringify(version.tuning))!==original.hash) {
+      throw new Error('camera_isp_snapshot_missing');
+    }
+    return {...original,baselineId:version.id,adapterId:experiment.targetId};
+  }
+  async function restoreOriginalIsp(binding,original,{previousReadback,onPhase,stopStream=true}) {
+    const experiment=await experimentArchive(binding);
+    const saved=[experiment.baseline,...(experiment.baselineHistory??[])].find(item=>item?.id===original.baselineId);
+    if(experiment.targetId!==original.adapterId||!cameraId.test(original.baselineId)||
+        !record(saved?.tuning)||saved.hash!==original.hash||sha256(JSON.stringify(saved.tuning))!==original.hash||
+        sha256(JSON.stringify(original.config))!==original.hash) {
+      throw new Error('camera_isp_snapshot_changed');
+    }
+    // A full experiment still accepts restore_tuning and preview_stop. Read
+    // operations consume ordinary history, so those two actions must also be
+    // able to complete using the SDK getter returned by restore_tuning.
+    const ordinary=async operation=>{
+      try { return await operation(); }
+      catch (error) { if(error.message!=='vision_device_history_capacity') throw error; }
+    };
+    const probe=await ordinary(()=>device(experiment,'probe',{}));
+    const facts=probe?.result?.facts;
+    if(probe) {
+      if(!record(facts)||typeof facts.streaming!=='boolean'||facts.cleanupRequired===true) throw new Error('camera_recovery_required');
+      if(facts.writeOutcome==='unconfirmed'&&facts.recoveryOriginalHash!==original.hash) {
+        throw new Error('camera_isp_snapshot_changed');
+      }
+      if(facts.streaming===false) {
+        if(stopStream&&previousReadback?.hash===original.hash&&facts.writeOutcome!=='unconfirmed') {
+          return {readback:previousReadback,stop:{alreadyStopped:true,receiptId:probe.deviceRun.id}};
+        }
+        if(facts.writeOutcome!=='unconfirmed') throw new Error('camera_isp_stream_required');
+      }
+    }
+    let readback;
+    if(facts&&facts.writeOutcome!=='unconfirmed') {
+      onPhase('readback');
+      readback=await ordinary(()=>ispReadback(experiment));
+    }
+    if(readback?.hash!==original.hash) {
+      onPhase('restore');
+      const {result,deviceRun}=await device(experiment,'restore_tuning',{baselineId:original.baselineId});
+      if(result?.appliedHash!==original.hash||result.readbackHash!==original.hash) throw new Error('camera_isp_restore_unconfirmed');
+      onPhase('readback');
+      if(probe) readback=await ordinary(()=>ispReadback(experiment));
+      if(!readback) {
+        const config=result.evidence?.config;
+        if(!record(config)||sha256(JSON.stringify(config))!==original.hash) throw new Error('camera_isp_restore_unconfirmed');
+        readback={config,hash:result.readbackHash,receiptId:deviceRun.id,recordedAt:new Date().toISOString(),
+          verification:'restore_tuning_sdk_readback'};
+      }
+      if(readback.hash!==original.hash) throw new Error('camera_isp_restore_unconfirmed');
+    }
+    if(!stopStream) {
+      try {
+        const restored=await capture(binding,'isp',{scene:'课堂 Gamma 对照 · 恢复后'});
+        if(restored.tuningHash!==original.hash||!restored.sdkTimestampNs) throw new Error('camera_isp_readback_invalid');
+        return {readback,restored};
+      } catch(error) {
+        return {readback,comparisonIssue:error.message};
+      }
+    }
+    onPhase('stop',readback);
+    const stopped=await device(experiment,'preview_stop',{});
+    if(stopped.result?.running!==false) throw new Error('camera_stop_unconfirmed');
+    return {readback,stop:{receiptId:stopped.deviceRun.id}};
+  }
+  async function gammaTrial(binding,original,goal,onPhase) {
+    const experiment=await experimentArchive(binding);
+    if(experiment.targetId!==original.adapterId||experiment.baseline?.id!==original.baselineId||
+        experiment.baseline.hash!==original.hash) {
+      throw new Error('camera_isp_snapshot_changed');
+    }
+    const beforeReadback=await ispReadback(experiment);
+    if(beforeReadback.hash!==original.hash) throw new Error('camera_isp_snapshot_changed');
+    onPhase('gamma_before');
+    const before=await capture(binding,'isp',{scene:'课堂 Gamma 对照 · 原始'});
+    if(before.tuningHash!==original.hash||!before.sdkTimestampNs) throw new Error('camera_isp_readback_invalid');
+    onPhase('gamma_plan',{before});
+    const {candidate}=await json('/experiments/'+experiment.id+'/candidates',
+      {body:{frameIds:[before.id],goal:'课程 Gamma 单次对照，只允许修改 Gamma 曲线，不切换模式。观察目标：'+goal}});
+    const mode=original.config.modules?.gamma?.mode;
+    const field=mode===0?'auto_attr.curve':mode===1?'manual_attr.curve':undefined;
+    const stripCurve=config=>{
+      const {gamma,...otherModules}=config.modules??{};
+      const {[field]:_curve,...settings}=gamma??{};
+      return {...config,modules:{...otherModules,gamma:settings}};
+    };
+    if(!field||!Array.isArray(candidate?.tuning?.modules?.gamma?.[field])||
+        candidate?.source!=='model'||!cameraId.test(candidate.id)||candidate.baselineHash!==original.hash||
+        candidate.baselineId!==original.baselineId||!candidate.frameIds?.includes(before.id)||
+        !hash.test(candidate.hash)||!record(candidate.tuning)||sha256(JSON.stringify(candidate.tuning))!==candidate.hash||
+        candidate.hash===original.hash||!Array.isArray(candidate.patches)||!candidate.patches.length||
+        candidate.patches.some(patch=>typeof patch.path!=='string'||!patch.path.startsWith('/modules/gamma/'))||
+        JSON.stringify(stripCurve(candidate.tuning))!==JSON.stringify(stripCurve(original.config))) {
+      throw new Error('camera_gamma_candidate_rejected');
+    }
+    if((await ispReadback(experiment)).hash!==original.hash) throw new Error('camera_isp_snapshot_changed');
+    onPhase('gamma_apply',{before,candidateId:candidate.id},true);
+    const result=await applyGammaFrame(binding,experiment,candidate,before.sdkTimestampNs,()=>onPhase('gamma_verify'));
+    return {before,beforeReadback,...result,candidateId:candidate.id};
+  }
+  async function confirmIsp(binding,original,expectedHash) {
+    const experiment=await experimentArchive(binding);
+    if(experiment.targetId!==original.adapterId) throw new Error('camera_isp_snapshot_changed');
+    const readback=await ispReadback(experiment);
+    if(readback.hash!==expectedHash) throw new Error('camera_isp_snapshot_changed');
+    return readback;
+  }
+  async function applyGammaFrame(binding,experiment,candidate,previousTimestamp,onReadback) {
+    const {result}=await device(experiment,'apply_tuning',{candidateId:candidate.id});
+    if(result?.appliedHash!==candidate.hash||result.readbackHash!==candidate.hash) throw new Error('camera_isp_restore_unconfirmed');
+    onReadback();
+    const readback=await ispReadback(experiment);
+    const after=await capture(binding,'isp',{scene:'课堂 Gamma 对照 · 候选',candidateId:candidate.id});
+    if(readback.hash!==candidate.hash||after.tuningHash!==readback.hash||!after.sdkTimestampNs||
+        BigInt(after.sdkTimestampNs)<=BigInt(previousTimestamp)) throw new Error('camera_gamma_freshness_failed');
+    return {after,readback};
+  }
+  async function reloadGamma(binding,original,candidate,restored,onPhase) {
+    const experiment=await experimentArchive(binding);
+    if(experiment.targetId!==original.adapterId||(await ispReadback(experiment)).hash!==original.hash) {
+      throw new Error('camera_isp_snapshot_changed');
+    }
+    onPhase('gamma_apply',true);
+    return applyGammaFrame(binding,experiment,candidate,restored.sdkTimestampNs,()=>onPhase('gamma_verify'));
+  }
+  async function capture(binding,kind,{scene,raw,candidateId}={}) {
     const {experiment}=await inspect({...binding,runId:undefined});
     if(!experiment.targetId) throw new Error('vision_device_adapter_required');
     let readbackHash;
@@ -182,7 +334,7 @@ export function createCameraSource(configFile=process.env.RDK_CAMERA_WORKSHOP_CO
       if(!hash.test(readbackHash)) throw new Error('camera_response_invalid');
     }
     const operation=kind==='raw'?'capture_raw':kind==='render'?'process_raw':'capture_frame';
-    const {asset,deviceRun,result}=await device(experiment,operation,kind==='render'?{sampleId:raw.id}:{scene});
+    const {asset,deviceRun,result}=await device(experiment,operation,kind==='render'?{sampleId:raw.id}:{scene,...(candidateId?{candidateId}:{})});
     const width=kind==='raw'?asset?.metadata?.width:asset?.width;
     const height=kind==='raw'?asset?.metadata?.height:asset?.height;
     const mimeType=kind==='raw'?'application/octet-stream':asset?.mimeType;
@@ -214,5 +366,50 @@ export function createCameraSource(configFile=process.env.RDK_CAMERA_WORKSHOP_CO
     }
     return result;
   }
-  return {list,inspect,frame,capture,captureFile};
+  async function preflight(binding,report) {
+    let layer='service';
+    try {
+      if(!binding) {
+        await list();
+        report(layer,{status:'passed'});
+        report('board',{status:'blocked',code:'camera_binding_required'});
+        return;
+      }
+      const {experiment}=await inspect({...binding,runId:undefined});
+      report(layer,{status:'passed'});
+      layer='board';
+      report(layer,{status:'checking'});
+      if(!experiment.targetId) throw new Error('vision_device_adapter_required');
+      const probe=await device(experiment,'probe',{});
+      const facts=probe.result?.facts;
+      if(!record(facts)) throw new Error('camera_response_invalid');
+      const identity={board:experiment.board,sensorModel:experiment.sensorModel,mode:experiment.cameraMode,receiptId:probe.deviceRun.id};
+      report(layer,{status:'passed',...identity});
+      layer='frame';
+      if(facts.nativeSdkAvailable===false) throw new Error('camera_sdk_unavailable');
+      if(facts.cleanupRequired===true||facts.writeOutcome==='unconfirmed') throw new Error('camera_recovery_required');
+      if(facts.streaming!==true) throw new Error('camera_stream_not_running');
+      report(layer,{status:'checking'});
+      const readPreview=async after=>{
+        const data=await json('/experiments/'+experiment.id+'/device/preview_frame',
+          {body:{receiptOnly:true,...(after?{afterSdkTimestampNs:after}:{})}});
+        const frame=data.frame;
+        const timestamp=String(frame?.evidence?.sdkTimestampNs);
+        if(data.operation!=='preview_frame'||frame?.pixels!=='native_studio_preview_only'||!hash.test(frame.sha256)||
+            !mimeTypes.has(frame.mimeType)||!Number.isSafeInteger(frame.width)||frame.width<1||
+            !Number.isSafeInteger(frame.height)||frame.height<1||!/^\d{1,20}$/.test(timestamp)||BigInt(timestamp)<=0n) {
+          throw new Error('camera_live_receipt_invalid');
+        }
+        if(after&&BigInt(timestamp)<=BigInt(after)) throw new Error('camera_live_frame_stale');
+        return {timestamp,width:frame.width,height:frame.height,sha256:frame.sha256};
+      };
+      const previous=await readPreview();
+      const current=await readPreview(previous.timestamp);
+      report(layer,{status:'passed',previousTimestamp:previous.timestamp,...current});
+    } catch(error) {
+      const code=/^(vision|camera)_[a-z0-9_]{1,90}$/.test(error.message)?error.message:'camera_service_error';
+      report(layer,{status:'blocked',code});
+    }
+  }
+  return {list,inspect,frame,capture,captureFile,preflight,saveOriginalIsp,restoreOriginalIsp,gammaTrial,reloadGamma,confirmIsp};
 }

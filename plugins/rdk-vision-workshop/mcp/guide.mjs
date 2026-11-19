@@ -1,4 +1,4 @@
-import { cameraIdPattern, labels, steps } from './steps.mjs';
+import { cameraIdPattern, labels, steps, stepEntries } from './steps.mjs';
 
 const cameraId=new RegExp(cameraIdPattern);
 
@@ -47,6 +47,7 @@ export const guideSchema = {
     path:{ type:'string', enum:['A','B','C'], description:'本工位已明确选择的完成路径。' },
     run:{ type:'object', description:'RoboGO 已有 Run 的只读状态回执。', properties:{
       id:evidenceKey, state:{ type:'string', enum:runStates }, receipt:evidenceKey,
+      name:{type:'string',pattern:'^[a-z0-9](?:[a-z0-9-]{0,118}[a-z0-9])?$',description:'RoboGO 任务名，用于查询并核对原 Run ID。'},
       source:{type:'string',enum:['robogo','external']},
       modelSha256:{type:'string',pattern:'^[a-f0-9]{64}$',description:'由 RoboGO 原 Run 的 X5 INT8 制品回执核对的 SHA-256。'},
       checkedAtMinute:{ type:'integer',minimum:0,maximum:180 }, etaMinute:{ type:'integer',minimum:0,maximum:1440 },
@@ -63,7 +64,8 @@ function references(v, allowed) {
 }
 function task(id, fields=steps[id].fields) {
   const { title, ask, tool }=steps[id];
-  return { stageId:id, title, instruction:ask, ...(tool?{tool}:{}), requiredEvidence:fields.map(key=>({key,label:labels[key]})) };
+  return { stageId:id, title, instruction:ask, ...(tool?{tool}:{}), ...(stepEntries[id]?{entry:stepEntries[id]}:{}),
+    requiredEvidence:fields.map(key=>({key,label:labels[key]})) };
 }
 
 export function guideCourse(plan, args={}) {
@@ -82,6 +84,7 @@ export function guideCourse(plan, args={}) {
     if (!isObject(run) || Object.keys(run).some(k=>!Object.hasOwn(guideSchema.properties.run.properties,k))
       || !validReference(run.id)||!validReference(run.receipt)||!runStates.includes(run.state)
       || run.source!==undefined&&!['robogo','external'].includes(run.source)
+      || run.name!==undefined&&(run.source!=='robogo'||typeof run.name!=='string'||!/^[a-z0-9](?:[a-z0-9-]{0,118}[a-z0-9])?$/.test(run.name))
       || (run.modelSha256!==undefined && (run.source!=='robogo'||normalizedModelHash(run.modelSha256)!==run.modelSha256))
       || (run.checkedAtMinute!==undefined && (!minuteValid(run.checkedAtMinute)||minute!==undefined&&run.checkedAtMinute>minute))
       || (run.etaMinute!==undefined && (!Number.isInteger(run.etaMinute)||run.etaMinute<0||run.etaMinute>1440))) throw new Error('invalid_run_receipt');
@@ -89,7 +92,10 @@ export function guideCourse(plan, args={}) {
     evidence.run_id=run.id;
   }
   const { submitStart, submitBy, runCheckpoint, deployAt, deliverAt }=plan.deadlines;
-  const missing=id=>steps[id].fields.filter(k=>!evidence[k] && !(k==='baseline_raw'&&evidence.baseline_raw_sample));
+  const missing=id=>steps[id].fields.filter(k=>(!evidence[k]||
+    ['target_result','preset_target_result'].includes(k)&&evidence[k]==='未验证'||
+    ['inference_result','preset_inference_result'].includes(k)&&evidence[k]==='运行失败')&&
+    !(k==='baseline_raw'&&evidence.baseline_raw_sample));
   const done=id=>!missing(id).length;
   // Configuration snapshots remain available for recovery even when a live device is disconnected.
   const recheck=new Set();
@@ -176,7 +182,7 @@ export function guideCourse(plan, args={}) {
     nextStep.requiredEvidence=[{key:'device_unused',label:labels.device_unused}];
   }
   if (nextStep?.stageId==='restore' && boardBlocked && evidence.original_snapshot) nextStep=reportIssue('vision_device_transport_failed');
-  const liveVerified=prefix=>evidence[prefix+'inference_result']==='运行成功'&&targetResults.includes(evidence[prefix+'target_result']);
+  const liveVerified=prefix=>evidence[prefix+'inference_result']==='运行成功'&&['检出','未检出'].includes(evidence[prefix+'target_result']);
   const boardExecutionRecorded=path==='A'?ownReady&&boardReady&&done('deploy')&&done('live')&&liveVerified('')
     &&normalizedModelHash(evidence.board_model_hash)===ownModel
     :path==='B'&&boardReady&&done('preset_deploy')&&liveVerified('preset_')

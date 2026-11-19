@@ -10,7 +10,8 @@ export function studioConfig(node=process.execPath){
  return {mcpServers:{'rdk-vision-workshop':{transport:'stdio',command:node,args:[fileURLToPath(new URL('./server.mjs',import.meta.url))],
    ...(Object.keys(env).length?{env}:{}),requestTimeoutMs:30000,
    permissions:{default:'deny',tools:{vision_course_plan:'readonly',vision_course_stage:'readonly',vision_course_next:'readonly',vision_course_view:'readonly',
-     vision_course_sync:'approval',vision_course_camera:'approval',vision_course_camera_status:'readonly'}}}}};
+     vision_course_sync:'approval',vision_course_camera:'approval',vision_course_camera_status:'readonly',vision_course_preflight:'readonly',
+     vision_course_isp:'approval',vision_course_isp_status:'readonly'}}}}};
 }
 const entry = process.argv[1];
 if (entry && existsSync(entry) && import.meta.url === pathToFileURL(realpathSync(entry)).href) {

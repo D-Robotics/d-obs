@@ -73,12 +73,15 @@ test('RoboGO confirmation uses the actual request and freezes the plan on restar
   await configuration('one',1);
   await assert.rejects(trainingProfile(),/robogo_profile_invalid/);
   let submitCount=0;
-  const cloud={prepare:async input=>'plan-'+input.name,
+  const cloud={connected:()=>true,prepare:async input=>'plan-'+input.name,
     submit:async ref=>{submitCount++;assert.equal((JSON.parse(await readFile(stateFile,'utf8'))).submission,'pending');return {...run,receipt:ref};}};
-  await session(beforeTraining,async http=>{
+  await session({...beforeTraining,blockers:{training_image_unavailable:'等待共享镜像'}},async http=>{
+    assert.equal((await http('/robogo/state')).data.profileIssue,'robogo_profile_invalid');
     await configuration('first tab');
+    assert.equal((await http('/robogo/state')).data.profileConfigured,true);
     const first=(await post(http,'/robogo/prepare')).data;
     assert.deepEqual(first.parameters,{name:'first tab',epochs:100});
+    assert.equal((await http('/session')).data.resume.blockers.training_image_unavailable,undefined);
     await configuration('second tab');
     const second=(await post(http,'/robogo/prepare')).data;
     assert.equal((await post(http,'/robogo/submit',{confirmation:first.confirmationId})).data.error,'robogo_plan_changed');

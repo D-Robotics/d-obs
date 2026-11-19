@@ -11,7 +11,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 ROOT = Path(__file__).resolve().parents[1]
 CAMERA_ID = 'rdk-camera-workshop'
 COURSE_ID = 'rdk-vision-workshop'
-VERSION = '1.4.2'
+VERSION = '1.5.1'
 
 
 def load(path):
@@ -31,7 +31,7 @@ def add_file(destination, root, rel):
     if path.resolve() != path or not path.is_file() or rel in destination:
         raise ValueError(f'Invalid source or duplicate package entry: {rel}')
     data = path.read_bytes()
-    if re.search(r'/Users/|192\.168\.\d+\.\d+|sk-[A-Za-z0-9_-]{16,}|BEGIN [A-Z ]*PRIVATE KEY', data.decode('utf-8')):
+    if path.suffix != '.jpg' and re.search(r'/Users/|192\.168\.\d+\.\d+|sk-[A-Za-z0-9_-]{16,}|BEGIN [A-Z ]*PRIVATE KEY', data.decode('utf-8')):
         raise ValueError(f'Private data in package entry: {rel}')
     destination[rel] = data
 
@@ -62,11 +62,11 @@ def package(camera, course, out):
         add_file(entries, camera, rel)
     add_tree(entries, camera, f'skills/{CAMERA_ID}', {'.md', '.json', '.py', '.swift'})
     camera_skill = f'skills/{CAMERA_ID}/SKILL.md'
-    skill_reference = (ROOT / 'plugins' / CAMERA_ID / camera_skill).read_text(encoding='utf-8')
     section = '## Studio 拍照和课程基线'
-    routing = section + skill_reference.split(section, 1)[1].split('## 能力与操作范围', 1)[0]
     camera_text = entries[camera_skill].decode('utf-8')
     if section not in camera_text:
+        skill_reference = (ROOT / 'plugins' / CAMERA_ID / camera_skill).read_text(encoding='utf-8')
+        routing = section + skill_reference.split(section, 1)[1].split('## 能力与操作范围', 1)[0]
         camera_text = camera_text.replace('# 相机点亮与 ISP 调优\n\n',
             '# 相机点亮与 ISP 调优\n\n' + routing + '## 能力与操作范围\n\n', 1)
     camera_text = re.sub(r'(?m)^trigger: (?!RDK Camera AI)', 'trigger: RDK Camera AI, 帮我拍张照, 相机拍照, ', camera_text, count=1)
@@ -74,6 +74,16 @@ def package(camera, course, out):
     for folder, suffixes in [('mcp', {'.mjs'}), ('web', {'.html', '.css', '.mjs'}), ('device', {'.md', '.py'}),
                              (course_skill, {'.md', '.json'})]:
         add_tree(entries, course, folder, suffixes)
+    demo = 'web/isp-demo'
+    add_tree(entries, course, demo, {'.json', '.jpg'})
+    samples = load(course / demo / 'manifest.json')['samples']
+    if {item['id'] for item in samples} != {'exposure', 'gain', 'contrast', 'sharpness', 'white-balance'}:
+        raise ValueError('Expected one example per instructor parameter')
+    for sample in samples:
+        for phase in ('before', 'after'):
+            asset = sample[phase]
+            if asset['image'] != f"{sample['id']}-{phase}.jpg" or digest(entries[f"{demo}/{asset['image']}"]) != asset['imageSha256']:
+                raise ValueError('Instructor example image failed verification')
     recovery = f'skills/{CAMERA_ID}/references/imx415-compatibility-and-recovery.md'
     if recovery in entries:
         entries[recovery] = re.sub(
@@ -95,7 +105,8 @@ def package(camera, course, out):
             'permissions': {'default': 'deny', 'tools': {
                 'vision_course_plan': 'readonly', 'vision_course_stage': 'readonly',
                 'vision_course_next': 'readonly', 'vision_course_view': 'readonly', 'vision_course_sync': 'approval',
-                'vision_course_camera': 'approval', 'vision_course_camera_status': 'readonly',
+                'vision_course_camera': 'approval', 'vision_course_camera_status': 'readonly', 'vision_course_preflight': 'readonly',
+                'vision_course_isp': 'approval', 'vision_course_isp_status': 'readonly',
             }},
         },
     }})
@@ -105,6 +116,8 @@ def package(camera, course, out):
 
 - **日常相机调试**。在 Studio 助手说「用 RDK Camera AI 帮我点亮相机，读取当前 ISP」。按[相机操作技能](skills/{CAMERA_ID}/SKILL.md)执行。
 - **180 分钟视觉 Workshop**。在 Studio 助手说「打开 180 分钟视觉 Workshop，继续我的工位」。通过 `vision_course_view` 打开本机工作台，按[课程操作稿]({course_skill}/references/course-runbook.md)推进。
+- **工位连接预检**。用 `vision_course_preflight` 或工作台的「运行连接预检」核对相机服务、X5 和实时画面。首次接入时从页面的「关联相机实验」绑定正确设备。
+- **课堂 ISP**。保存原始版本，完成跟做和自主两轮 Gamma。每轮留下调前与调后实拍、独立参数回读和取舍。升级前关闭旧课堂页。讲师演示可以切换五项已归档的实机对照。
 - **拍照与三张基线**。在工位关联相机实验后打开「照片与三张基线图」，从图卡查看采集、归档与原件下载。也可通过 `vision_course_camera` 发起，使用 `vision_course_camera_status` 查看回执。渲染条件缺失时保留已归档的图并提示如何继续。
 
 实际相机操作沿用相机适配器及原连接配置。课堂工作台保存相机证据，需要时可绑定当前相机实验。训练需本组 RoboGO 授权。提交、查询原 Run、PTQ 和板端验收按课程步骤完成。

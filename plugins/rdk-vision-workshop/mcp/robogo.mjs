@@ -1,6 +1,8 @@
 import {createHash, randomBytes} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
-import {isAbsolute} from 'node:path';
+import {open} from 'node:fs/promises';
+import {constants} from 'node:fs';
+import {homedir} from 'node:os';
+import {isAbsolute,join} from 'node:path';
 
 const issuer='https://sso.d-robotics.cc';
 const oauth=issuer+'/api/userCenterApi/oauth/';
@@ -16,6 +18,14 @@ const activeStates=new Map([
 ]);
 const plain=v=>v&&typeof v==='object'&&!Array.isArray(v);
 const runId=v=>['string','number'].includes(typeof v)&&/^[A-Za-z0-9._:-]{1,120}$/.test(String(v))?String(v):undefined;
+const jobName=v=>typeof v==='string'&&/^[a-z0-9](?:[a-z0-9-]{0,118}[a-z0-9])?$/.test(v)?v:undefined;
+function nameFromReceipt(receipt) {
+  try {
+    const url=new URL(receipt);
+    if(url.origin!=='https://robogo.d-robotics.cc'||url.username||url.password) return;
+    return jobName(url.pathname.match(/^\/train-job\/detail\/([^/]+)\/?$/)?.[1]);
+  } catch { return undefined; }
+}
 const privateField=/(?:secret|token|password|credential|cookie|api.?key|private.?key)/i;
 function reviewParameters(input) {
   for(const [key,value] of Object.entries(input)) {
@@ -136,14 +146,32 @@ export function createRoboGo(send=fetch) {
       try {body=JSON.parse(output?.text);} catch {throw new Error('robogo_response_invalid');}
     }
     if(!plain(body)||body.ok===false||body.success===false) throw new Error('robogo_tool_rejected');
+    // The live MCP separates UI-safe display data from the machine payload.
+    // In particular, the immutable job ID is only present in payload.data.
+    if(Object.hasOwn(body,'payload')) {
+      if(!plain(body.payload)||body.payload.ok!==true) throw new Error('robogo_tool_rejected');
+      return body.payload;
+    }
     return body;
   }
   return {
     authorize,callback,connected:()=>Boolean(tokens),
-    async refresh(id) {
+    async refresh(id,{name,receipt}={}) {
       if(!runId(id)) throw new Error('robogo_run_id_invalid');
-      const result=await call('training_jobs',{action:'get',input:{job_id:id}});
-      return normalizeTrainingJob(result,id);
+      let lookup=jobName(name)??nameFromReceipt(receipt);
+      if(!lookup) {
+        // Earlier workshop records kept only the ID. Match it exactly against
+        // the current account's job list before asking for a job by name.
+        const list=await call('training_jobs',{action:'list',input:{}});
+        const jobs=list.data?.jobs;
+        if(!Array.isArray(jobs)) throw new Error('robogo_response_invalid');
+        lookup=jobName(jobs.find(job=>runId(job?.id??job?.job_id)===id)?.name);
+      }
+      if(!lookup) throw new Error('robogo_run_name_required');
+      const result=await call('training_jobs',{action:'get',input:{name:lookup}});
+      const run=normalizeTrainingJob(result,id);
+      if(run.name!==lookup) throw new Error('robogo_run_receipt_invalid');
+      return run;
     },
     async prepare(input) {
       const result=await call('training_jobs',{action:'prepare_create',input});
@@ -163,6 +191,7 @@ export function normalizeTrainingJob(result,expectedId,{defaultStatus,receiptAct
   const data=result.data??result.result??result;
   const job=data?.job??data?.training_job??data;
   const id=runId(job?.job_id??job?.id??job?.jobId);
+  const name=jobName(job?.name);
   const status=job?.status??job?.state??defaultStatus;
   const state=typeof status==='string'?activeStates.get(status.toLowerCase()):undefined;
   if(!id||!state||expectedId!==undefined&&id!==expectedId) throw new Error('robogo_run_receipt_invalid');
@@ -180,16 +209,24 @@ export function normalizeTrainingJob(result,expectedId,{defaultStatus,receiptAct
   }
   const modelSha256=state==='completed'&&models.size===1?[...models][0]:undefined;
   return {id,state,source:'robogo',receipt:'RoboGO MCP '+receiptAction+' · '+id+' · '+status,
+    ...(name?{name}:{}),
     ...(modelSha256?{modelSha256}:{})};
 }
 
-export async function trainingProfile(filename=process.env.RDK_VISION_ROBOGO_TRAINING_PROFILE) {
+export async function trainingProfile(filename=process.env.RDK_VISION_ROBOGO_TRAINING_PROFILE??
+    join(homedir(),'.config','rdk-vision-workshop','training-profile.json')) {
   if(!filename||!isAbsolute(filename)) throw new Error('robogo_profile_required');
+  let file;
   try {
-    const bytes=await readFile(filename);
+    file=await open(filename,constants.O_RDONLY|(constants.O_NOFOLLOW??0));
+    const info=await file.stat();
+    if(!info.isFile()||info.size>65536||process.platform!=='win32'&&info.uid!==process.getuid()) throw new Error('invalid_profile');
+    const bytes=await file.readFile();
     if(bytes.length>65536) throw new Error('large_profile');
     const data=JSON.parse(bytes);
     if(!plain(data.input)||!Object.keys(data.input).length) throw new Error('invalid_profile');
     return {input:reviewParameters(data.input)};
-  } catch { throw new Error('robogo_profile_invalid'); }
+  } catch(error) {
+    throw new Error(error.code==='ENOENT'?'robogo_profile_required':'robogo_profile_invalid');
+  } finally {await file?.close();}
 }

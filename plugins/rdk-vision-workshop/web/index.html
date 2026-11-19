@@ -31,6 +31,12 @@
           <div id="step-footer" class="button-row"></div>
           <details id="step-tools" class="tool-details"><summary>Studio 工具</summary><code id="tool-chain"></code></details>
         </section>
+        <section id="camera-preflight" class="box" aria-labelledby="camera-preflight-title">
+          <div class="action-head"><h2 id="camera-preflight-title">工位连接预检</h2><span id="preflight-status" class="status-tag" role="status">待检查</span></div>
+          <p class="action-copy" id="preflight-help">采集前检查相机服务、板卡连接和当前画面。只读取已开启的相机流。</p>
+          <div id="preflight-checks" class="preflight-checks"></div>
+          <div id="preflight-actions" class="button-row"></div>
+        </section>
         <section id="camera" class="box" aria-labelledby="camera-title">
           <div class="action-head"><div class="section-label">Camera Workshop</div><span id="camera-status" class="status-tag"></span></div>
           <h2 id="camera-title">本工位相机实验</h2>
@@ -44,6 +50,17 @@
           <div id="capture-grid"></div>
           <div id="capture-actions" class="button-row"></div>
         </section>
+        <section id="camera-isp" class="box" aria-labelledby="isp-title">
+          <div class="action-head"><h2 id="isp-title">Gamma · 两轮课堂练习</h2><span id="isp-status" class="status-tag" role="status"></span></div>
+          <p id="isp-help" class="action-copy"></p>
+          <div id="isp-detail"></div><div id="isp-actions" class="button-row"></div>
+        </section>
+        <details id="isp-demo" class="box isp-demo" aria-labelledby="isp-demo-title">
+          <summary id="isp-demo-title">讲师演示 · 五项 ISP 实拍</summary>
+          <p class="action-copy">选择一项，左右对照实际回读和归档画面。</p>
+          <div id="isp-demo-tabs" class="button-row" role="group" aria-label="演示参数"></div>
+          <div id="isp-demo-panel" aria-live="polite"></div>
+        </details>
         <section id="comparison" class="box" hidden aria-labelledby="comparison-title">
           <div class="action-head"><div class="section-label">相机证据</div><span id="comparison-state" class="status-tag"></span></div>
           <h2 id="comparison-title">Gamma 实拍对照</h2>
@@ -63,14 +80,15 @@
           <p class="action-copy" id="board-help"></p>
           <div id="board-evidence"></div><div id="board-actions" class="button-row"></div>
         </section>
-        <section class="box training" aria-labelledby="training-title">
+        <section id="training" class="box training" aria-labelledby="training-title">
           <div class="action-head"><div class="section-label">并行任务</div><span id="training-state" class="status-tag"></span></div>
           <h2 id="training-title">训练与量化进度</h2><p id="training-help"></p>
           <div class="milestones" id="milestones"></div>
+          <div id="training-readiness" class="preflight-checks" aria-label="训练提交条件"></div>
           <p id="robogo-note" class="last-checked" aria-live="polite"></p><div id="robogo-actions" class="button-row"></div>
           <div id="training-detail"></div><div class="button-row"><button id="run-edit" class="button ghost">记录已有 Run</button><button id="read-training" class="button plain">读取本组训练回执</button></div>
         </section>
-        <section class="box evidence">
+        <section id="delivery" class="box evidence">
           <div class="action-head"><div class="section-label">证据与交付</div><span id="evidence-count" class="status-tag"></span></div>
           <h2>个人成果包</h2><p id="delivery-help"></p>
           <ul id="attachments"></ul>

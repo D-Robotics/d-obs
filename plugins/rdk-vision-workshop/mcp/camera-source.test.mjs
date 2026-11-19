@@ -168,3 +168,85 @@ test('three-image capture preserves partial evidence and retries RAW replay with
     await rm(temp,{recursive:true,force:true});
   }
 });
+
+test('workstation preflight reports service, board and fresh frame independently',async()=>{
+  const temp=await mkdtemp(path.join(tmpdir(),'workshop-preflight-test-'));
+  let mode='ready', previewCalls=[];
+  const prefix=sourceRoute+'/'+experimentId;
+  const source=createServer(async(req,res)=>{
+    const reply=(body,status=200)=>res.writeHead(status,{'Content-Type':'application/json'}).end(JSON.stringify({ok:status===200,...body}));
+    if(mode==='unauthorized') return reply({},403);
+    if(req.url===sourceRoute+'?view=index&limit=30') return reply({experiments:[]});
+    if(req.url===prefix) return reply({experiment:{id:experimentId,title:'Fixture camera',board:'RDK X5',sensorModel:'IMX415',
+      targetId:'cam-a',deviceRuns:[],cameraFrames:[]}});
+    if(req.url===prefix+'/device/probe') {
+      if(mode==='offline') return reply({error:'vision_device_transport_failed'},502);
+      return reply({operation:'probe',deviceRun:{id:beforeId,adapterId:'cam-a',status:'completed'},
+        result:{facts:{nativeSdkAvailable:true,streaming:mode!=='idle'}}});
+    }
+    if(req.url===prefix+'/device/preview_frame') {
+      const chunks=[];
+      for await(const chunk of req) chunks.push(chunk);
+      const args=JSON.parse(Buffer.concat(chunks));
+      previewCalls.push(args);
+      const sdkTimestampNs=args.afterSdkTimestampNs&&mode==='ready'?'101':'100';
+      return reply({operation:'preview_frame',frame:{mimeType:'image/png',sha256:originalHash,
+        width:3840,height:2160,pixels:'native_studio_preview_only',evidence:{sdkTimestampNs}}});
+    }
+    return reply({},404);
+  });
+  let view;
+  try {
+    await new Promise(resolve=>source.listen(0,'127.0.0.1',resolve));
+    const secret=path.join(temp,'token');
+    const config=path.join(temp,'connection.json');
+    await writeFile(secret,token,{mode:0o600});
+    await writeFile(config,JSON.stringify({url:`http://127.0.0.1:${source.address().port}/api/ops/vision-workshop/mcp`,
+      auth:{type:'admin',credentialFile:secret}}),{mode:0o600});
+    view=await startWorkbench({},0,createCameraSource(config));
+    const target=new URL(view.url);
+    const get=(method,extra={})=>fetch(new URL('/camera/preflight',target),{method,
+      headers:{'X-Workshop-Session':target.hash.slice(1),'Content-Type':'application/json',...extra}});
+    async function preflight() {
+      assert.equal((await get('POST')).status,202);
+      for(let retry=0;retry<40;retry++) {
+        const {preflight}=await(await get('GET')).json();
+        if(preflight&&!preflight.running) return preflight.checks;
+        await new Promise(resolve=>setTimeout(resolve,10));
+      }
+      assert.fail('preflight did not finish');
+    }
+    assert.equal((await get('POST',{Origin:'https://example.invalid'})).status,404);
+    let checks=await preflight();
+    assert.equal(checks.service.status,'passed');
+    assert.equal(checks.board.code,'camera_binding_required');
+    assert.equal(checks.frame.status,'waiting');
+    view.update({camera:{experimentId}});
+    assert.equal((await(await get('GET')).json()).preflight,undefined);
+    mode='offline';
+    checks=await preflight();
+    assert.equal(checks.board.code,'vision_device_transport_failed');
+    assert.equal(checks.frame.status,'waiting');
+    mode='idle';
+    checks=await preflight();
+    assert.equal(checks.board.status,'passed');
+    assert.equal(checks.frame.code,'camera_stream_not_running');
+    assert.deepEqual(previewCalls,[]);
+    mode='stale';
+    checks=await preflight();
+    assert.equal(checks.frame.code,'camera_live_frame_stale');
+    mode='ready';
+    checks=await preflight();
+    assert.equal(checks.frame.status,'passed');
+    assert.equal(checks.frame.timestamp,'101');
+    assert.deepEqual(previewCalls.slice(-2),[{receiptOnly:true},{receiptOnly:true,afterSdkTimestampNs:'100'}]);
+    mode='unauthorized';
+    checks=await preflight();
+    assert.equal(checks.service.code,'camera_auth_required');
+    assert.equal(checks.board.status,'waiting');
+  } finally {
+    if(view) await new Promise(resolve=>view.server.close(resolve));
+    await new Promise(resolve=>source.close(resolve));
+    await rm(temp,{recursive:true,force:true});
+  }
+});

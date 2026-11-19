@@ -43,7 +43,7 @@ test('submits once during baseline, then advances with the original run running 
 
 test('samples carry an explicit RAW gap, and personal blind review follows tea break',()=>{
   const evidence={...intro,...camera,...baseline,format_observation:'Formats',gamma_decision:'保留原值',gamma_readback:'Getter',
-    gamma_fresh_frame:'B.png',trial_decision:'看不出改善'};
+    gamma_fresh_frame:'B.png',trial_readback:'Getter 2',trial_fresh_frame:'B2.png',trial_decision:'看不出改善'};
   delete evidence.baseline_raw;
   assert.deepEqual(next({elapsedMinutes:42,evidence}).nextStep.requiredEvidence.map(x=>x.key),['baseline_raw']);
   evidence.baseline_raw_sample='相机 RAW 实采受阻，样例 RAW-1';
@@ -116,6 +116,10 @@ test('running the model and finding the target are independent, and preset evide
   assert.ok(technicalRun.unfinished.includes('重载自己的 tuning'));
   assert.ok(!technicalRun.unfinished.includes('本工位部署与实时检测'));
   assert.equal(next({elapsedMinutes:145,evidence,path:'B'}).completion.learnerBoardEvidenceRecorded,false);
+  const unobserved={...evidence,target_result:'未验证'};
+  const pending=next({elapsedMinutes:145,evidence:unobserved,path:'A',run:external});
+  assert.equal(pending.completion.learnerBoardEvidenceRecorded,false);
+  assert.ok(pending.nextStep.requiredEvidence.some(row=>row.key==='target_result'));
   const failed={...evidence,inference_result:'运行失败',target_result:'未验证'};
   assert.equal(next({elapsedMinutes:145,evidence:failed,path:'A'}).completion.learnerBoardEvidenceRecorded,false);
   assert.throws(()=>next({evidence:{...failed,target_result:'未检出'}}),/invalid_detection_results/);
@@ -130,6 +134,9 @@ test('native MCP validates inputs and exposes the workbench through its register
   assert.equal(policy.tools.vision_course_view,'readonly');
   assert.equal(policy.tools.vision_course_camera,'approval');
   assert.equal(policy.tools.vision_course_camera_status,'readonly');
+  assert.equal(policy.tools.vision_course_preflight,'readonly');
+  const invalidPreflight=await rpc('vision_course_preflight',{run:'yes'});
+  assert.equal(invalidPreflight.result.isError,true);
   assert.equal(policy.default,'deny');
   const view=await startWorkbench({evidence:intro,elapsedMinutes:130});
   try {

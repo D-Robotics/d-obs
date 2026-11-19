@@ -1,0 +1,201 @@
+{
+  "schema": "rdk.isp-lecture.v1",
+  "samples": [
+    {
+      "id": "exposure",
+      "title": "曝光",
+      "context": "手动曝光，保持增益固定。",
+      "observation": "看灯具边缘和暗区。曝光时间改变时，要同时检查高光还有没有细节。",
+      "device": "RDK X5 · Sony IMX415",
+      "source": "既有实机 AI 调试归档",
+      "runId": "86cbe76f-5c21-43ab-849c-6e1be20cd435",
+      "date": "2026-10-29",
+      "before": {
+        "image": "exposure-before.jpg",
+        "imageSha256": "6a3819bc3240730bc325bcaaccd03e368e485a2ece29012e4ca9df7fc67d7a14",
+        "sourceImageSha256": "495a99cd4de2bd70b1a9e4281d57d4d75bc260fe17ef268575af8bedbadb6988",
+        "value": "30.0 ms",
+        "frameId": "4aca1b81-585b-4b9f-be0d-48f9c6a42635",
+        "readbackHash": "08e30cf9657e9ad2f066c568b1442109d35ce35078a4d4fdca4833280ac235cb",
+        "field": "exposureUs",
+        "actualValue": 30000.001192092896
+      },
+      "after": {
+        "image": "exposure-after.jpg",
+        "imageSha256": "43f86325e054e203e7ec7cb8d7aa4fbde1daadf9698b915c48adb75b5e48022a",
+        "sourceImageSha256": "09ce32f3de79ac5dcbfe716109b3f32fe0f1f90c820470f9399aa23109c3aad8",
+        "value": "20.0 ms",
+        "frameId": "9cbf159c-391f-43aa-b473-f11b6aef95aa",
+        "readbackHash": "ba8f207796fb4c7e209b4d69ead3e0c79c691d45f67358640533f17776e0bb5c",
+        "field": "exposureUs",
+        "actualValue": 20000.001415610313
+      }
+    },
+    {
+      "id": "gain",
+      "title": "增益",
+      "context": "自动曝光现场回读。这对画面也记录到了色彩处理的轻微变化。",
+      "observation": "放大看暗处的纹理和颗粒。要比较增益本身的影响，现场应固定曝光并比较多帧。",
+      "device": "RDK X5 · Sony IMX415",
+      "source": "既有实机 AI 调试归档",
+      "runId": "f8419aa7-7736-42ca-8c41-94e0fa443e83",
+      "date": "2026-10-28",
+      "before": {
+        "image": "gain-before.jpg",
+        "imageSha256": "28123fcf673ac532002ca18bd8e26df52b01e09ba2d199f0783dedf305043664",
+        "sourceImageSha256": "914c899d2227a51018dab7ad4bfc55ff33b890270ae541ec7dc141ad2ce3acc7",
+        "sourceCrop": [
+          390,
+          40,
+          3390,
+          1728
+        ],
+        "value": "1.0219 ×",
+        "frameId": "8b1bde53-e468-44fd-98e1-17f76140748e",
+        "readbackHash": "dec4c8dc33fa0178a9a20f65eb27a76861f5a01c652107c22337195888b20f96",
+        "field": "gain",
+        "actualValue": 1.0218971967697144
+      },
+      "after": {
+        "image": "gain-after.jpg",
+        "imageSha256": "96d97f39b2b17f067d431c9b2ef3172edd1450e953fc1372a4c12f69ca19ab84",
+        "sourceImageSha256": "3493ce1e12bc4eafe7f3ccf77889a3e846bd2cae4c91331d45cc95203f8bb2e6",
+        "sourceCrop": [
+          390,
+          40,
+          3390,
+          1728
+        ],
+        "value": "1.1388 ×",
+        "frameId": "4c6cc49f-982a-4503-8039-e3920aa3954e",
+        "readbackHash": "078a6e4e80e570de05c02f037f0e36b46b730946d75ffde5cfc5d90273c88b49",
+        "field": "gain",
+        "actualValue": 1.1387885808944702
+      }
+    },
+    {
+      "id": "contrast",
+      "title": "对比度",
+      "context": "固定手动色彩处理模式，改 CPROC 对比度。",
+      "observation": "看顶棚与暗处交界。对比度提高时，留意暗部或亮部是否丢掉层次。",
+      "device": "RDK X5 · Sony IMX415",
+      "source": "既有实机 AI 调试归档",
+      "runId": "a0e4574b-5d92-4000-9a0d-8f73c84a33a2",
+      "date": "2026-10-29",
+      "before": {
+        "image": "contrast-before.jpg",
+        "imageSha256": "d049f28cb84465f1de74d5b91c5f3c720a6d080d6f1a29d7ec8b6462bc7aa2ee",
+        "sourceImageSha256": "c264fd306f3d8f257628c5845c76c1bc52ae62438fd174b554cf863890821656",
+        "value": "1",
+        "frameId": "d3171290-af5e-44df-ae14-88ff11733670",
+        "readbackHash": "51246444a941cc20ea40935ab91874bb0a02e0d6793fe687ba6e2a27f43de922",
+        "field": "contrast",
+        "actualValue": 1
+      },
+      "after": {
+        "image": "contrast-after.jpg",
+        "imageSha256": "5ffa615224277a31145ce79017ea32a6ca522259d6dc0efa01f41090ecf95342",
+        "sourceImageSha256": "7918dcc1b9a82303c58a2109cd9b9f535a6bb7a3dd6320488bdf83d6b13af1d4",
+        "value": "1.03125",
+        "frameId": "c6bc3da6-6fdd-4c03-89c3-0be46418c168",
+        "readbackHash": "9595436cf682e95ec39f50b5ac4e4eb678e960d1f59fa0d93850c6d6ad75b03e",
+        "field": "contrast",
+        "actualValue": 1.03125
+      }
+    },
+    {
+      "id": "sharpness",
+      "title": "锐度",
+      "device": "RDK X5 · Sony IMX415",
+      "source": "既有实机 EE 受控归档 · 文字局部",
+      "date": "2026-10-19",
+      "receiptSha256": "767b69c8d7a6f6bdfa8b117b111952c8ac529dbb5d6a145da18f9ee03c6265c8",
+      "context": "固定 AE/AWB，观察锐化模块的实际 up/down 当前值。",
+      "observation": "看笔画边缘和边缘光晕。本次实际读值发生变化，文字清晰度收益不明显。",
+      "before": {
+        "image": "sharpness-before.jpg",
+        "imageSha256": "28d3051d43296f3b81d0ab23574b76184e8caca0c427cbaf4589c2b4e8e7ec36",
+        "sourceImageSha256": "4a31a9e78e9abda3ba8ca58f4eeb95b962aeae77e84a8d69f472faedcaab1b21",
+        "sourceCrop": [
+          9,
+          28,
+          1331,
+          139
+        ],
+        "value": "47 / 47",
+        "actualValue": [
+          47,
+          47
+        ],
+        "field": "edge enhancement · up / down",
+        "frameSha256": "ce89f4c85423519af8bb379e0123912d13692855789b3b6ab7793fe09cda0fb9",
+        "sdkTimestampNs": "3989069504000",
+        "readbackHash": "8a2bab689ff429dccf2d096f642d8a91bcf8ce7c507d70f34cde7f7965ada72c"
+      },
+      "after": {
+        "image": "sharpness-after.jpg",
+        "imageSha256": "a2e4e9c0fd6b30718bb5632e2c2f20f2b96dd3bd7530b21c88588b7299f2c23e",
+        "sourceImageSha256": "4a31a9e78e9abda3ba8ca58f4eeb95b962aeae77e84a8d69f472faedcaab1b21",
+        "sourceCrop": [
+          9,
+          201,
+          1331,
+          313
+        ],
+        "value": "59 / 59",
+        "actualValue": [
+          59,
+          59
+        ],
+        "field": "edge enhancement · up / down",
+        "frameSha256": "6f59688542d17b02d876cca51cb06e6eb80efc47d87362a377896be121b0990d",
+        "sdkTimestampNs": "3997336168000",
+        "readbackHash": "a10638cc51671e08a7fb0127a882f1d7b2ac4be1f818dcd1c4a0b7632d2b0dcd"
+      }
+    },
+    {
+      "id": "white-balance",
+      "title": "白平衡",
+      "device": "RDK X5 · Sony IMX415",
+      "source": "既有实机 AWB 数值归档 · 纸面局部",
+      "date": "2026-10-19",
+      "receiptSha256": "c7aa5c50475f17446cf1e3bae0074e02dc1a8c7bfd61889f9dff7cd290c5f36c",
+      "context": "固定曝光与其他白平衡通道，观察蓝通道增益。",
+      "observation": "看同一张纸在调整前后的偏色。普通纸面可帮助观察，色彩验收需要标准灰卡。",
+      "before": {
+        "image": "white-balance-before.jpg",
+        "imageSha256": "0faf51c30f821ae471826eefdeae06d2f414bc8999c467700bb381c8266e060c",
+        "sourceImageSha256": "f074d829a74d677930c3f7d94c1edbba8195cb27e91955ed346a7957f9e76bf1",
+        "sourceCrop": [
+          284,
+          0,
+          684,
+          380
+        ],
+        "value": "2.4717 ×",
+        "actualValue": 2.4716796875,
+        "field": "AWB 蓝通道增益",
+        "frameSha256": "933b20a62fd61481084158a4f0f05a14abc013c15b41a043035c7b78e4f04a97",
+        "sdkTimestampNs": "9099320854000",
+        "readbackHash": "31c79d5a0f6dfa6435afff4b45bc6e9f0624cfee6ed6092cfc5c3bacfd5b4475"
+      },
+      "after": {
+        "image": "white-balance-after.jpg",
+        "imageSha256": "c733e171fef81a28d0e4ff44d87a7b095aa51e725919599a9c2854ad9d1e3f7c",
+        "sourceImageSha256": "29a5e5c03fa4550a8b471c4d73d83713d4437af6a84483c6b009cbdd1ba289a4",
+        "sourceCrop": [
+          284,
+          0,
+          684,
+          380
+        ],
+        "value": "2.3730 ×",
+        "actualValue": 2.373046875,
+        "field": "AWB 蓝通道增益",
+        "frameSha256": "60028ff23048f9b9a35aa65d0a3db097098a613dd57ad84acffa367525cbd0f1",
+        "sdkTimestampNs": "9109154186000",
+        "readbackHash": "269f26d9f27453a679469b111de69d84e110238f17c192d0c463373cf559f7ad"
+      }
+    }
+  ]
+}

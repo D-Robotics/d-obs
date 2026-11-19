@@ -40,9 +40,9 @@ async function active(registry) {
 export function workbenchSession(root=join(homedir(),'.rdk-vision-workshop')) {
   const scope=createHash('sha256').update(worker+'|persistent-workbench').digest('hex').slice(0,32);
   const directory=join(root,scope);
-  // The 1.4.1 detached worker may still be running after an in-place import.
-  const registry=join(directory,'session-capture-v1');
-  const lock=join(directory,'starting-capture-v1');
+  // An older detached workbench can still be listening after an in-place import.
+  const registry=join(directory,'session-isp-rounds-v4');
+  const lock=join(directory,'starting-isp-rounds-v4');
   async function open() {
     await mkdir(directory,{recursive:true,mode:0o700});
     const deadline=Date.now()+launchTimeoutMs;
@@ -89,15 +89,28 @@ export function workbenchSession(root=join(homedir(),'.rdk-vision-workshop')) {
     const target=new URL(url);
     target.searchParams.set('panel','capture');
     return {url:target.href,...await request(url,body,'/camera/capture')};
+  },async preflight(run) {
+    const url=await open();
+    const target=new URL(url);
+    target.searchParams.set('panel','preflight');
+    return {url:target.href,...await request(url,run?{}:undefined,'/camera/preflight')};
+  },async isp(body) {
+    const url=await open();
+    const target=new URL(url);
+    target.searchParams.set('panel','isp');
+    return {url:target.href,...await request(url,body,'/camera/isp')};
   }};
 }
 
 async function serve(registry) {
   const temporary=registry+'.'+process.pid;
-  const stateFile=join(dirname(registry),'workbench-state-capture-v1.json');
+  const stateFile=join(dirname(registry),'workbench-state-isp-rounds-v4.json');
   const previous=process.env.RDK_VISION_COURSE_PREVIOUS_SESSION;
   if(!readWorkbenchState(stateFile)) {
-    const legacy=readWorkbenchState(join(dirname(registry),'workbench-state.json'));
+    const legacy=readWorkbenchState(join(dirname(registry),'workbench-state-capture-v3.json'))??
+      readWorkbenchState(join(dirname(registry),'workbench-state-capture-v2.json'))??
+      readWorkbenchState(join(dirname(registry),'workbench-state-capture-v1.json'))??
+      readWorkbenchState(join(dirname(registry),'workbench-state.json'));
     if(legacy) writeWorkbenchState(stateFile,legacy);
     else if(previous) {
       const url=await active(previous);

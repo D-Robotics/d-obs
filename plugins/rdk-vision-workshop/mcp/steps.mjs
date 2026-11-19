@@ -1,5 +1,25 @@
 export const cameraIdPattern='^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$';
 
+export const stepEntries={
+  connect:{section:'camera-preflight',label:'打开连接预检'},
+  baseline:{section:'camera-capture',label:'打开三图采集'},
+  formats:{section:'camera-capture',label:'打开三张图'},
+  data:{section:'training',label:'核对课程数据与训练条件'},
+  train:{section:'training',label:'打开训练卡'},
+  check_run:{section:'training',label:'查看原 Run'},
+  break:{section:'training',label:'核对本组 Run'},
+  quantize:{section:'training',label:'核对模型和 PTQ 回执'},
+  gamma_demo:{section:'camera-isp',label:'打开第 1 轮跟做'},
+  gamma_trial:{section:'camera-isp',label:'打开第 2 轮自主'},
+  blind:{section:'comparison',label:'打开盲选'},
+  reproduce:{section:'camera-isp',label:'打开 ISP 版本与回读'},
+  deploy:{section:'board',label:'核对本组板端回执'},
+  live:{section:'board',label:'查看板端检测证据'},
+  preset_deploy:{section:'board',label:'核对预置模型板端结果'},
+  restore:{section:'camera-isp',label:'打开恢复与停流'},
+  deliver:{section:'delivery',label:'打开成果包'},
+};
+
 // Evidence field labels double as short pass conditions in the workbench.
 export const labels = {
   group_and_target_identified: '本人工位、设备和一句观察目标',
@@ -27,6 +47,8 @@ export const labels = {
   gamma_readback: 'Gamma 实际回读',
   gamma_fresh_frame: '调整后的新图与亮度对照',
   gamma_decision: '第一次保留或恢复的理由',
+  trial_readback: '第 2 轮独立 Gamma 回读',
+  trial_fresh_frame: '第 2 轮调整后的新实拍',
   trial_decision: '自主观察、取舍或保留原值的理由',
   blind_review: '盲选偏好与依据',
   selected_tuning: '选定 tuning 文件或原值',
@@ -64,16 +86,16 @@ export const labels = {
 
 export const steps = {
   intro: { title:'写下一个观察目标', ask:'选一个想看得更清楚的区域，写一句目标并核对工位。', fields:['group_and_target_identified'] },
-  connect: { title:'让本工位相机出图', ask:'在 Studio 检查 X5 和 IMX415，启动已适配模式。', actions:['选本工位设备，核对相机型号和当前模式。','打开预览，确认当前画面实际进入相机，并保存一张新图。','读取并保存原始 ISP，记住该配置的恢复入口。'], tool:'vision_camera_probe → vision_camera_bringup → vision_isp_tuning_get', fields:['plugin_tools_available','current_device_identity','fresh_camera_image','original_snapshot'] },
+  connect: { title:'让本工位相机出图', ask:'关联相机实验并运行连接预检。没有画面时从相机插件点亮，回到这里重新检查。', actions:['选本工位设备，核对相机服务、X5 和实时画面。','通过后，在照片卡保存一张本轮新图。','保存原始 ISP，确认已取得可恢复版本。'], tool:'vision_course_preflight → vision_course_camera → vision_course_isp', fields:['plugin_tools_available','current_device_identity','fresh_camera_image','original_snapshot'] },
   baseline: { title:'固定机位，保存三种基线图', ask:'固定机位、目标和光照。打开三图采集，核对 RAW、ISP 显示图和同组 RAW 的渲染图。', actions:['关联本工位相机实验。','填写固定场景，启动三图采集。','检查每张图的归档状态和原件。遇到渲染前提缺失时保留已采图，按提示补齐。'], tool:'vision_course_camera → vision_course_camera_status', fields:['baseline_images','baseline_raw','baseline_isp','baseline_render'] },
   data: { title:'核对预置数据集', ask:'在 RoboGO 核对本组使用的课程数据集。确认 park、qrcode、obstacle 顺序与训练、验证划分。', fields:['label_schema','grouped_split','dataset_version'] },
   train: { title:'在 RoboGO 提交训练', ask:'用组织方提供的兑换码，在 RoboGO 确认 YOLOv8s、640、100 轮。提交一次，立即把 Run ID 和已受理回执带回；随后继续相机步骤。', fields:['run_id'] },
   formats: { title:'辨认三种图像格式', ask:'打开基线记录，辨认 Bayer RAW、ISP 显示图和渲染图。分别写下来源、用途和你在画面里看到的一处问题。', fields:['format_observation'] },
-  gamma_demo: { title:'跟做一次有界 Gamma 调整', ask:'只调整一次 Gamma，保持机位和光照固定。', actions:['在原图里指出想改善的位置，以及要保留的细节。','试调一次 Gamma，读回相机的实际设置并保存调整后的新图。','用下方前后对照判断效果，记录选择保留或恢复的理由。'], tool:'vision_isp_tuning_get → vision_ai_debug_start → vision_ai_debug_status', fields:['gamma_readback','gamma_fresh_frame','gamma_decision'] },
-  gamma_trial: { title:'做一次自主对照', ask:'选择暗部文字或整体明暗，记录画面变化与代价。一次探索看不出改善时，可以保留原值并记录理由。', fields:['trial_decision'] },
+  gamma_demo: { title:'跟做一次有界 Gamma 调整', ask:'在 Gamma 面板选一个观察目标，保持机位和光照固定。', actions:['先保存原始 ISP。','让模型给出一个候选。工位校验当前生效的 Gamma 曲线后才写入。','核对候选独立回读和前后新图，记录保留或恢复的理由。'], tool:'vision_course_isp → vision_course_isp_status', fields:['gamma_readback','gamma_fresh_frame','gamma_decision'] },
+  gamma_trial: { title:'第 2 轮自主 Gamma 对照', ask:'写自己的观察目标，保持机位和光照。核对两张新实拍与独立回读，再保存取舍。', actions:['先独立确认已恢复期初 ISP。','写本轮的观察目标，应用一次合格候选。','核对本轮前后实拍及回读，再写下保留或恢复的理由。'], tool:'vision_course_isp → vision_course_isp_status', fields:['trial_readback','trial_fresh_frame','trial_decision'] },
   break: { title:'助教核对各组训练进度', ask:'茶歇期间，助教只查看原 Run，更新状态并给预计超时的工位准备预置产物。11:20 开始个人盲选。', fields:[] },
   blind: { title:'隐藏标签，先看图再选', ask:'对着同一观察区域比较两张图，选一张或记录差异不明显，先写理由再揭晓。', fields:['blind_review'] },
-  reproduce: { title:'重载自己的 tuning', ask:'导出选定版本，先恢复原值，再按个人手册重载。核对独立回读、加载后新图和原始恢复步骤。', tool:'vision_isp_tuning_load → vision_isp_tuning_get → vision_camera_capture_frame', fields:['selected_tuning','independent_readback','tuning_reload_frame'] },
+  reproduce: { title:'重载自己的 tuning', ask:'先恢复原值保持采流，再重载这次选定的 Gamma 候选。核对独立回读、加载后新图和原始恢复步骤。其他效果库走相机插件的已验证版本。', tool:'vision_course_isp → vision_course_isp_status', fields:['selected_tuning','independent_readback','tuning_reload_frame'] },
   check_run: { title:'查询原 RoboGO Run', ask:'只读查询现有 Run。保留状态、验证结果和权重来源；后台训练期间可以继续下一项 ISP 操作。', fields:[] },
   quantize: { title:'取回自己的 X5 INT8 产物', ask:'查询原任务权重。导出 opset 11 ONNX，并在兼容工具链用训练图校准生成 Bayes-e NV12 .bin。现场优先取云端预跑产物。', fields:['completed_checkpoint','validation_prediction','onnx_contract','checker_report','calibration_manifest','x5_model_hash'] },
   route: { title:'选择本工位完成路径', ask:'根据已核对的产物和设备状态选择 A、B 或 C。记录来源，再继续对应步骤。', fields:[] },
@@ -82,6 +104,6 @@ export const steps = {
   live: { title:'用本人相机运行实时检测', ask:'用本组实际加载的模型和选定 ISP 跑实时检测。', actions:['确认用的是本工位相机，独立读回检测流实际生效的 ISP。','检查本轮新帧和带框画面，分别记推理是否运行、目标是否检出。','保存模型来源、ISP 回读、SDK 帧时间戳和检测耗时。'], fields:['exclusive_camera_owner','tuning_in_detection_pipeline','fresh_frames','inference_result','target_result','live_detections'] },
   preset_deploy: { title:'用预置模型完成实机操作', ask:'记录预置模型来源和哈希，实际加载并保存板端推理回执。个人记录标为 B 路径。', fields:['preset_model','preset_board_model_hash','preset_bpu_inference','preset_stream_isp','preset_live_frame','preset_inference_result','preset_target_result','preset_live_detections'] },
   demo: { title:'观看演示并记下实际完成项', ask:'看讲师现场演示或已有录像，记录来源和观察。个人板端实操保持待完成。', fields:['demo_reference','demo_viewed'] },
-  restore: { title:'恢复原始 ISP 并释放设备', ask:'按本工位原始快照恢复，独立回读并停流。若本工位没有启动相机或写参数，记录该事实。', tool:'vision_isp_restore → vision_isp_tuning_get → vision_camera_preview_stop', fields:['restoration_and_release'] },
+  restore: { title:'恢复原始 ISP 并释放设备', ask:'按本工位原始快照恢复，独立回读并停流。若本工位没有启动相机或写参数，记录该事实。', tool:'vision_course_isp → vision_course_isp_status', fields:['restoration_and_release'] },
   deliver: { title:'下载并打开个人成果包', ask:'打包 tuning、过程手册、训练与模型来源、检测证据和恢复记录，下载后解压核对。', fields:['camera_and_model_manifest','remaining_work','package_opened'] },
 };

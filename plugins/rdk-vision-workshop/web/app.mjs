@@ -3,6 +3,9 @@ import { labels, steps } from '/steps.mjs';
 import { storedZip } from '/zip.mjs';
 import { createCameraPanel } from '/camera-panel.mjs';
 import { createCapturePanel } from '/capture-panel.mjs';
+import { createPreflightPanel } from '/preflight-panel.mjs';
+import { createIspPanel } from '/isp-panel.mjs';
+import { renderIspDemo } from '/isp-demo.mjs';
 import { createBoardPanel } from '/board-panel.mjs';
 
 const $=id=>document.getElementById(id);
@@ -63,6 +66,15 @@ let trainingEvidence, boardProof;
 let comparisonReadback;
 let roboGoStatus={}, roboGoBusy=false, roboGoNote='', lastRoboGoCall=0;
 const attachedCameraEvidence=new Map();
+const ispPanel=createIspPanel({key,$,element,button,openDialog,field,notify,getBinding:()=>report?.resume.camera,
+  pick:(pair,readback)=>{
+    for(const photo of Object.values(photos)) URL.revokeObjectURL(photo.url);
+    photos=Object.fromEntries(pair.map((file,index)=>[index?'candidate':'original',{file,url:URL.createObjectURL(file)}]));
+    comparisonReadback={label:'候选独立 ISP 回读',hash:readback.hash};
+    resetBlindOrder();render();$('comparison').scrollIntoView({block:'nearest'});
+  },
+});
+const preflightPanel=createPreflightPanel({key,$,element,button,notify,getBinding:()=>report?.resume.camera});
 const capturePanel=createCapturePanel({key,$,element,button,field,openDialog,notify,
   getBinding:()=>report?.resume.camera,
   attach:entries=>{addCameraFiles(entries);render();notify('已附入相机原件与回执。');},
@@ -196,6 +208,7 @@ const roboGoErrors={
   robogo_profile_required:'本工位没有配置课程训练镜像和算力。可打开 RoboGO 的训练页提交，随后绑定原 Run。',
   robogo_profile_invalid:'课程训练配置格式不正确，请助教检查。',
   robogo_tool_rejected:'RoboGO 拒绝了本次请求，请核对任务 ID、镜像、算力和本组权限。',
+  robogo_run_name_required:'无法用原 Run ID 找到任务名称。请在「更新原任务状态」中保存 RoboGO 任务详情链接。',
   robogo_run_receipt_invalid:'RoboGO 没有返回可核对的原 Run 状态，保留了上一次记录。',
   robogo_submit_unconfirmed:'暂时无法确认提交结果，请先到 RoboGO 任务列表核对，避免重复提交。',
   robogo_submit_window:'本组提交窗口是 10:15–10:20。请核对课堂进度。',
@@ -228,7 +241,7 @@ async function pollRoboGo(force=false) {
     const prior=roboGoStatus;
     roboGoStatus=await roboGo('state','GET');
     if(prior.connected!==roboGoStatus.connected||prior.profileConfigured!==roboGoStatus.profileConfigured||
-      prior.uncertainTraining!==roboGoStatus.uncertainTraining) renderRoboGo();
+      prior.uncertainTraining!==roboGoStatus.uncertainTraining||prior.profileIssue!==roboGoStatus.profileIssue) renderRoboGo();
     const run=report?.resume.run;
     const shouldCheck=run?.source==='robogo'&&(force||run.state!=='failed'&&!run.modelSha256);
     if(!roboGoStatus.connected||!shouldCheck||!force&&Date.now()-lastRoboGoCall<20000) return;
@@ -262,12 +275,32 @@ function renderRoboGo() {
   const actions=$('robogo-actions');
   actions.replaceChildren();
   const note=$('robogo-note');
+  const checks=$('training-readiness');
   note.textContent=ownExternal?'当前工位已使用外部训练回执。':roboGoNote||
     (roboGoStatus.connected?'RoboGO 已授权。登记原 Run 后自动查询状态。':'授权后可在工作台查询原 Run。');
+  checks.replaceChildren();
   if(ownExternal) return;
+  const datasetReady=steps.data.fields.every(field=>report?.resume.evidence[field]);
+  for(const [label,value,ready] of [
+    ['课堂数据',datasetReady?'类别、划分与版本已记录':'核对类别顺序、训练与验证划分',datasetReady],
+    ['RoboGO',roboGoStatus.connected?'账号已授权':'等待本组授权',roboGoStatus.connected],
+    ['训练模板',roboGoStatus.profileConfigured?'已读到本机模板，提交前再核对实际镜像和算力':
+      roboGoStatus.profileIssue==='robogo_profile_invalid'?'格式无效，请助教核对模板':'待助教提供训练镜像与本组配置',roboGoStatus.profileConfigured],
+  ]) {
+    const item=element('div','','preflight-check');
+    item.append(element('h3',label),element('span',ready?'已记录':'待核对','status-tag'+(ready?' ok':'')),element('p',value));
+    checks.append(item);
+  }
   if(!roboGoStatus.connected) actions.append(button('连接 RoboGO',connectRoboGo));
-  if(roboGoStatus.connected&&run?.source==='robogo') actions.append(button('刷新原 Run',()=>pollRoboGo(true)));
-  if(report?.nextStep?.stageId==='train'&&!roboGoStatus.uncertainTraining) {
+  if(run?.source==='robogo') {
+    if(roboGoStatus.connected) actions.append(button('刷新原 Run',()=>pollRoboGo(true)));
+    actions.append(roboGoLink(run.name?'https://robogo.d-robotics.cc/train-job/detail/'+run.name:run.receipt));
+  }
+  const elapsed=report?.resume.elapsedMinutes;
+  const insideWindow=elapsed>=plan.deadlines.submitStart&&elapsed<plan.deadlines.submitBy;
+  const canCheckSharedImage=insideWindow&&datasetReady&&roboGoStatus.profileConfigured&&
+    Boolean(report?.resume.blockers.training_image_unavailable)&&!report?.training.id;
+  if((report?.nextStep?.stageId==='train'||canCheckSharedImage)&&!roboGoStatus.uncertainTraining) {
     if(roboGoStatus.connected&&roboGoStatus.profileConfigured) actions.append(button('核对并提交课程训练',prepareRoboGo,'primary'));
     else {
       actions.append(roboGoLink(undefined));
@@ -341,10 +374,6 @@ function renderComparison() {
     revealed=true;
     save({evidence:{...report.resume.evidence,blind_review:preference+' · '+data.reason.trim()}},'已记录盲选。两张图的身份已揭晓。');
   },'保存并揭晓'),'primary'));
-  if(!blind&&ready) actions.append(button('记录 Gamma 取舍',()=>openDialog('记录这次 Gamma 的取舍',[
-    field('choice','选择',{options:[['','选择实际决定'],['keep','保留调整'],['restore','恢复原值']]}),
-    field('reason','观察区域与理由',{placeholder:'写下你看到的变化和保留或恢复的理由',max:220}),
-  ],data=>save({evidence:{...report.resume.evidence,gamma_decision:(data.choice==='keep'?'保留调整':'恢复原值')+' · '+data.reason.trim()}},'已记录你的判断。')),'plain'));
 }
 function resetBlindOrder() {
   blindOrder=crypto.getRandomValues(new Uint8Array(1))[0]%2?['candidate','original']:['original','candidate'];
@@ -439,9 +468,16 @@ function renderStep() {
     const ul=element('ul','','review-list');
     for(const row of next.requiredEvidence) ul.append(element('li',row.label));
     slot.append(element('div','完成后留下','route-heading'),ul);
-    if(next.stageId==='baseline') footer.append(button('打开三图采集',()=>$(report.resume.camera?'camera-capture':'camera').scrollIntoView({behavior:'smooth'}),'primary'));
-    footer.append(button('记录本步回执',()=>editEvidence(next.title,next.requiredEvidence.map(x=>x.key)),next.stageId==='baseline'?'ghost':'primary'));
+    if(!['gamma_demo','gamma_trial'].includes(next.stageId)) {
+      footer.append(button('记录本步回执',()=>editEvidence(next.title,next.requiredEvidence.map(x=>x.key)),next.entry?'ghost':'primary'));
+    }
   }
+  if(next?.entry) footer.prepend(button(next.entry.label,()=>{
+    const section=$(next.entry.section);
+    if(section.hidden) {notify('此操作还缺本步所需的产物或回执。');return;}
+    section.scrollIntoView({behavior:'smooth'});
+  },'primary'));
+  if(next?.stageId==='connect'&&report.resume.camera) footer.append(button('保存原始 ISP',()=>$('camera-isp').scrollIntoView({behavior:'smooth'}),'ghost'));
   if(next?.stageId==='baseline'&&next.requiredEvidence.some(x=>x.key==='baseline_raw')) {
     footer.append(button('登记 RAW 实采受阻',()=>editEvidence('记录 RAW 样例和实采缺口',['baseline_raw_sample']),'plain'));
   }
@@ -472,6 +508,8 @@ function render() {
   }
   renderStep();
   cameraPanel.render();
+  preflightPanel.syncBinding();
+  ispPanel.syncBinding();
   capturePanel.syncBinding();
   renderComparison();
   renderDetection();
@@ -568,9 +606,10 @@ $('export').onclick=async()=>{
   const pending=$('export');pending.disabled=true;
   const snapshot=report;
   const comparison=photos.original&&photos.candidate?{...photos,readback:comparisonReadback}:undefined;
-  const capturedFiles=[...files];
   const encode=s=>new TextEncoder().encode(s);
   try {
+    const ispEvidence=await ispPanel.evidence();
+    const capturedFiles=[...files,...(ispEvidence?.files??[])];
     const artifacts=[],entries=[];
     for(const [i,file] of capturedFiles.entries()) {
       const bytes=new Uint8Array(await file.arrayBuffer());
@@ -584,6 +623,9 @@ $('export').onclick=async()=>{
       ...(entry.readback?{readback:entry.readback}:{})}));
     const meta={schema:'rdk.vision-workshop-delivery.v1',exportedAt:new Date().toISOString(),generatedFrom:'learner_record',clockMode:state.manual?'rehearsal':'observed_or_unstarted',
       path:snapshot.routing.selected,completion:snapshot.completion,artifacts,resume:snapshot.resume};
+    const cameraPreflight=preflightPanel.receipt();
+    if(cameraPreflight) meta.cameraPreflight=cameraPreflight;
+    if(ispEvidence) meta.ispSession=ispEvidence.receipt;
     if(cameraEvidence.length) meta.cameraEvidence=cameraEvidence;
     if(trainingEvidence?.modelSha256&&snapshot.resume.evidence.x5_model_hash==='sha256:'+trainingEvidence.modelSha256) meta.trainingEvidence=trainingEvidence;
     if(boardProof) meta.boardEvidence=boardProof.receipt;
@@ -595,7 +637,10 @@ $('export').onclick=async()=>{
     }
     const notes=['# 视觉 Pipeline 个人手册','','完成路径 · '+(meta.path??'待选择'),
       '课程记录 · '+(snapshot.completion.lessonEvidenceComplete?'本工位出具了所需回执':'还有待完成项'),
-      '实际附件 · '+artifacts.length,'','## 已有回执','',
+      '实际附件 · '+artifacts.length,'','## Gamma 两轮记录','',
+      ...(meta.ispSession?.rounds??[]).map(round=>'- 第 '+round.number+' 轮 · '+(round.goal??'旧版记录')+' · '+
+        (round.decision?(round.decision.choice==='keep'?'保留调整':'恢复原值')+' · '+round.decision.reason:'待记录取舍')),
+      '','## 已有回执','',
       ...Object.entries(snapshot.resume.evidence).map(([k,v])=>'- '+labels[k]+'：'+v),
       '','## 待完成与阻塞','',...snapshot.completion.unfinished.map(v=>'- '+v),
       ...Object.values(snapshot.resume.blockers).map(v=>'- '+v),
@@ -608,6 +653,7 @@ $('export').onclick=async()=>{
   finally {pending.disabled=false;}
 };
 render();
+void renderIspDemo({$,element,button});
 cameraPanel.syncBinding();
 void pollRoboGo();
 setInterval(()=>void pollRoboGo(),4000);
@@ -628,5 +674,8 @@ if(resume) setInterval(async()=>{
 },2000);
 setInterval(cameraPanel.poll,3500);
 setInterval(capturePanel.poll,1800);
-if(new URLSearchParams(location.search).get('panel')==='capture') $('camera-capture').scrollIntoView();
+setInterval(preflightPanel.poll,1800);
+setInterval(ispPanel.poll,1800);
+const initialPanel=new URLSearchParams(location.search).get('panel');
+if(['capture','preflight','isp'].includes(initialPanel)) $('camera-'+initialPanel).scrollIntoView();
 setInterval(boardPanel.poll,1800);

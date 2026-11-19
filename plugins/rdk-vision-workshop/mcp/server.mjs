@@ -4,7 +4,7 @@ import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { plan, guideMarkdown, tuningHandoffMarkdown } from './course.mjs';
 import { guideCourse, guideSchema } from './guide.mjs';
-import { labels, steps } from './steps.mjs';
+import { labels, steps, stepEntries } from './steps.mjs';
 import { workbenchSession } from './workbench-session.mjs';
 
 const plugin=JSON.parse(readFileSync(new URL('../plugin.json',import.meta.url),'utf8'));
@@ -19,6 +19,9 @@ const tools=[
   { name:'vision_course_sync',description:'同步当前 Studio 工作台。空参数读取最新进度；有 patch 时把本轮真实工具回执转交给学员界面。本工具只更新工位记录。',inputSchema:{type:'object',properties:{patch:guideSchema,clearBlockers:{type:'array',items:{type:'string'}}},additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false} },
   { name:'vision_course_camera',description:'在当前已关联的相机实验里拍照、采集 RAW/ISP/渲染三图或重试渲染。用于「帮我拍张照」「采集基线图」。拍摄异步执行，调用回执仅表示开始。照片、三图和原件下载在返回的工作台，可通过只读 vision_course_camera_status 查询验收状态。',inputSchema:{type:'object',properties:{action:{type:'string',enum:['photo','baseline','retake','render']},scene:{type:'string',minLength:1,maxLength:100}},required:['action'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false} },
   { name:'vision_course_camera_status',description:'查看刚才在课堂工位采集的照片或 RAW、ISP、重渲染三张基线。返回逐项进度、产物回执及并排展示的本机工作台地址，无需板端命令。',inputSchema:emptySchema,annotations:readOnly },
+  { name:'vision_course_preflight',description:'检查工位相机服务、X5 板端连接、已开启相机流的实时帧。run:true 发起检查，空参数读取本轮状态。仅查询相机，不调参、不启动采流、不重启或烧录。',inputSchema:{type:'object',properties:{run:{type:'boolean'}},additionalProperties:false},annotations:readOnly },
+  { name:'vision_course_isp',description:'两轮课堂 Gamma。save 保存期初配置；gamma 用 round（1 跟做，2 自主）和 goal 获取前后实拍及回读；decision 用 round、choice（keep 或 restore）和 reason 保存取舍；revert 恢复期初配置以继续第二轮；reload 重载候选并采新帧；restore 恢复并停流。异步受理后查询 vision_course_isp_status，写入和停流按用户授权执行。',inputSchema:{type:'object',properties:{action:{type:'string',enum:['save','gamma','decision','reload','revert','restore']},goal:{type:'string',minLength:1,maxLength:180},round:{type:'integer',enum:[1,2]},choice:{type:'string',enum:['keep','restore']},reason:{type:'string',minLength:1,maxLength:180}},required:['action'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false} },
+  { name:'vision_course_isp_status',description:'查询工位原始快照、恢复、独立回读与停流进度，返回回执 ID、哈希和工位页面链接。',inputSchema:emptySchema,annotations:readOnly },
 ];
 
 const content=data=>({content:[{type:'text',text:JSON.stringify(data)}],isError:false});
@@ -49,7 +52,7 @@ export async function dispatch(req) {
       const scheduled=[...plan.schedule,...plan.parallel].find(s=>s.id===args.stageId);
       const action=steps[args.stageId];
       return respond(content({schema:plan.schema,executionStatus:'planning_only',
-        stage:{id:args.stageId,...scheduled,...action,
+        stage:{id:args.stageId,...scheduled,...action,...(stepEntries[args.stageId]?{entry:stepEntries[args.stageId]}:{}),
           requiredEvidence:(action?.fields??[]).map(key=>({key,label:labels[key]}))}}));
     }
     if (name==='vision_course_next') return respond(content(guideCourse(plan,args)));
@@ -73,6 +76,18 @@ export async function dispatch(req) {
     if (name==='vision_course_camera_status') {
       if (Object.keys(args).length) throw new Error('invalid_arguments');
       return respond(content(await session.camera()));
+    }
+    if (name==='vision_course_preflight') {
+      if(Object.keys(args).some(k=>k!=='run')||args.run!==undefined&&typeof args.run!=='boolean') throw new Error('invalid_arguments');
+      return respond(content(await session.preflight(args.run)));
+    }
+    if(name==='vision_course_isp') {
+      if(!Object.hasOwn(args,'action')||Object.keys(args).some(k=>!['action','goal'].includes(k))) throw new Error('invalid_arguments');
+      return respond(content(await session.isp(args)));
+    }
+    if(name==='vision_course_isp_status') {
+      if(Object.keys(args).length) throw new Error('invalid_arguments');
+      return respond(content(await session.isp()));
     }
     throw new Error('unknown_tool');
   } catch(error) {

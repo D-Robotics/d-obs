@@ -76,7 +76,13 @@ a.button{text-decoration:none}
 .capture-card .capture-description{min-height:2.7em}
 .capture-card p.capture-error{color:#972e26}
 .capture-card img{display:block;width:100%;max-height:250px;object-fit:contain;background:#14243f;border-radius:6px;margin-block:8px}
+.preflight-checks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0}
+.preflight-check{min-width:0;border:1px solid var(--line);border-radius:9px;padding:12px}
+.preflight-check h3{margin:0 0 8px;font-size:14px}
+.preflight-check p{margin:8px 0 0;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.preflight-check .preflight-error{color:#972e26}
 @media(max-width:720px){.capture-cards{grid-template-columns:1fr}}
+@media(max-width:720px){.preflight-checks{grid-template-columns:1fr}}
 .action-checklist{margin:12px 0 16px;padding-left:24px;color:var(--text);font-size:14px;line-height:1.65}
 .action-checklist li+li{margin-top:5px}
 .fields{margin:13px 0 5px;display:grid;gap:10px;font-size:12px}
@@ -102,3 +108,17 @@ dialog::backdrop{background:#11264888}
 @media(max-width:580px){.shell{padding-block:24px}.grid{display:flex;flex-direction:column-reverse}.grid>*{width:100%}.brand span:not(.brand-mark){display:none}.top-inner{height:55px}.top-actions{gap:5px}.top .button{font-size:12px;padding:7px 8px}.routes{grid-template-columns:1fr}.clock{width:100%;justify-content:space-between}.timeline ol{grid-template-columns:1fr 1fr}}
 
 .robogo-parameters{max-height:46vh;overflow:auto;margin:0;padding:12px;border:1px solid var(--line);border-radius:8px;background:#f3f6fb;font-size:12px;line-height:1.5;overflow-wrap:anywhere;white-space:pre-wrap}
+
+.isp-rounds{display:grid;gap:12px;margin:14px 0}
+.isp-round{padding:14px;border:1px solid var(--line,#d9e3ef);border-radius:12px;background:#f9fbff}
+.isp-round h3{font-size:16px;margin:0}
+.isp-round .action-copy{margin:8px 0}
+.isp-pair{grid-template-columns:repeat(2,minmax(0,1fr))}
+.isp-receipt small,.isp-demo-receipt{display:block;color:var(--muted);font-size:11px;overflow-wrap:anywhere}
+.isp-decision,.isp-demo-observation{margin:12px 0;color:#2f4e6f;font-size:13px}
+.isp-demo summary{cursor:pointer;font-size:17px;font-weight:700}
+.isp-demo-pair{margin-top:12px}
+.isp-demo-pair figure img{width:100%;aspect-ratio:16/9;object-fit:contain;background:#192335}
+.isp-demo-pair figcaption{display:block;padding:9px 12px}
+.isp-demo-source{font-size:12px;color:var(--muted);margin-bottom:8px}
+@media(max-width:540px){.isp-round{padding:10px}.isp-demo-pair figcaption{padding:6px}.isp-pair figcaption{padding:6px}}
