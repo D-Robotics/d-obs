@@ -640,6 +640,10 @@ $('export').onclick=async()=>{
       '实际附件 · '+artifacts.length,'','## Gamma 两轮记录','',
       ...(meta.ispSession?.rounds??[]).map(round=>'- 第 '+round.number+' 轮 · '+(round.goal??'旧版记录')+' · '+
         (round.decision?(round.decision.choice==='keep'?'保留调整':'恢复原值')+' · '+round.decision.reason:'待记录取舍')),
+      ...(meta.ispSession?.exposure?.after?['','## 讲师现场曝光对照','',
+        '- 曝光时间 · '+(meta.ispSession.exposure.beforeUs/1000).toFixed(3)+' ms → '+(meta.ispSession.exposure.afterUs/1000).toFixed(3)+' ms',
+        '- 模拟增益 · '+meta.ispSession.exposure.gain.toFixed(3)+'×',
+        '- 期初 ISP · '+(meta.ispSession.exposure.restorationReadback?'回读已核对':'待恢复核对')]:[]),
       '','## 已有回执','',
       ...Object.entries(snapshot.resume.evidence).map(([k,v])=>'- '+labels[k]+'：'+v),
       '','## 待完成与阻塞','',...snapshot.completion.unfinished.map(v=>'- '+v),

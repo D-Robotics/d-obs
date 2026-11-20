@@ -24,6 +24,9 @@ test('Gamma preserves both rounds, gates the next round on decisions and verifie
   let current=copy(original),streaming=true,unconfirmed=false,stale=false,rejectOtherModule=true,externalDrift=false,sequence=100,view;
   let latestBaseline;
   let ordinaryCapacity=new Set(),corruptRecovery=false;
+  let exposureQualified=true,failExposureWrite=false,failExposureRestore=false;
+  const seconds=lines=>Math.fround(lines*0.00001);
+  const manual={mode:1,'manual_attr.exp_time':seconds(2000),'manual_attr.again':1.25};
   const upstream=createServer(async(req,res)=>{
     const route=req.url.slice(root.length);
     const reply=(body,status=200)=>res.writeHead(status,{'Content-Type':'application/json'}).end(JSON.stringify({ok:status<400,...body}));
@@ -61,6 +64,28 @@ test('Gamma preserves both rounds, gates the next round on decisions and verifie
       return complete({baseline:{config:current},readbackHash});
     }
     if(operation==='tuning_export') return complete({config:current,readbackHash:fingerprint(current)});
+    if(operation==='controls_get') {
+      const exposure=current.modules.exposure;
+      const active=exposure.mode===1;
+      return reply({operation,result:{controls:{autoExposure:{value:!active,writable:true},
+        exposureUs:{value:(active?exposure:manual)['manual_attr.exp_time']*1e6,min:seconds(8)*1e6,max:seconds(3000)*1e6,
+          nativePrecision:'seconds-float32-us',...(exposureQualified?{nativeLinePeriodUs:10}:{}),active,writable:active},
+        gain:{value:1.25}},evidence:{writeOutcome:unconfirmed?'unconfirmed':'idle'}}});
+    }
+    if(operation==='controls_set') {
+      if(body.values.autoExposure===false) {
+        assert.deepEqual(body.values,{autoExposure:false});
+        current.modules.exposure=copy(manual);
+      } else {
+        assert.deepEqual(body.values,{exposureUs:seconds(1000)*1e6});
+        current.modules.exposure['manual_attr.exp_time']=body.values.exposureUs/1e6;
+        if(failExposureWrite) {
+          unconfirmed=true;
+          return reply({error:'vision_device_execution_failed'},502);
+        }
+      }
+      return complete({});
+    }
     if(operation==='capture_frame') {
       const id=randomUUID(),bytes=Buffer.from(id),sha256=hash(bytes);
       frames.set(id,bytes);
@@ -73,6 +98,7 @@ test('Gamma preserves both rounds, gates the next round on decisions and verifie
       return complete({appliedHash:fingerprint(current),readbackHash:fingerprint(current)});
     }
     if(operation==='restore_tuning') {
+      if(failExposureRestore) return reply({error:'vision_device_execution_failed'},502);
       current=copy(baselines.get(originalHash).tuning);
       streaming=true;unconfirmed=false;
       assert.equal(body.baselineId,baselines.get(originalHash).id);
@@ -110,6 +136,48 @@ test('Gamma preserves both rounds, gates the next round on decisions and verifie
     const saved=await perform('save');
     assert.equal(saved.original.hash,originalHash);
     assert.equal(saved.original.config,undefined);
+    await t.test('instructor exposure verifies fresh frames at fixed gain and preserves Gamma recovery',async()=>{
+      const writes=()=>ops.filter(entry=>entry.operation==='controls_set').length;
+      exposureQualified=false;
+      assert.equal((await perform('exposure')).exposure.error,'camera_exposure_unavailable');
+      assert.equal(writes(),0);
+      exposureQualified=true;
+      streaming=false;
+      assert.equal((await perform('exposure')).exposure.error,'camera_isp_stream_required');
+      assert.equal(writes(),0);
+      streaming=true;
+      failExposureWrite=true;
+      failExposureRestore=true;
+      const interrupted=await perform('exposure');
+      assert.equal(interrupted.recoveryPending,true);
+      assert.equal(interrupted.exposure.recoveryPending,true);
+      assert.ok(interrupted.exposure.before);
+      assert.equal(interrupted.exposure.after,undefined);
+      assert.equal((await request('',{action:'gamma',goal:'先恢复'})).status,422);
+      assert.throws(()=>view.update({camera:null}),/camera_capture_busy/);
+      failExposureRestore=false;
+      const recovered=await perform('revert');
+      assert.equal(recovered.exposure.restorationReadback.hash,originalHash);
+      assert.equal(recovered.exposure.recoveryPending,false);
+      assert.equal(recovered.restored,undefined);
+      assert.equal(view.read().resume.blockers.recovery_unconfirmed,undefined);
+      failExposureWrite=false;
+      const trial=await perform('exposure');
+      assert.equal(trial.stage,'exposure_restored');
+      assert.equal(trial.exposure.gain,1.25);
+      assert.equal(trial.exposure.beforeUs,seconds(2000)*1e6);
+      assert.equal(trial.exposure.afterUs,seconds(1000)*1e6);
+      assert.equal(trial.exposure.after.tuningHash,trial.exposure.afterReadback.hash);
+      assert.equal(trial.exposure.afterReadback.config,undefined);
+      assert.equal(trial.exposure.restorationReadback.hash,originalHash);
+      assert.deepEqual(trial.rounds,[]);
+      const after=trial.exposure.after;
+      const bytes=await request('?scope=exposure&file=after&sha256='+after.sha256);
+      assert.equal(hash(Buffer.from(await bytes.arrayBuffer())),after.sha256);
+      assert.equal((await request('?file=after&sha256='+after.sha256)).status,404);
+      const readback=await request('?scope=exposure&file=afterReadback&sha256='+after.tuningHash);
+      assert.equal((await readback.json()).config.modules.exposure['manual_attr.exp_time'],seconds(1000));
+    });
     assert.equal((await request('',{action:'gamma',goal:'未完成跟做',round:2})).status,422);
     assert.deepEqual((await(await request('?file=original&sha256='+originalHash)).json()).config,original);
     assert.equal((await perform('gamma','看清暗部文字')).error,'camera_gamma_candidate_rejected');

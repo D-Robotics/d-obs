@@ -117,6 +117,8 @@ dialog::backdrop{background:#11264888}
 .isp-receipt small,.isp-demo-receipt{display:block;color:var(--muted);font-size:11px;overflow-wrap:anywhere}
 .isp-decision,.isp-demo-observation{margin:12px 0;color:#2f4e6f;font-size:13px}
 .isp-demo summary{cursor:pointer;font-size:17px;font-weight:700}
+.isp-live{margin:14px 0}
+.isp-demo-archive{font-size:15px;margin:16px 0 8px}
 .isp-demo-pair{margin-top:12px}
 .isp-demo-pair figure img{width:100%;aspect-ratio:16/9;object-fit:contain;background:#192335}
 .isp-demo-pair figcaption{display:block;padding:9px 12px}

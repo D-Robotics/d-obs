@@ -1,6 +1,8 @@
 const stageText={snapshot:'读取原始 ISP',saved:'原始 ISP 已保存',checking:'核对设备和当前配置',
   gamma_before:'采集调整前实拍',gamma_plan:'等待 AI 生成候选',gamma_apply:'应用有界 Gamma',
   gamma_verify:'独立回读并采集新图',gamma_saved:'实拍与回读齐备',gamma_reloaded:'已重载并采得新帧',
+  exposure_manual:'切换到手动曝光',exposure_before:'读取手动曝光并拍摄调前图',exposure_apply:'缩短曝光时间',
+  exposure_verify:'独立回读曝光并拍摄调后图',
   restore:'恢复期初 ISP',readback:'独立读取当前 ISP',stop:'停止采流',stopped:'原值已恢复，采流已停止',reverted:'已恢复期初 ISP'};
 const errors={
   camera_gamma_round_locked:'请先完成上一轮取舍，并核对原值恢复。每个工位最多两轮。',
@@ -17,23 +19,31 @@ const errors={
   vision_model_no_adjustment:'AI 本次未给出合格候选。可以修改观察目标重试，当前未增加已完成轮数。',
   camera_gamma_freshness_failed:'候选应用后未取得匹配的新帧。请先核对恢复。',
   camera_gamma_reload_required:'先取得已验证候选和恢复后实拍，再重载。',
+  camera_exposure_unavailable:'本工位缺少可验证的手动曝光、增益或传感器行周期。请核对相机适配器。',
+  camera_exposure_no_room:'手动曝光已接近该模式的最短曝光时间。增加固定光照后重新布置演示场景。',
+  camera_exposure_freshness_failed:'未取到与曝光回读匹配的新实拍，本次对照未验收。',
+  camera_exposure_readback_mismatch:'曝光或其他 ISP 读值与计划不符，本次对照未验收。',
   camera_isp_evidence_unavailable:'暂时读不到归档图。请核对工位相机服务。',
 };
 const explain=code=>errors[code]??'本工位操作未完成 · '+(code??'请刷新后重试');
 const names={original:'原始ISP',beforeReadback:'调前ISP回读',gammaReadback:'Gamma参数回读',decisionReadback:'取舍确认回读',
   resetReadback:'下一轮前恢复回读',readback:'工位恢复回读',reloadReadback:'重载回读',
-  before:'调前实拍',after:'调后实拍',restored:'恢复后实拍',reloaded:'重载实拍'};
+  before:'调前实拍',after:'调后实拍',restored:'恢复后实拍',reloaded:'重载实拍',
+  afterReadback:'调后ISP回读',restorationReadback:'恢复期初ISP回读'};
 const images=new Set(['before','after','restored','reloaded']);
 const previewRetryDelays=[300,900];
 const evidenceChanged='ISP 工位记录已更新，请重新下载成果包。';
 const transportError=()=>Object.assign(new Error('暂时无法读取工位数据，请重试。'),{retryable:true});
 const receiptFields=['beforeReadback','gammaReadback','decisionReadback','resetReadback'];
 const roundFields=['before','after','restored',...receiptFields];
+const exposureReceipts=['beforeReadback','afterReadback','restorationReadback'];
+const exposureEntries=(exposure,fields)=>fields.filter(name=>exposure?.[name]).map(name=>({name,scope:'exposure',asset:exposure[name]}));
 const roundEntries=(round,fields)=>fields.filter(name=>round[name]).map(name=>({name,round:round.number,asset:round[name]}));
 const sessionEntries=(status,fields)=>fields.filter(name=>status?.[name]).map(name=>({name,asset:status[name]}));
-const entryKey=({name,round})=>`${round??0}:${name}`;
+const entryKey=({name,round,scope})=>`${scope??round??0}:${name}`;
 const artifacts=status=>[...sessionEntries(status,['original','readback','reloadReadback','reloaded']),
-  ...(status?.rounds??[]).flatMap(round=>roundEntries(round,roundFields))];
+  ...(status?.rounds??[]).flatMap(round=>roundEntries(round,roundFields)),
+  ...exposureEntries(status?.exposure,['before','after',...exposureReceipts])];
 
 export function createIspPanel({key,$,element,button,openDialog,field,notify,getBinding,pick}) {
   let binding, status, posting=false, polling=false, bindingRevision=0;
@@ -51,15 +61,17 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
     }
     return response;
   }
-  async function readFile({name,round,asset}) {
+  async function readFile({name,round,scope,asset}) {
     const params=new URLSearchParams({file:name,sha256:asset.hash??asset.sha256});
     if(round) params.set('round',round);
+    if(scope) params.set('scope',scope);
     const response=await request('/camera/isp?'+params);
     let blob;
     try { blob=await response.blob(); }
     catch { throw transportError(); }
     const ext=images.has(name)?(blob.type==='image/png'?'.png':'.jpg'):'.json';
-    return new File([blob],(round?'Gamma-第'+round+'轮-':'工位-')+names[name]+ext,{type:blob.type});
+    const prefix=scope==='exposure'?'讲师-曝光-':round?'Gamma-第'+round+'轮-':'工位-';
+    return new File([blob],prefix+names[name]+ext,{type:blob.type});
   }
   function readImage(entry,isCurrent) {
     // A full-resolution archive frame can be several megabytes. Share one queue with export.
@@ -148,8 +160,11 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
   }
   function confirm(action) {
     const final=action==='restore';
+    const exposure=status?.exposure?.recoveryPending;
     openDialog(final?'恢复期初 ISP 并停流':'恢复期初 ISP，继续采流',[
-      element('p',final?'恢复原始配置，独立回读一致后停止采流。':'独立确认恢复原值，并采一张恢复后实拍。已记录的取舍会保留。'),
+      element('p',final?'恢复原始配置，独立回读一致后停止采流。':exposure?
+        '恢复期初 ISP 并独立回读。已采集的曝光证据会留在工位。':
+        '独立确认恢复原值，并采一张恢复后实拍。已记录的取舍会保留。'),
     ],()=>start({action}),final?'恢复并停流':'恢复原值');
   }
   function openTrial(number) {
@@ -168,7 +183,7 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
       field('reason','写下理由',{max:180,placeholder:'例如阴影中文字更清楚，亮部仍有纹理'}),
     ],({choice,reason})=>start({action:'decision',round:round.number,choice,reason}),'保存取舍并核对回读');
   }
-  function imageCard(entry) {
+  function imageCard(entry,value) {
     const {name}=entry;
     const card=element('figure','','camera-archive-preview');
     const cached=previews.get(entryKey(entry));
@@ -182,7 +197,9 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
       const message=cached?.state==='retrying'?'正在重试读取相机原件':'正在读取相机原件';
       card.append(element('p',message,'action-copy'));
     }
-    card.append(element('figcaption',names[name]+' · SDK '+entry.asset.sdkTimestampNs));
+    const caption=element('figcaption',names[name]+(value?' · '+value:''));
+    caption.append(element('small','SDK '+entry.asset.sdkTimestampNs,'isp-demo-receipt'));
+    card.append(caption);
     return card;
   }
   function receiptsList(entries) {
@@ -217,9 +234,53 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
     if(actions.childElementCount) card.append(actions);
     return card;
   }
+  function renderExposure(busy) {
+    const panel=$('isp-live-exposure');
+    const demo=status?.exposure;
+    const active=status?.running==='exposure';
+    const finished=Boolean(demo?.after&&demo?.restorationReadback&&!demo.error);
+    const locked=status?.changesActive||status?.rounds?.some(round=>!round.decision);
+    const head=element('div','','action-head');
+    head.append(element('h3','现场曝光对照'),element('span',
+      active?'进行中':demo?.recoveryPending?'待恢复':finished?'对照完成，原值已恢复':demo?.error?'未验收':'待开始',
+      'status-tag'+(finished?' ok':demo?.recoveryPending?' blocked':'')));
+    const hint=element('p',active?(stageText[status.stage]??'正在核对相机与期初配置'):
+      demo?.recoveryPending?explain(status.error??'camera_isp_restore_unconfirmed'):
+      demo?.error?explain(demo.error)+(demo.restorationReadback?' 已回读原值。':''):
+      !binding?'关联本工位相机实验并开启采流。':status?.stop?'本工位采流已停止。':
+      status?.recoveryPending?'先恢复期初 ISP。':locked?'先完成当前 Gamma 轮的取舍并恢复期初 ISP。':
+      !status?.original?'先保存期初 ISP，再固定机位和光照。':
+      finished?'对照同一目标的亮部细节和暗部可见度，核对两张图的增益与曝光回读。':
+      '固定机位和光照。工作台用相同增益拍两张图，将曝光时间缩短约一半，随后恢复期初 ISP。',
+      'action-copy');
+    hint.setAttribute('role','status');
+    panel.replaceChildren(head,hint);
+    const frames=exposureEntries(demo,['before','after']);
+    if(frames.length) {
+      const pair=element('div','','capture-cards isp-pair');
+      for(const entry of frames) {
+        const us=entry.name==='before'?demo.beforeUs:demo.afterUs;
+        pair.append(imageCard(entry,(us/1000).toFixed(3)+' ms · 模拟增益 '+demo.gain.toFixed(3)+'×'));
+      }
+      panel.append(pair,receiptsList(exposureEntries(demo,exposureReceipts)));
+    }
+    if(!binding||status?.stop) return;
+    const actions=element('div','','button-row');
+    const recover=demo?.recoveryPending&&!active;
+    if(recover) {
+      const restore=button('恢复期初 ISP 并回读',()=>confirm('revert'),'primary');restore.disabled=busy;actions.append(restore);
+    } else {
+      const save= !status?.original;
+      const launch=button(save?'保存期初 ISP':finished?'再做一次曝光对照':'拍摄曝光对照',
+        ()=>start({action:save?'save':'exposure'}),'primary');
+      launch.disabled=Boolean(busy||locked||status?.recoveryPending);actions.append(launch);
+    }
+    panel.append(actions);
+  }
   function render() {
     const badge=$('isp-status'),help=$('isp-help'),summary=$('isp-detail'),actions=$('isp-actions');
     const busy=posting||Boolean(status?.running);
+    renderExposure(busy);
     const rounds=status?.rounds??[];
     const done=rounds.filter(round=>round.decision).length;
     badge.textContent=busy?'进行中':status?.error?'需要处理':`${done} / 2 轮已验收`;

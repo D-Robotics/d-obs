@@ -202,7 +202,7 @@ export function createCameraSource(configFile=process.env.RDK_CAMERA_WORKSHOP_CO
     }
     return {...original,baselineId:version.id,adapterId:experiment.targetId};
   }
-  async function restoreOriginalIsp(binding,original,{previousReadback,onPhase,stopStream=true}) {
+  async function restoreOriginalIsp(binding,original,{previousReadback,onPhase,stopStream=true,captureRestored=true}) {
     const experiment=await experimentArchive(binding);
     const saved=[experiment.baseline,...(experiment.baselineHistory??[])].find(item=>item?.id===original.baselineId);
     if(experiment.targetId!==original.adapterId||!cameraId.test(original.baselineId)||
@@ -251,6 +251,7 @@ export function createCameraSource(configFile=process.env.RDK_CAMERA_WORKSHOP_CO
       if(readback.hash!==original.hash) throw new Error('camera_isp_restore_unconfirmed');
     }
     if(!stopStream) {
+      if(!captureRestored) return {readback};
       try {
         const restored=await capture(binding,'isp',{scene:'课堂 Gamma 对照 · 恢复后'});
         if(restored.tuningHash!==original.hash||!restored.sdkTimestampNs) throw new Error('camera_isp_readback_invalid');
@@ -263,6 +264,76 @@ export function createCameraSource(configFile=process.env.RDK_CAMERA_WORKSHOP_CO
     const stopped=await device(experiment,'preview_stop',{});
     if(stopped.result?.running!==false) throw new Error('camera_stop_unconfirmed');
     return {readback,stop:{receiptId:stopped.deviceRun.id}};
+  }
+  async function exposureTrial(binding,original,onPhase) {
+    const experiment=await experimentArchive(binding);
+    if(original.config.kind!=='x5-hbn-isp-v2'||experiment.targetId!==original.adapterId||
+        experiment.baseline?.id!==original.baselineId||experiment.baseline.hash!==original.hash) {
+      throw new Error('camera_isp_snapshot_changed');
+    }
+    const {result}=await device(experiment,'probe',{});
+    if(result.facts?.cleanupRequired===true||result.facts?.writeOutcome==='unconfirmed') throw new Error('camera_recovery_required');
+    if(result.facts?.streaming!==true) throw new Error('camera_isp_stream_required');
+    if((await ispReadback(experiment)).hash!==original.hash) throw new Error('camera_isp_snapshot_changed');
+    const readControls=async()=>{
+      // controls_get has no ledger entry. The full tuning_export below supplies independent receipts.
+      const {operation,result}=await json('/experiments/'+experiment.id+'/device/controls_get',{body:{}});
+      if(operation!=='controls_get'||!record(result?.controls)) throw new Error('camera_response_invalid');
+      if(result.evidence?.writeOutcome==='unconfirmed') throw new Error('camera_recovery_required');
+      return result.controls;
+    };
+    const controls=await readControls();
+    const initial=controls.exposureUs;
+    if(typeof controls.autoExposure?.value!=='boolean'||!Number.isFinite(controls.gain?.value)||
+        ![initial?.value,initial?.min,initial?.max,initial?.nativeLinePeriodUs].every(Number.isFinite)||
+        initial.nativeLinePeriodUs<=0||initial.nativePrecision!=='seconds-float32-us'||
+        controls.autoExposure.value&&!controls.autoExposure.writable) throw new Error('camera_exposure_unavailable');
+    let modeReceipt;
+    if(controls.autoExposure.value) {
+      onPhase('exposure_manual',undefined,true);
+      const {deviceRun}=await device(experiment,'controls_set',{values:{autoExposure:false}});
+      modeReceipt=deviceRun.id;
+    }
+    const manual=modeReceipt?await readControls():controls;
+    const time=manual.exposureUs;
+    const gain=manual.gain?.value;
+    if(manual.autoExposure?.value!==false||!time?.active||!time.writable||!Number.isFinite(gain)||
+        ![time.value,time.min,time.max,time.nativeLinePeriodUs].every(Number.isFinite)||
+        time.nativeLinePeriodUs!==initial.nativeLinePeriodUs||time.nativePrecision!==initial.nativePrecision) {
+      throw new Error('camera_exposure_unavailable');
+    }
+    const line=time.nativeLinePeriodUs;
+    const lines=Math.max(Math.ceil(time.min/line-1e-5),Math.round(time.value/line/2));
+    const targetUs=Math.fround(lines*line/1e6)*1e6;
+    if(targetUs<time.min||targetUs>time.max||targetUs>=time.value) throw new Error('camera_exposure_no_room');
+    const verifyExposure=(readback,expectedUs)=>{
+      const exposure=readback.config.modules?.exposure;
+      if(exposure?.mode!==1||exposure['manual_attr.exp_time']*1e6!==expectedUs||exposure['manual_attr.again']!==gain) {
+        throw new Error('camera_exposure_readback_mismatch');
+      }
+    };
+    onPhase('exposure_before');
+    const beforeReadback=await ispReadback(experiment);
+    verifyExposure(beforeReadback,time.value);
+    const before=await capture(binding,'isp',{scene:'讲师曝光对照 · 手动基线'});
+    if(before.tuningHash!==beforeReadback.hash||!before.sdkTimestampNs) throw new Error('camera_exposure_freshness_failed');
+    onPhase('exposure_apply',{before,beforeReadback,beforeUs:time.value,targetUs,gain,modeReceipt},true);
+    const {deviceRun}=await device(experiment,'controls_set',{values:{exposureUs:targetUs}});
+    onPhase('exposure_verify',{writeReceipt:deviceRun.id});
+    const afterReadback=await ispReadback(experiment);
+    verifyExposure(afterReadback,targetUs);
+    const withoutTime=config=>{
+      const {exposure,...otherModules}=config.modules;
+      const {'manual_attr.exp_time':_time,...otherExposure}=exposure;
+      return {...config,modules:{...otherModules,exposure:otherExposure}};
+    };
+    if(JSON.stringify(withoutTime(beforeReadback.config))!==JSON.stringify(withoutTime(afterReadback.config))) {
+      throw new Error('camera_exposure_readback_mismatch');
+    }
+    const after=await capture(binding,'isp',{scene:'讲师曝光对照 · 缩短曝光'});
+    if(after.tuningHash!==afterReadback.hash||!after.sdkTimestampNs||after.id===before.id||
+        BigInt(after.sdkTimestampNs)<=BigInt(before.sdkTimestampNs)) throw new Error('camera_exposure_freshness_failed');
+    onPhase('exposure_verify',{after,afterReadback,afterUs:targetUs});
   }
   async function gammaTrial(binding,original,goal,onPhase) {
     const experiment=await experimentArchive(binding);
@@ -411,5 +482,5 @@ export function createCameraSource(configFile=process.env.RDK_CAMERA_WORKSHOP_CO
       report(layer,{status:'blocked',code});
     }
   }
-  return {list,inspect,frame,capture,captureFile,preflight,saveOriginalIsp,restoreOriginalIsp,gammaTrial,reloadGamma,confirmIsp};
+  return {list,inspect,frame,capture,captureFile,preflight,saveOriginalIsp,restoreOriginalIsp,exposureTrial,gammaTrial,reloadGamma,confirmIsp};
 }

@@ -38,7 +38,7 @@ function station(experimentId,captureNames=['before','after']) {
 }
 
 function setup(t,onRead,onStatus=current=>Response.json({isp:current.isp})) {
-  const dom=new Map(['isp-status','isp-help','isp-detail','isp-actions'].map(id=>[id,new Element('div')]));
+  const dom=new Map(['isp-status','isp-help','isp-detail','isp-actions','isp-live-exposure'].map(id=>[id,new Element('div')]));
   const experiments=new Map(['first','second'].map(id=>[id,station(id)]));
   const requests=[];
   let binding='first';

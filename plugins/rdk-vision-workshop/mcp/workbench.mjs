@@ -179,7 +179,7 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
   function ispStatus() {
     const status=storedIsp();
     if(!status) return;
-    const {original,readback,gammaReadback,reloadReadback,rounds=[],...details}=status;
+    const {original,readback,gammaReadback,reloadReadback,exposure,rounds=[],...details}=status;
     const summary=({config,...metadata})=>{
       const gamma=config?.modules?.gamma;
       const curve=gamma?.mode===0?gamma['auto_attr.curve']:gamma?.mode===1?gamma['manual_attr.curve']:null;
@@ -187,7 +187,14 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
       return {...metadata,...(Array.isArray(curve)&&points.every(index=>Number.isFinite(curve[index]))?
         {curvePreview:{mode:gamma.mode,points:points.map(index=>curve[index])}}:{})};
     };
-    return {...details,...(original?{original:summary(original)}:{}),...(readback?{readback:summary(readback)}:{}),
+    const exposureSummary=()=>{
+      const {beforeReadback,afterReadback,restorationReadback,...demo}=exposure;
+      return {...demo,...(beforeReadback?{beforeReadback:summary(beforeReadback)}:{}),
+        ...(afterReadback?{afterReadback:summary(afterReadback)}:{}),
+        ...(restorationReadback?{restorationReadback:summary(restorationReadback)}:{})};
+    };
+    return {...details,...(exposure?{exposure:exposureSummary()}:{}),
+      ...(original?{original:summary(original)}:{}),...(readback?{readback:summary(readback)}:{}),
       ...(gammaReadback?{gammaReadback:summary(gammaReadback)}:{}),...(reloadReadback?{reloadReadback:summary(reloadReadback)}:{}),
       rounds:rounds.map(({beforeReadback,gammaReadback,decisionReadback,resetReadback,...round})=>({...round,
         ...(beforeReadback?{beforeReadback:summary(beforeReadback)}:{}),gammaReadback:summary(gammaReadback),
@@ -201,7 +208,7 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
   }
   function queueIsp(action,goal,{round,choice,reason}={}) {
     const validText=(value,max)=>typeof value==='string'&&value.trim().length>0&&value.trim().length<=max&&!/[\u0000-\u001f\u007f]/u.test(value);
-    if(!['save','gamma','decision','reload','revert','restore'].includes(action)||
+    if(!['save','gamma','decision','reload','revert','restore','exposure'].includes(action)||
       (action==='gamma'&&!validText(goal,180))||
       (action==='decision'&&(![1,2].includes(round)||!['keep','restore'].includes(choice)||!validText(reason,180)))) {
       throw new Error('camera_isp_action_invalid');
@@ -214,10 +221,11 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
     if(action==='save'&&current?.original) return ispStatus();
     if(action!=='save'&&!current?.original) throw new Error('camera_isp_snapshot_missing');
     if((action==='restore'||action==='revert')&&current.stop) return ispStatus();
-    if(['gamma','reload'].includes(action)&&(current.recoveryPending||current.changesActive||current.stop)) throw new Error('camera_recovery_required');
+    if(['gamma','reload','exposure'].includes(action)&&(current.recoveryPending||current.changesActive||current.stop)) throw new Error('camera_recovery_required');
     const rounds=current?.rounds??[];
     const nextRound=rounds.length+1;
     const selected=rounds.at(-1);
+    if(action==='exposure'&&selected&&!selected.decision) throw new Error('camera_gamma_round_locked');
     if(action==='gamma'&&(nextRound>2||selected&&!selected.decision||round!==undefined&&round!==nextRound)) {
       throw new Error('camera_gamma_round_locked');
     }
@@ -239,6 +247,37 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
           status.stage='saved';
           saveIsp({...status});
           update({evidence:{original_snapshot:status.original.baselineId+' · sha256:'+status.original.hash}});
+        } else if(action==='exposure') {
+          status.exposure={};
+          let writeStarted=false;
+          try {
+            await cameraSource.exposureTrial(binding,status.original,(stage,progress,writing)=>{
+              status.stage=stage;
+              if(progress) status.exposure={...status.exposure,...progress};
+              if(writing) {
+                status.recoveryPending=true;
+                status.exposure.recoveryPending=true;
+              }
+              saveIsp({...status});
+              if(writing) writeStarted=true;
+            });
+          } catch(error) {
+            status.exposure.error=/^(vision|camera)_[a-z0-9_]{1,90}$/.test(error.message)?error.message:'camera_isp_recording_failed';
+          } finally {
+            if(writeStarted) {
+              const {readback}=await cameraSource.restoreOriginalIsp(binding,status.original,{
+                stopStream:false,captureRestored:false,
+                onPhase(stage) {
+                  status.stage=stage;
+                  // Recovery must still run if the evidence disk became unavailable.
+                  try {saveIsp({...status});} catch {}
+                },
+              });
+              status.exposure={...status.exposure,restorationReadback:readback,recoveryPending:false};
+            }
+            status.recoveryPending=false;
+            status.stage=status.exposure.error?'exposure_incomplete':'exposure_restored';
+          }
         } else if(action==='gamma') {
           delete status.pendingGamma;
           const result=await cameraSource.gammaTrial(binding,status.original,goal.trim(),(stage,progress,applyStarted)=>{
@@ -285,9 +324,11 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
             independent_readback:'sha256:'+result.readback.hash+' · '+result.readback.receiptId,
             tuning_reload_frame:result.after.id+' · SDK '+result.after.sdkTimestampNs}});
         } else {
+          const exposureRecovery=status.exposure?.recoveryPending===true;
           const result=await cameraSource.restoreOriginalIsp(binding,status.original,{
             previousReadback:status.stopPending?status.readback:undefined,
             stopStream:action==='restore',
+            captureRestored:!exposureRecovery,
             onPhase(stage,readback) {
               status.stage=stage;
               if(readback) {
@@ -299,7 +340,8 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
           });
           delete status.comparisonIssue;
           Object.assign(status,result,{stage:action==='restore'?'stopped':'reverted',recoveryPending:false,changesActive:false,stopPending:false});
-          if(selected&&action!=='restore') {
+          if(exposureRecovery) status.exposure={...status.exposure,restorationReadback:result.readback,recoveryPending:false};
+          if(selected&&action!=='restore'&&!exposureRecovery) {
             const evidence=action==='decision'?{decisionReadback:result.readback,
               decision:{choice,reason:reason.trim(),recordedAt:new Date().toISOString()}}:
               selected.resetReadback?{}:{resetReadback:result.readback};
@@ -307,7 +349,7 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
           }
           saveIsp({...status});
           const evidence=action==='restore'?{restoration_and_release:'ISP sha256:'+result.readback.hash+' · 停流回执 '+result.stop.receiptId}:
-            result.restored&&status.gamma?.before&&status.gamma?.after?{A1_B_A2:[status.gamma.before.id,status.gamma.after.id,result.restored.id].join(' · ')}:{};
+            !exposureRecovery&&result.restored&&status.gamma?.before&&status.gamma?.after?{A1_B_A2:[status.gamma.before.id,status.gamma.after.id,result.restored.id].join(' · ')}:{};
           if(action==='decision') evidence[round===1?'gamma_decision':'trial_decision']='恢复原值 · '+reason.trim();
           update({evidence},['recovery_unconfirmed']);
         }
@@ -525,12 +567,14 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
         const file=url.searchParams.get('file');
         if(file) {
           const round=url.searchParams.get('round');
+          const exposure=url.searchParams.get('scope')==='exposure';
           const source=()=>{
             const status=storedIsp();
+            if(exposure) return round===null?status?.exposure:undefined;
             return round===null?status:status?.rounds?.find(item=>String(item.number)===round);
           };
           if(['before','after','restored','reloaded'].includes(file)) {
-            const match=()=>round===null&&['before','after'].includes(file)?source()?.gamma?.[file]:source()?.[file];
+            const match=()=>!exposure&&round===null&&['before','after'].includes(file)?source()?.gamma?.[file]:source()?.[file];
             const asset=match();
             if(!asset||asset.sha256!==url.searchParams.get('sha256')) {
               res.writeHead(404).end(JSON.stringify({error:'camera_archive_missing'}));return;
@@ -542,7 +586,8 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
             } catch(error) {res.writeHead(422).end(JSON.stringify({error:'camera_isp_evidence_unavailable'}));}
             return;
           }
-          const value=['original','readback','gammaReadback','reloadReadback','beforeReadback','decisionReadback','resetReadback'].includes(file)?source()?.[file]:undefined;
+          const value=['original','readback','gammaReadback','reloadReadback','beforeReadback','decisionReadback','resetReadback',
+            'afterReadback','restorationReadback'].includes(file)?source()?.[file]:undefined;
           if(!value||value.hash!==url.searchParams.get('sha256')) {
             res.writeHead(404).end(JSON.stringify({error:'camera_isp_snapshot_missing'}));return;
           }
