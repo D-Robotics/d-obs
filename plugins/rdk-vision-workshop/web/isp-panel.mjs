@@ -45,10 +45,11 @@ const artifacts=status=>[...sessionEntries(status,['original','readback','reload
   ...(status?.rounds??[]).flatMap(round=>roundEntries(round,roundFields)),
   ...exposureEntries(status?.exposure,['before','after',...exposureReceipts])];
 
-export function createIspPanel({key,$,element,button,openDialog,field,notify,getBinding,pick}) {
+export function createIspPanel({key,$,element,button,openDialog,field,notify,getBinding,pick,compareFrames,onEvidenceChange}) {
   let binding, status, posting=false, polling=false, bindingRevision=0;
   let imageReads=Promise.resolve();
   const previews=new Map();
+  const proofOpen=new Map();
   async function request(path='/camera/isp',body) {
     const headers={'X-Workshop-Session':key,...(body?{'Content-Type':'application/json'}:{})};
     let response;
@@ -130,6 +131,7 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
       void populate(entry,cached);
     }
     render();
+    onEvidenceChange?.();
   }
   async function poll() {
     if(polling||posting||!key||!binding) return;
@@ -212,6 +214,45 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
     }
     return list;
   }
+  function disclosure(id,title,...contents) {
+    const area=element('details','','proof-details');
+    area.open=proofOpen.get(id)===true;
+    area.ontoggle=()=>{ if(proofOpen.has(id)||area.open) proofOpen.set(id,area.open); };
+    area.append(element('summary',title),...contents);
+    return area;
+  }
+  function curvePlot(curve) {
+    const card=element('div','','curve-plot');
+    const count=curve.changed+' 个节点有变化'+(curve.rows>1?' · 显示变化最多的第 '+curve.row+' / '+curve.rows+' 条':'');
+    card.append(element('strong','Gamma 曲线独立回读'),element('p',count,'action-copy'));
+    const canvas=element('canvas');
+    canvas.width=480;canvas.height=104;
+    canvas.setAttribute('role','img');
+    canvas.setAttribute('aria-label','Gamma 调前和调后的 SDK 曲线。'+count+'。横轴为输入节点，纵轴为输出等级。');
+    const context=canvas.getContext?.('2d');
+    if(context) {
+      context.strokeStyle='#dce5f2';
+      for(const y of [8,52,96]) {
+        context.beginPath();context.moveTo(8,y);context.lineTo(472,y);context.stroke();
+      }
+      for(const [nodes,color,pattern] of [[curve.before,'#526888',[6,4]],[curve.after,'#194fc2',[]]]) {
+        context.beginPath();context.strokeStyle=color;context.lineWidth=3;context.setLineDash(pattern);
+        for(const [index,value] of nodes.entries()) {
+          const x=8+index*464/63,y=96-value*88/1023;
+          if(index===0) context.moveTo(x,y);
+          else context.lineTo(x,y);
+        }
+        context.stroke();
+      }
+    }
+    card.append(canvas,element('small','灰色虚线 · 调前　蓝色实线 · 调后','curve-legend'));
+    return card;
+  }
+  function compareButton(prefix,labels) {
+    const sources=['before','after'].map(name=>previews.get(prefix+':'+name)?.url);
+    if(!compareFrames||!sources.every(Boolean)) return;
+    return button('放大同一区域',()=>compareFrames(sources.map((src,index)=>({src,label:labels[index]}))),'ghost');
+  }
   function roundCard(number,round,done,busy) {
     const card=element('article','','isp-round');
     const current=done===number-1;
@@ -220,18 +261,33 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
     head.append(element('h3',number===1?'第 1 轮 · 跟做':'第 2 轮 · 自主'),element('span',state,'status-tag'+(round?.decision?' ok':'')));
     card.append(head);
     card.append(element('p',round?.goal??(number===1?'选一个观察目标，跟着完成一次有界调整。':'自己写目标，再验证同一场景的画面变化。'),'action-copy'));
-    if(!round) return card;
+    if(!round) {
+      if(current&&status?.original&&!status.stop&&!status.changesActive&&!status.recoveryPending&&(status.rounds?.length??0)===number-1) {
+        const launch=button(number===1?'开始第 1 轮跟做':'开始第 2 轮自主',()=>openTrial(number),'primary');
+        launch.disabled=busy;card.append(launch);
+      }
+      return card;
+    }
     const frames=element('div','','capture-cards isp-pair');
-    for(const entry of roundEntries(round,['before','after','restored'])) frames.append(imageCard(entry));
-    card.append(frames,receiptsList(roundEntries(round,receiptFields)));
-    if(round.decision) card.append(element('p','取舍 · '+(round.decision.choice==='keep'?'保留调整':'恢复原值')+' · '+round.decision.reason,'isp-decision'));
+    for(const entry of roundEntries(round,['before','after'])) frames.append(imageCard(entry));
+    const content=element('div');
+    content.append(frames);
     const actions=element('div','','button-row');
+    const before=previews.get(`${number}:before`)?.file, after=previews.get(`${number}:after`)?.file;
     if(!round.decision&&!status.stop) {
       const decide=button('记录保留或恢复',()=>openDecision(round),'primary');decide.disabled=busy;actions.append(decide);
     }
-    const before=previews.get(`${number}:before`)?.file, after=previews.get(`${number}:after`)?.file;
+    const zoom=compareButton(number,['调前实拍','调后实拍']);
+    if(zoom) actions.append(zoom);
     if(before&&after) actions.append(button('送入盲选对照',()=>pick([before,after],round.gammaReadback),'plain'));
-    if(actions.childElementCount) card.append(actions);
+    if(actions.childElementCount) content.append(actions);
+    if(round.decision) content.append(element('p','取舍 · '+(round.decision.choice==='keep'?'保留调整':'恢复原值')+' · '+round.decision.reason,'isp-decision'));
+    if(round.curveChange) content.append(curvePlot(round.curveChange));
+    const receipts=roundEntries(round,receiptFields);
+    const restored=roundEntries(round,['restored']).map(entry=>imageCard(entry));
+    if(receipts.length||restored.length) content.append(disclosure('round'+number,
+      round.gammaReadback?'已核对 SDK 回读 · 查看详情':'查看本轮证据',...restored,receiptsList(receipts)));
+    card.append(number===1&&round.decision?disclosure('completed-1','查看第 1 轮实拍与取舍',content):content);
     return card;
   }
   function renderExposure(busy) {
@@ -262,7 +318,10 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
         const us=entry.name==='before'?demo.beforeUs:demo.afterUs;
         pair.append(imageCard(entry,(us/1000).toFixed(3)+' ms · 模拟增益 '+demo.gain.toFixed(3)+'×'));
       }
-      panel.append(pair,receiptsList(exposureEntries(demo,exposureReceipts)));
+      panel.append(pair);
+      const zoom=compareButton('exposure',['调前实拍','调后实拍']);
+      if(zoom) panel.append(zoom);
+      panel.append(disclosure('exposure','查看曝光和恢复回执',receiptsList(exposureEntries(demo,exposureReceipts))));
     }
     if(!binding||status?.stop) return;
     const actions=element('div','','button-row');
@@ -299,16 +358,13 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
     if(!status?.original) {
       const save=button('保存原始 ISP',()=>start({action:'save'}),'primary');save.disabled=busy;actions.append(save);return;
     }
-    summary.append(receiptsList(sessionEntries(status,['original','readback','reloadReadback'])));
+    summary.append(disclosure('session','查看期初 ISP 与工位回执',receiptsList(sessionEntries(status,['original','readback','reloadReadback']))));
     if(status.reloaded) summary.append(imageCard({name:'reloaded',asset:status.reloaded}));
     if(status.stop) summary.append(element('p','停流回执 · '+status.stop.receiptId,'isp-decision'));
     if(status.comparisonIssue) summary.append(element('p','已独立回读原值，恢复后实拍仍待补。','capture-error'));
-    if(!status.stop&&!status.changesActive&&!status.recoveryPending&&rounds.length===done&&done<2) {
-      actions.append(button(done===0?'开始第 1 轮跟做':'开始第 2 轮自主',()=>openTrial(done+1),'primary'));
-    }
     if(!status.stop) {
       if(status.recoveryPending||status.changesActive&&rounds.at(-1)?.decision) {
-        actions.append(button(done===1?'恢复原值，准备第 2 轮':'恢复原值，继续采流',()=>confirm('revert'),'ghost'));
+        actions.append(button(done===1?'恢复原值，准备第 2 轮':'恢复原值，继续采流',()=>confirm('revert'),'primary'));
       } else if(done===2&&status.restored&&status.gammaReadback) {
         actions.append(button('重载第 2 轮候选',()=>openDialog('重载第 2 轮候选',[
           element('p','独立核对这份候选，再保存一张重载后的新图。'),
@@ -321,7 +377,11 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
   function syncBinding() {
     const id=getBinding()?.experimentId??null;
     if(id===binding) return;
-    binding=id;bindingRevision++;apply(undefined);render();void poll();
+    binding=id;bindingRevision++;proofOpen.clear();apply(undefined);render();void poll();
+  }
+  function evidenceIndex() {
+    const rounds=(status?.rounds??[]).filter(round=>round.before&&round.after&&round.beforeReadback&&round.gammaReadback&&round.decision);
+    return {rounds:rounds.length,restored:Boolean(status?.stop&&status.readback?.hash===status.original?.hash)};
   }
   async function evidence() {
     const receipt=status;
@@ -332,5 +392,5 @@ export function createIspPanel({key,$,element,button,openDialog,field,notify,get
     if(!isCurrent()) throw new Error(evidenceChanged);
     return {receipt,files};
   }
-  return {syncBinding,poll,evidence};
+  return {syncBinding,poll,evidence,evidenceIndex};
 }

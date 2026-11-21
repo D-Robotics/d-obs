@@ -19,7 +19,7 @@ const fixes={
 const pending={status:'waiting'};
 const freshnessMs=120000;
 
-export function createPreflightPanel({key,$,element,button,notify,getBinding}) {
+export function createPreflightPanel({key,$,element,button,notify,getBinding,showCamera}) {
   let binding;
   let observation;
   let posting=false;
@@ -78,7 +78,7 @@ export function createPreflightPanel({key,$,element,button,notify,getBinding}) {
     }
     const check=button(observation?'重新检查':'运行连接预检',start,'primary');
     check.disabled=Boolean(busy);actions.append(check);
-    if(!binding) actions.append(button('去关联相机实验',()=>$('camera').scrollIntoView({behavior:'smooth'}),'plain'));
+    if(!binding) actions.append(button('去关联相机实验',showCamera,'plain'));
   }
   function syncBinding() {
     const next=getBinding()?.experimentId??null;

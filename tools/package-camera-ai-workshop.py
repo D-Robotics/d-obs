@@ -11,7 +11,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 ROOT = Path(__file__).resolve().parents[1]
 CAMERA_ID = 'rdk-camera-workshop'
 COURSE_ID = 'rdk-vision-workshop'
-VERSION = '1.5.2'
+VERSION = '1.5.3'
 
 
 def load(path):

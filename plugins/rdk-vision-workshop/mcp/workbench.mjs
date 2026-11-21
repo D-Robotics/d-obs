@@ -17,6 +17,26 @@ const unconfirmedCapture=new Set(['camera_capture_unconfirmed','vision_device_tr
 const evidenceErrors=new Set(['training_receipt_unconfigured','training_receipt_invalid','board_archive_unconfigured','board_receipt_pending',
   'board_model_mismatch','board_receipt_changed','board_asset_missing','board_asset_integrity_failed','evidence_file_invalid']);
 
+function gammaCurveChange(before,after) {
+  const original=before?.config?.modules?.gamma;
+  const candidate=after?.config?.modules?.gamma;
+  if(!original||original.mode!==candidate?.mode||![0,1].includes(original.mode)) return;
+  const key=original.mode===0?'auto_attr.curve':'manual_attr.curve';
+  const source=original[key],target=candidate[key];
+  const valid=curve=>Array.isArray(curve)&&curve.length>=64&&curve.length<=4096&&curve.length%64===0&&
+    curve.every(node=>Number.isInteger(node)&&node>=0&&node<=1023);
+  if(!valid(source)||!valid(target)||source.length!==target.length) return;
+  let changed=0,mostChanged=0,selected=0;
+  for(let offset=0;offset<source.length;offset+=64) {
+    const count=source.slice(offset,offset+64).filter((value,index)=>value!==target[offset+index]).length;
+    changed+=count;
+    if(count>mostChanged) {mostChanged=count;selected=offset;}
+  }
+  if(!changed) return;
+  return {changed,row:selected/64+1,rows:source.length/64,
+    before:source.slice(selected,selected+64),after:target.slice(selected,selected+64)};
+}
+
 const routes = new Map([
   ['/', ['text/html', '../web/index.html']],
   ['/style.css', ['text/css', '../web/style.css']],
@@ -196,9 +216,12 @@ export async function startWorkbench(input={}, port=0, cameraSource=createCamera
     return {...details,...(exposure?{exposure:exposureSummary()}:{}),
       ...(original?{original:summary(original)}:{}),...(readback?{readback:summary(readback)}:{}),
       ...(gammaReadback?{gammaReadback:summary(gammaReadback)}:{}),...(reloadReadback?{reloadReadback:summary(reloadReadback)}:{}),
-      rounds:rounds.map(({beforeReadback,gammaReadback,decisionReadback,resetReadback,...round})=>({...round,
-        ...(beforeReadback?{beforeReadback:summary(beforeReadback)}:{}),gammaReadback:summary(gammaReadback),
-        ...(decisionReadback?{decisionReadback:summary(decisionReadback)}:{}),...(resetReadback?{resetReadback:summary(resetReadback)}:{})}))};
+      rounds:rounds.map(({beforeReadback,gammaReadback,decisionReadback,resetReadback,...round})=>{
+        const curveChange=gammaCurveChange(beforeReadback,gammaReadback);
+        return {...round,...(curveChange?{curveChange}:{}),
+          ...(beforeReadback?{beforeReadback:summary(beforeReadback)}:{}),gammaReadback:summary(gammaReadback),
+          ...(decisionReadback?{decisionReadback:summary(decisionReadback)}:{}),...(resetReadback?{resetReadback:summary(resetReadback)}:{})};
+      })};
   }
   function saveIsp(value) {
     const previous=cameraIsp;

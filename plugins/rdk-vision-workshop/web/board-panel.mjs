@@ -1,7 +1,7 @@
 import {normalizedModelHash,presetModelHash} from '/guide.mjs';
 
 const labels={before:'A1 原始实拍',after:'B Gamma 后实拍',restored:'A2 恢复后实拍',
-  detection_before:'调整前实时检测帧',detection_after:'调整后实时检测帧',detection_live:'本轮实时检测帧'};
+  detection_before:'调整前检测帧',detection_after:'调整后检测帧',detection_live:'本轮检测帧'};
 const errors={board_archive_unconfigured:'请用 Studio 在本工位运行课程检测入口并配置其结果目录。',
   board_receipt_pending:'板端尚未写出回执。请确认本组任务已启动，再刷新。',
   board_model_mismatch:'板上模型与本工位训练产物的哈希不一致，请核对实际 .bin。',
@@ -154,6 +154,14 @@ export function createBoardPanel({key,$,element,button,notify,getReport,save,att
     if(r?.status==='completed') { const b=button(saving?'正在保存':'采用回执并留证',saveEvidence,'ghost');b.disabled=saving;actions.append(b); }
     const display=$('board-evidence');display.replaceChildren();
     if(!r) return;
+    for(const [sha256,url] of previews) {
+      const asset=r.assets.find(item=>item.sha256===sha256);
+      const figure=element('figure','','camera-archive-preview board-preview');const img=element('img');
+      img.src=url;img.alt=labels[asset?.kind]??'板端记录';
+      figure.append(img,element('figcaption',img.alt+' · 板端归档'+
+        (asset?.sdkTimestampNs?' · SDK 帧 '+asset.sdkTimestampNs:'')));
+      display.append(figure);
+    }
     const items=element('ol','','action-checklist');
     for(const [name,value] of [['核对板上模型',`${course.routing.selected==='B'?'预置模型':'本组模型'} SHA-256 已匹配 · ${r.modelSha256.slice(0,12)}…`],
       ['执行 BPU 推理',r.staticBpu?'静态前向已通过':'等待静态前向'],
@@ -162,15 +170,12 @@ export function createBoardPanel({key,$,element,button,notify,getReport,save,att
       ['恢复原配置',r.restoration==='verified'&&r.previewStopped?'回读一致，已停止采流':r.restoration==='no_write'&&r.previewStopped?'未写入 ISP，已停止采流':r.restoration==='unconfirmed'?'恢复待复核':'等待恢复和停流']]) {
       const row=element('li');row.append(element('strong',name+' · '),element('span',value));items.append(row);
     }
-    display.append(items);
+    const audit=element('details','','proof-details');
+    audit.append(element('summary','查看上板、取流和恢复回执'),items);
     const counts=Object.entries(r.phases??{}).map(([phase,v])=>`${phase==='before'?'调整前':phase==='after'?'调整后':'实时采流'} ${v.frames} 帧，${v.boxes} 个检测框`);
     if(counts.length) display.append(element('p',counts.join(' ｜ '),'camera-run-state'));
     if(r.failure) display.append(element('p','板端提示 · '+r.failure,'camera-run-state'));
-    for(const [sha256,url] of previews) {
-      const figure=element('figure','','camera-archive-preview');const img=element('img');
-      img.src=url;img.alt=labels[r.assets.find(item=>item.sha256===sha256)?.kind]??'板端记录';
-      figure.append(img,element('figcaption',img.alt));display.append(figure);
-    }
+    display.append(audit);
   }
   function poll() {if(report&&['started','captured'].includes(report.status)) void refresh();}
   return {syncModel,render,poll};

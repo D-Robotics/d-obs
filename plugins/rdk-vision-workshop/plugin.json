@@ -1,7 +1,7 @@
 {
   "name": "rdk-vision-workshop",
   "displayName": "视觉 Pipeline · 180 分钟 Workshop",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "在 Studio 中按 180 分钟课堂方案逐步完成相机、Gamma、异步训练、A/B/C 分流与个人成果归档。",
   "author": {
     "name": "D-Robotics"

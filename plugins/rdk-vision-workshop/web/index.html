@@ -20,9 +20,13 @@
     </section>
     <div class="grid">
       <aside>
-        <section class="box timeline"><div class="section-label">课堂流程</div><ol id="timeline"></ol></section>
+        <details class="box timeline"><summary id="timeline-summary">课堂流程</summary><ol id="timeline"></ol></details>
       </aside>
       <div class="main-column">
+        <section class="parallel-training" id="parallel-training" hidden aria-label="并行训练">
+          <div><strong id="parallel-training-title"></strong><span id="parallel-training-detail"></span></div>
+          <button class="button ghost" id="parallel-training-open" type="button">查看原 Run</button>
+        </section>
         <section class="box action" aria-labelledby="step-title">
           <div class="action-head"><div class="section-label"><span class="focus-dot"></span>当前一步</div><span id="step-tag" class="status-tag"></span></div>
           <h2 id="step-title">正在读取本工位进度…</h2><p id="step-help" class="action-copy"></p>
@@ -31,6 +35,10 @@
           <div id="step-footer" class="button-row"></div>
           <details id="step-tools" class="tool-details"><summary>Studio 工具</summary><code id="tool-chain"></code></details>
         </section>
+        <div id="step-workspace" class="workspace-panels"></div>
+        <details class="box station-tools" id="station-tools">
+          <summary>其他工位工具与记录</summary>
+          <div id="tool-panels" class="workspace-panels">
         <section id="camera-preflight" class="box" aria-labelledby="camera-preflight-title">
           <div class="action-head"><h2 id="camera-preflight-title">工位连接预检</h2><span id="preflight-status" class="status-tag" role="status">待检查</span></div>
           <p class="action-copy" id="preflight-help">采集前检查相机服务、板卡连接和当前画面。只读取已开启的相机流。</p>
@@ -92,14 +100,26 @@
         <section id="delivery" class="box evidence">
           <div class="action-head"><div class="section-label">证据与交付</div><span id="evidence-count" class="status-tag"></span></div>
           <h2>个人成果包</h2><p id="delivery-help"></p>
+          <ul class="delivery-checklist" id="delivery-checklist" aria-label="成果齐备情况"></ul>
           <ul id="attachments"></ul>
           <div class="button-row"><button id="attach" class="button ghost">添加实际文件</button><button id="export" class="button primary">下载成果包</button></div>
           <details id="advanced"><summary>查看回执和处理阻塞</summary><div id="review"></div></details>
         </section>
+          </div>
+        </details>
       </div>
     </div>
   </main>
   <dialog id="dialog"><form id="dialog-form"><h2 id="dialog-title"></h2><div id="dialog-fields"></div><div class="button-row"><button class="button primary" id="dialog-save" type="submit">保存</button><button class="button ghost" id="dialog-close" type="button">返回</button></div></form></dialog>
+  <dialog id="frame-dialog" class="frame-dialog" aria-labelledby="frame-dialog-title">
+    <div class="action-head"><h2 id="frame-dialog-title">同一区域对照</h2><form method="dialog"><button class="button ghost" autofocus>关闭</button></form></div>
+    <div id="frame-dialog-images" class="comparison-images"></div>
+    <div class="frame-controls">
+      <label>放大 <output id="frame-scale-value" for="frame-scale">1×</output><input id="frame-scale" type="range" min="1" max="4" step="0.25" value="1"></label>
+      <label>观察位置 · 左右<input id="frame-x" type="range" min="0" max="100" value="50"></label>
+      <label>观察位置 · 上下<input id="frame-y" type="range" min="0" max="100" value="50"></label>
+    </div>
+  </dialog>
   <input id="progress-file" type="file" accept=".json" hidden>
   <input id="evidence-file" type="file" multiple hidden>
   <input id="comparison-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>

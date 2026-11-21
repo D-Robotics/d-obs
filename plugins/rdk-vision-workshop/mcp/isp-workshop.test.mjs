@@ -16,8 +16,9 @@ test('Gamma preserves both rounds, gates the next round on decisions and verifie
   const tmp=await mkdtemp(join(tmpdir(),'rdk-course-isp-'));
   const experimentId=randomUUID(),adapterId='x5-fixture';
   const root='/api/ops/observability/vision-workshop/experiments/'+experimentId;
-  const original={kind:'x5-hbn-isp-v2',snapshotId:randomUUID(),modules:{gamma:{mode:0,'auto_attr.curve':[0,20,100],
-    'manual_attr.curve':[0,21,100]},exposure:{mode:0}}};
+  const curve=Array.from({length:128},(_,index)=>(index%64)*16);
+  const original={kind:'x5-hbn-isp-v2',snapshotId:randomUUID(),modules:{gamma:{mode:0,'auto_attr.curve':curve,
+    'manual_attr.curve':curve.slice(0,64)},exposure:{mode:0}}};
   const originalHash=fingerprint(original);
   const ops=[];
   const baselines=new Map(),frames=new Map(),candidates=new Map();
@@ -41,9 +42,9 @@ test('Gamma preserves both rounds, gates the next round on decisions and verifie
     const body=JSON.parse(Buffer.concat(chunks));
     if(route==='/candidates') {
       const tuning=copy(current);
-      tuning.modules.gamma['auto_attr.curve']=[0,body.goal.includes('自己的')?38:35,100];
+      tuning.modules.gamma['auto_attr.curve'][65]=body.goal.includes('自己的')?38:35;
       if(rejectOtherModule) tuning.modules.exposure.mode=1;
-      const candidate={id:randomUUID(),source:'model',patches:[{path:'/modules/gamma/auto_attr.curve/1'}],
+      const candidate={id:randomUUID(),source:'model',patches:[{path:'/modules/gamma/auto_attr.curve/65'}],
         frameIds:body.frameIds,tuning,hash:fingerprint(tuning),baselineHash:originalHash,baselineId:baselines.get(originalHash).id};
       candidates.set(candidate.id,candidate);
       if(externalDrift) current.modules.exposure.mode=1;
@@ -201,6 +202,11 @@ test('Gamma preserves both rounds, gates the next round on decisions and verifie
     assert.equal(view.read().resume.blockers.recovery_unconfirmed,undefined);
     const trial=await perform('gamma','看清暗部文字');
     assert.equal(trial.stage,'gamma_saved');
+    const visual=trial.rounds[0].curveChange;
+    assert.deepEqual([visual.row,visual.rows,visual.changed],[2,2,1]);
+    assert.deepEqual(visual.before,curve.slice(64));
+    assert.equal(visual.after[1],35);
+    assert.equal(trial.rounds[0].gammaReadback.config,undefined);
     assert.notEqual(trial.gamma.before.id,trial.gamma.after.id);
     assert.equal(trial.gamma.after.tuningHash,trial.gammaReadback.hash);
     assert.equal(view.read().resume.evidence.gamma_decision,undefined);

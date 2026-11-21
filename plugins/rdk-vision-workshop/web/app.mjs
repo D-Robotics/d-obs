@@ -1,4 +1,4 @@
-import { detectionResults, guideCourse, guideSchema } from '/guide.mjs';
+import { detectionResults, guideCourse, guideSchema, normalizedModelHash, presetModelHash } from '/guide.mjs';
 import { labels, steps } from '/steps.mjs';
 import { storedZip } from '/zip.mjs';
 import { createCameraPanel } from '/camera-panel.mjs';
@@ -62,19 +62,63 @@ let photoSlot;
 let photos={};
 let blindOrder;
 let revealed=false;
+let routeExpanded=false;
 let trainingEvidence, boardProof;
 let comparisonReadback;
 let roboGoStatus={}, roboGoBusy=false, roboGoNote='', lastRoboGoCall=0;
 const attachedCameraEvidence=new Map();
+const toolPanels=Array.from($('tool-panels').children);
+const activePanels={
+  connect:['camera-preflight','camera'],
+  baseline:['camera-capture'],formats:['camera-capture'],
+  deploy:['board','detection'],live:['board','detection'],preset_deploy:['board','detection'],
+};
+const wide=matchMedia('(min-width: 1000px)');
+function syncTimeline() { $('timeline').parentElement.open=wide.matches; }
+wide.addEventListener('change',syncTimeline);
+syncTimeline();
+function showPanel(id) {
+  const panel=$(id);
+  if(panel.hidden) {notify('此操作还缺本步所需的产物或回执。');return;}
+  if($('tool-panels').contains(panel)) $('station-tools').open=true;
+  const title=panel.querySelector('h2,summary')??panel;
+  title.tabIndex=-1;
+  title.focus({preventScroll:true});
+  panel.scrollIntoView({block:'start'});
+}
+function compareFrames(frames) {
+  const controls=['frame-scale','frame-x','frame-y'].map($);
+  [controls[0].value,controls[1].value,controls[2].value]=['1','50','50'];
+  $('frame-dialog-images').replaceChildren(...frames.map(({src,label})=>{
+    const figure=element('figure','','comparison-frame');
+    const view=element('div','','zoom-photo');
+    const image=element('img');image.src=src;image.alt=label;
+    view.append(image);figure.append(view,element('figcaption',label));
+    return figure;
+  }));
+  const zoom=()=>{
+    const [scale,x,y]=controls.map(control=>control.valueAsNumber);
+    $('frame-scale-value').textContent=scale+'×';
+    controls[1].disabled=controls[2].disabled=scale===1;
+    for(const image of $('frame-dialog-images').querySelectorAll('img')) {
+      image.style.transformOrigin=x+'% '+y+'%';
+      image.style.transform='scale('+scale+')';
+    }
+  };
+  for(const control of controls) control.oninput=zoom;
+  zoom();
+  $('frame-dialog').showModal();
+}
 const ispPanel=createIspPanel({key,$,element,button,openDialog,field,notify,getBinding:()=>report?.resume.camera,
+  compareFrames,onEvidenceChange:renderDeliveryChecklist,
   pick:(pair,readback)=>{
     for(const photo of Object.values(photos)) URL.revokeObjectURL(photo.url);
     photos=Object.fromEntries(pair.map((file,index)=>[index?'candidate':'original',{file,url:URL.createObjectURL(file)}]));
     comparisonReadback={label:'候选独立 ISP 回读',hash:readback.hash};
-    resetBlindOrder();render();$('comparison').scrollIntoView({block:'nearest'});
+    resetBlindOrder();render();showPanel('comparison');
   },
 });
-const preflightPanel=createPreflightPanel({key,$,element,button,notify,getBinding:()=>report?.resume.camera});
+const preflightPanel=createPreflightPanel({key,$,element,button,notify,showCamera:()=>showPanel('camera'),getBinding:()=>report?.resume.camera});
 const capturePanel=createCapturePanel({key,$,element,button,field,openDialog,notify,
   getBinding:()=>report?.resume.camera,
   attach:entries=>{addCameraFiles(entries);render();notify('已附入相机原件与回执。');},
@@ -92,7 +136,7 @@ const cameraPanel=createCameraPanel({key,$,element,button,field,openDialog,notif
     }]));
     const proof=entries[1]?.readback;
     comparisonReadback=proof&&{label:'同帧 ISP 回读',hash:proof.hash};
-    resetBlindOrder();render();$('comparison').scrollIntoView({block:'nearest'});
+    resetBlindOrder();render();showPanel('comparison');
   },
 });
 const boardPanel=createBoardPanel({key,$,element,button,notify,getReport:()=>report,save,
@@ -102,7 +146,7 @@ const boardPanel=createBoardPanel({key,$,element,button,notify,getReport:()=>rep
     const added=[...retained,...assets];
     if(added.length>32||added.reduce((total,file)=>total+file.size,0)>128*1024*1024) throw new Error('成果包最多保存 32 个文件，合计 128 MB。');
     files=added;
-    boardProof={receipt,fileNames:assets.map(asset=>asset.name)};
+    boardProof={receipt,path:report.routing.selected,fileNames:assets.map(asset=>asset.name)};
     render();
   },
   compare:(frames,assets,readback)=>{
@@ -111,7 +155,7 @@ const boardPanel=createBoardPanel({key,$,element,button,notify,getReport:()=>rep
       file,sha256:assets[index].sha256,url:URL.createObjectURL(file),
     }]));
     comparisonReadback=readback&&{label:'同次 Gamma 曲线回读',hash:readback.actualCurrentCurveSha256};
-    resetBlindOrder();render();$('comparison').scrollIntoView({block:'nearest'});
+    resetBlindOrder();render();showPanel('comparison');
   },
 });
 try {
@@ -250,7 +294,7 @@ async function pollRoboGo(force=false) {
     if(!updates&&result.revision>sessionRevision) applySession(result);
     roboGoNote='已自动核对原 Run · '+new Date().toLocaleTimeString('zh-CN');
   } catch(error) {roboGoNote=error.message;}
-  finally {roboGoBusy=false;renderRoboGo();}
+  finally {roboGoBusy=false;renderRoboGo();renderParallelTraining();}
 }
 async function prepareRoboGo() {
   try {
@@ -364,8 +408,16 @@ function renderComparison() {
     },'plain'));
     figure.append(caption);content.append(figure);
   }
-  if (ready&&!blind) actions.append(element('small',comparisonReadback?`${comparisonReadback.label} · ${comparisonReadback.hash}`:
-    '当前图片未关联同次 ISP 回读。可从相机实验或板端回执重新打开配对实拍。','comparison-readback'));
+  if(ready) actions.append(button('放大同一区域',()=>compareFrames(slots.map((slot,index)=>({
+    src:photos[slot].url,label:blind?`画面 ${index+1}`:labels[slot],
+  }))),'ghost'));
+  if(ready&&!blind) {
+    if(comparisonReadback) {
+      const proof=element('details','','proof-details');
+      proof.append(element('summary','已关联 ISP 回读'),element('code',comparisonReadback.hash,'comparison-readback'));
+      actions.append(proof);
+    } else actions.append(element('small','当前图片未关联同次 ISP 回读。可从相机实验或板端回执重新打开配对实拍。','comparison-readback'));
+  }
   if (blind&&ready) actions.append(button('记录选择并揭晓',()=>openDialog('这两张图，你更偏好哪张？',[
     field('choice','画面',{options:[['first','画面 1'],['second','画面 2'],['same','差异不明显']]}),
     field('reason','你看的区域和理由',{placeholder:'例如暗处轮廓更清楚，亮处细节还在',max:210}),
@@ -430,11 +482,21 @@ function renderRoutes() {
   const area=$('route');
   area.replaceChildren();
   if (!report.routing.eligible && report.nextStep?.stageId!=='route') return;
-  area.append(element('div','A / B / C 完成路径','route-heading'));
+  const chosen=report.routing.choices.find(path=>path.id===report.routing.selected);
+  const chooser=report.nextStep?.stageId==='route'||!chosen?area:element('details','','proof-details route-review');
+  if(chooser!==area) {
+    chooser.open=routeExpanded;
+    chooser.ontoggle=()=>{if(chooser.isConnected) routeExpanded=chooser.open;};
+    chooser.append(element('summary','已选 '+chosen.id+' · '+chosen.name+' · 查看其他路径'));
+    area.append(chooser);
+  }
   const group=element('div','','routes');
   for(const p of report.routing.choices) {
     const active=report.routing.selected===p.id;
-    const box=button('',()=>save({path:p.id},'已选择 '+p.id+' 路径'),'');
+    const box=button('',()=>{
+      routeExpanded=false;
+      save({path:p.id},'已选择 '+p.id+' 路径');
+    },'');
     box.className='route-card'+(active?' active':'');
     box.disabled=!p.available;
     box.setAttribute('aria-pressed',String(active));
@@ -443,7 +505,7 @@ function renderRoutes() {
     if(active||report.routing.recommended===p.id) box.append(element('span',active?'已选择':'当前建议','status-tag'));
     group.append(box);
   }
-  area.append(group,backupButton());
+  chooser.append(group,backupButton());
 }
 function backupButton() {
   return button('登记预置模型或演示',()=>editEvidence('登记备用来源',['preset_model','demo_reference'],false));
@@ -472,12 +534,8 @@ function renderStep() {
       footer.append(button('记录本步回执',()=>editEvidence(next.title,next.requiredEvidence.map(x=>x.key)),next.entry?'ghost':'primary'));
     }
   }
-  if(next?.entry) footer.prepend(button(next.entry.label,()=>{
-    const section=$(next.entry.section);
-    if(section.hidden) {notify('此操作还缺本步所需的产物或回执。');return;}
-    section.scrollIntoView({behavior:'smooth'});
-  },'primary'));
-  if(next?.stageId==='connect'&&report.resume.camera) footer.append(button('保存原始 ISP',()=>$('camera-isp').scrollIntoView({behavior:'smooth'}),'ghost'));
+  if(next?.entry) footer.prepend(button(next.entry.label,()=>showPanel(next.entry.section),'plain'));
+  if(next?.stageId==='connect'&&report.resume.camera) footer.append(button('定位原始 ISP',()=>showPanel('camera-isp'),'plain'));
   if(next?.stageId==='baseline'&&next.requiredEvidence.some(x=>x.key==='baseline_raw')) {
     footer.append(button('登记 RAW 实采受阻',()=>editEvidence('记录 RAW 样例和实采缺口',['baseline_raw_sample']),'plain'));
   }
@@ -491,11 +549,72 @@ function renderStep() {
   },'plain'));
   renderRoutes();
 }
+function renderWorkspace() {
+  const next=report.nextStep;
+  const primary=$('step-workspace');
+  const tools=$('tool-panels');
+  const selected=[...(activePanels[next?.stageId]??(next?.entry?[next.entry.section]:next?[]:['delivery']))];
+  if(next?.stageId==='connect'&&report.resume.camera) selected.push('camera-capture','camera-isp');
+  if(selected.includes('camera-capture')&&!report.resume.camera) selected.unshift('camera');
+  for(const panel of toolPanels) {
+    if(selected.includes(panel.id)) continue;
+    const following=toolPanels.slice(toolPanels.indexOf(panel)+1).find(item=>item.parentElement===tools);
+    if(panel.parentElement!==tools) tools.insertBefore(panel,following??null);
+  }
+  for(const [index,id] of selected.entries()) {
+    const panel=$(id);
+    if(primary.children[index]!==panel) primary.insertBefore(panel,primary.children[index]??null);
+  }
+  primary.classList.toggle('connect-panels',next?.stageId==='connect');
+  $('isp-title').textContent=next?.stageId==='connect'?'保存期初 ISP':'Gamma · 两轮课堂练习';
+}
+function renderParallelTraining() {
+  const training=report?.training;
+  if(!training) return;
+  const elapsed=report.resume.elapsedMinutes;
+  const panel=$('parallel-training');
+  panel.hidden=!training.id&&(elapsed===undefined||elapsed<training.submitStart);
+  if(panel.hidden) return;
+  $('parallel-training-title').textContent=(training.id?'RoboGO 原 Run':'RoboGO 训练')+' · '+(runStatus[training.state]??'待核对');
+  if(training.source==='external') $('parallel-training-title').textContent='本组外部训练 · '+(runStatus[training.state]??'待核对');
+  const last=training.checkedAtMinute===undefined?'': '最近核对 '+formatted(training.checkedAtMinute);
+  const cutoff=elapsed>=training.deployAt?'已到分流时间':'部署分流 '+formatted(training.deployAt);
+  $('parallel-training-detail').textContent=[roboGoNote||last,cutoff].filter(Boolean).join(' · ');
+  $('parallel-training-open').textContent=training.id?'查看训练与量化':'查看训练条件';
+}
+function renderDeliveryChecklist() {
+  if(!report) return;
+  const summary=ispPanel.evidenceIndex();
+  const path=report.routing.selected;
+  const {evidence}=report.resume;
+  const target=path==='B'?evidence.preset_target_result:evidence.target_result;
+  const model=path==='B'?presetModelHash(evidence.preset_model):normalizedModelHash(evidence.x5_model_hash);
+  const currentProof=Boolean(model&&boardProof?.receipt.modelSha256===model&&
+    (path==='A'||path==='B')&&boardProof.path===path);
+  const demoRecorded=Boolean(path==='C'&&evidence.demo_reference);
+  const rows=[
+    ['两轮 Gamma 实拍与回读',summary.rounds===2,summary.rounds+' / 2 轮已齐备'],
+    [path==='C'?'讲师演示':'板端检测',demoRecorded||Boolean(currentProof&&target&&target!=='未验证'),path==='C'?
+      (demoRecorded?'已记录演示来源':'等待演示来源'):currentProof?
+        (target&&target!=='未验证'?target:'已有板端回执，待记录目标判定'):'等待本工位板端回执'],
+    ['期初 ISP 恢复与停流',summary.restored||Boolean(evidence.restoration_and_release),
+      summary.restored?'独立回读一致，已停止采流':evidence.restoration_and_release?'已登记恢复回执':'等待恢复与停流回执'],
+  ];
+  $('delivery-checklist').replaceChildren(...rows.map(([title,complete,detail])=>{
+    const row=element('li');
+    row.append(element('strong',title),element('span',detail,complete?'evidence-ready':''));
+    return row;
+  }));
+}
 function render() {
   report=derive();
   const current=minute();
   lastMinute=current;
   $('clock-value').textContent=current===undefined?'未开始':(state.manual?'彩排 · ':'')+formatted(current);
+  $('start').textContent=state.anchor!==null?'计时中':current===undefined?'开始计时':'继续计时';
+  $('start').disabled=state.anchor!==null||state.manual;
+  const currentStage=report.stages.find(stage=>stage.status==='current');
+  $('timeline-summary').textContent=currentStage?'课堂流程 · '+currentStage.topic:'课堂流程';
   const timeline=$('timeline');
   timeline.replaceChildren();
   for(const s of report.stages.filter(s=>stages.has(s.id)&&s.id!=='train'&&s.id!=='wait_run')) {
@@ -507,6 +626,7 @@ function render() {
     li.append(element('span','','marker'),item); timeline.append(li);
   }
   renderStep();
+  renderWorkspace();
   cameraPanel.render();
   preflightPanel.syncBinding();
   ispPanel.syncBinding();
@@ -556,13 +676,17 @@ function render() {
   for(const [k,v] of Object.entries(report.resume.evidence)) summary.append(element('li',labels[k]+' · '+v));
   review.replaceChildren(button('更新阻塞回执',editBlockers),summary);
   renderRoboGo();
+  renderParallelTraining();
+  renderDeliveryChecklist();
 }
+$('parallel-training-open').onclick=()=>showPanel('training');
 $('run-edit').onclick=editRun;
 $('read-training').onclick=readExternalTraining;
 $('start').onclick=()=>{
-  if(state.anchor!==null||state.manual) {notify('课堂已有进度，可用「设定进度」调整彩排时间。');return;}
-  state.anchor=Date.now();state.manual=false;
-  save({elapsedMinutes:0},'课堂计时已开始');
+  if(state.anchor!==null||state.manual) return;
+  const elapsed=minute()??0;
+  state.anchor=Date.now()-elapsed*60000;
+  save({elapsedMinutes:elapsed},elapsed?'课堂计时已继续':'课堂计时已开始');
 };
 $('clock-config').onclick=()=>openDialog('设定彩排进度',[
   field('minute','开场后经过的分钟（0–180）',{type:'number',max:180,value:minute()??0}),
@@ -681,5 +805,5 @@ setInterval(capturePanel.poll,1800);
 setInterval(preflightPanel.poll,1800);
 setInterval(ispPanel.poll,1800);
 const initialPanel=new URLSearchParams(location.search).get('panel');
-if(['capture','preflight','isp'].includes(initialPanel)) $('camera-'+initialPanel).scrollIntoView();
+if(['capture','preflight','isp'].includes(initialPanel)) showPanel('camera-'+initialPanel);
 setInterval(boardPanel.poll,1800);
