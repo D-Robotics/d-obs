@@ -15,14 +15,14 @@
     {
       "kind": "studio",
       "name": "RDK Camera AI",
-      "version": "1.5.7",
-      "bytes": 751088,
-      "sha256": "cca45e331c39a50f842eb2468c481297ba081382fcb2329bfb8f7b19d53310c5",
+      "version": "1.5.8",
+      "bytes": 752995,
+      "sha256": "63f3229f07c0d20622fe48b863f9d7cbd59587893ca7b16ce604b2e67ead1e63",
       "requirements": [
         "Node.js 22+",
         "RDK Studio 1.4+ 或兼容 MCP 宿主",
         "已配置 d-obs 相机连接时可接续设备工位",
-        "RoboGO 账号授权与匹配的训练资源"
+        "仅训练路径需要 RoboGO 账号与匹配的训练资源"
       ]
     }
   ]
