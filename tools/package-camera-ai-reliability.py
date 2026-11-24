@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Overlay the narrowly scoped Studio workflow fix on the verified 1.5.5 package."""
+"""Build a Camera AI release from a verified baseline and a reviewed source overlay."""
 
 import argparse
 import hashlib
@@ -12,14 +12,26 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 
 PLUGIN_ID = 'rdk-camera-workshop'
-VERSION = '1.5.7'
-BASE_MANIFEST_SHA256 = 'aa8c43e06f5868830aab40136519d67cf34db2aabd1fb9d7d963b347d9010bc6'
 MANIFEST = 'SOURCE-MANIFEST.json'
-PATCH = Path(__file__).with_name('camera-ai-reliability-157.patch').resolve()
-PATCHED_FILES = {
+RELIABILITY_FILES = {
     '.mcp.json', 'mcp/bridge.mjs', 'mcp/server.mjs', 'mcp/studio-config.mjs',
     'mcp/workbench-session.mjs', 'skills/rdk-camera-workshop/SKILL.md',
     'skills/rdk-vision-workshop/SKILL.md',
+}
+
+DELIVERY_FILES = {
+    'WORKSHOP.md', 'mcp/bridge.mjs', 'mcp/server.mjs', 'mcp/workbench.mjs', 'mcp/workbench-session.mjs',
+    'skills/rdk-camera-workshop/SKILL.md', 'skills/rdk-vision-workshop/SKILL.md',
+    'web/app.mjs', 'web/board-panel.mjs', 'web/capture-panel.mjs',
+    'web/index.html', 'web/isp-panel.mjs', 'web/style.css',
+}
+
+# version -> (base version, pinned base source manifest SHA-256, overlay, edited files)
+RELEASES = {
+    '1.5.7': ('1.5.5', 'aa8c43e06f5868830aab40136519d67cf34db2aabd1fb9d7d963b347d9010bc6',
+              'camera-ai-reliability-157.patch', RELIABILITY_FILES),
+    '1.5.8': ('1.5.7', '9266bc450aab1f561fe5a1348439d3f000caed011dcc660a1ab5f81ac8221c0f',
+              'camera-ai-delivery-158.patch', DELIVERY_FILES),
 }
 
 
@@ -31,13 +43,13 @@ def encoded(value):
     return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode()
 
 
-def read_package(base):
+def read_package(base, expected_version, manifest_sha256):
     manifest_file = base / MANIFEST
     if manifest_file.is_symlink():
         raise ValueError('Expected the original source manifest file')
     manifest_bytes = manifest_file.read_bytes()
-    if digest(manifest_bytes) != BASE_MANIFEST_SHA256:
-        raise ValueError('Expected the verified Camera AI 1.5.5 source manifest')
+    if digest(manifest_bytes) != manifest_sha256:
+        raise ValueError(f'Expected the verified Camera AI {expected_version} source manifest')
     manifest = json.loads(manifest_bytes)
     entries = {}
     for entry in manifest['files']:
@@ -54,7 +66,7 @@ def read_package(base):
     return manifest, entries
 
 
-def apply_overlay(original):
+def apply_overlay(original, patch, edited_files):
     with tempfile.TemporaryDirectory(prefix='camera-ai-overlay-') as temporary:
         root = Path(temporary)
         for name, data in original.items():
@@ -64,31 +76,34 @@ def apply_overlay(original):
         git = shutil.which('git')
         if not git:
             raise ValueError('Git is required to apply the reviewed source overlay')
-        subprocess.run([git, 'apply', '--whitespace=error', str(PATCH)], cwd=root, check=True)
+        subprocess.run([git, 'apply', '--whitespace=error', str(patch)], cwd=root, check=True)
         entries = {file.relative_to(root).as_posix(): file.read_bytes()
                    for file in root.rglob('*') if file.is_file()}
-    if entries.keys() != original.keys() or {name for name in entries if entries[name] != original[name]} != PATCHED_FILES:
+    if entries.keys() != original.keys() or {name for name in entries if entries[name] != original[name]} != edited_files:
         raise ValueError('Source overlay changed unexpected files')
     return entries
 
 
-def package(base, output):
-    manifest, original = read_package(base.resolve())
-    entries = apply_overlay(original)
+def package(base, output, version='1.5.7'):
+    base_version, manifest_sha256, patch_name, edited_files = RELEASES[version]
+    patch = Path(__file__).with_name(patch_name).resolve()
+    manifest, original = read_package(base.resolve(), base_version, manifest_sha256)
+    entries = apply_overlay(original, patch, edited_files)
     plugin = json.loads(entries['plugin.json'])
-    entries['plugin.json'] = encoded({**plugin, 'version': VERSION})
-    entries['README.md'] = entries['README.md'].replace(b'# RDK Camera AI 1.5.5', b'# RDK Camera AI 1.5.7', 1)
+    entries['plugin.json'] = encoded({**plugin, 'version': version})
+    entries['README.md'] = entries['README.md'].replace(
+        f'# RDK Camera AI {base_version}'.encode(), f'# RDK Camera AI {version}'.encode(), 1)
     # Record the immediate source manifest instead of inheriting the earlier release's archive hash.
     manifest.pop('extendsSha256', None)
     entries[MANIFEST] = encoded({
-        **manifest, 'version': VERSION, 'baseVersion': '1.5.5',
-        'baseSourceManifestSha256': BASE_MANIFEST_SHA256, 'overlaySha256': digest(PATCH.read_bytes()),
+        **manifest, 'version': version, 'baseVersion': base_version,
+        'baseSourceManifestSha256': manifest_sha256, 'overlaySha256': digest(patch.read_bytes()),
         'files': [{'path': name, 'bytes': len(data), 'sha256': digest(data)}
                   for name, data in sorted(entries.items())],
     })
 
     output.mkdir(parents=True, exist_ok=True)
-    archive_path = output / f'rdk-camera-ai-{VERSION}.zip'
+    archive_path = output / f'rdk-camera-ai-{version}.zip'
     paths = {f'{PLUGIN_ID}/{name}': data for name, data in entries.items()}
     with ZipFile(archive_path, 'x') as archive:
         for name, data in sorted(paths.items()):
@@ -100,16 +115,17 @@ def package(base, output):
                 or set(archive.namelist()) != set(paths)
                 or any(archive.read(name) != data for name, data in paths.items())):
             raise ValueError('Release archive failed independent member validation')
-    print(json.dumps({'archive': str(archive_path), 'version': VERSION,
+    print(json.dumps({'archive': str(archive_path), 'version': version,
                       'sha256': digest(archive_path.read_bytes()), 'files': len(paths)}))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--base-directory', required=True, type=Path, help='Verified extracted 1.5.5 plugin directory')
-    parser.add_argument('--output', required=True, type=Path, help='Directory for the 1.5.7 release ZIP')
+    parser.add_argument('--base-directory', required=True, type=Path, help='Verified extracted baseline plugin directory')
+    parser.add_argument('--output', required=True, type=Path, help='Directory for the release ZIP')
+    parser.add_argument('--version', choices=RELEASES, default='1.5.7', help='Release to build')
     args = parser.parse_args()
-    package(args.base_directory, args.output)
+    package(args.base_directory, args.output, args.version)
 
 
 if __name__ == '__main__':

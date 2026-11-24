@@ -1,4 +1,4 @@
-/** Runs against a freshly extracted 1.5.7 package. Uses an isolated fake adapter and workbench. */
+/** Runs against a freshly extracted package and validates the expected release. Uses an isolated fake adapter and workbench. */
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -30,7 +30,8 @@ const call = async (server, name, args = {}, isError = false) => {
   return JSON.parse(result.content[0].text);
 };
 
-assert.equal(manifest.version, '1.5.7');
+const expectedVersion = process.argv[3] ?? '1.5.7';
+assert.equal(manifest.version, expectedVersion);
 for (const entry of manifest.files) {
   const data = await readFile(join(root, entry.path));
   assert.equal(data.byteLength, entry.bytes, entry.path);
@@ -71,6 +72,13 @@ try {
   }
   assert.deepEqual(await call(camera, 'vision_plugin_version'), { version: manifest.version });
   const unbound = await call(course, 'vision_course_camera_status');
+  if (expectedVersion === '1.5.8') {
+    assert.deepEqual(unbound.presentation, { panel: 'capture', archivedFrames: [] });
+    const isp = await call(course, 'vision_course_isp_status');
+    assert.deepEqual(isp.presentation, { panel: 'isp', archivedFrames: [] });
+    assert.equal(new URL(isp.url).searchParams.get('panel'), 'isp');
+    assert.equal(new URL(isp.url).searchParams.has('round'), false);
+  }
   assert.equal(unbound.cameraBinding.status, 'unbound');
   assert.equal(unbound.latestPreflight, null);
   view.update({ camera: { experimentId } });

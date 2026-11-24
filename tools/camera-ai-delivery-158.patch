@@ -1,0 +1,384 @@
+diff --git a/WORKSHOP.md b/WORKSHOP.md
+--- a/WORKSHOP.md
++++ b/WORKSHOP.md
+@@ -11,7 +11,7 @@
+ 
+ 「当前一步」直接带学员进入对应页面。连接预检可写入本工位服务和设备回执。保存原始 ISP 后完成两轮 Gamma。第 1 轮从示范目标跟做，第 2 轮填写自己的目标。每轮单独保存相机实拍、独立回读和取舍。用同一份期初配置开始两轮，保留候选后先恢复期初配置。
+ 
+-课堂当前步骤直接展示对应工具，其他工具可从「其他工位工具与记录」打开。训练提交后可在当前步骤上方查看原 Run 进度和分流时间。对照图支持同步放大同一区域，Gamma 曲线用实际 SDK 回读绘制。SDK 回执可展开查看，完整原件随成果包导出。
++课堂当前步骤直接展示对应工具，其他工具可从「其他工位工具与记录」打开。训练提交后可在当前步骤上方查看原 Run 进度和分流时间。对照图支持同步放大同一区域，Gamma 曲线用实际 SDK 回读绘制。工位的 Gamma 对照链接定位到最近已有调前、调后照片的一轮。恢复后实拍归档时与前两张并排，每张图都可下载原件。SDK 回执可展开查看，完整原件也随成果包导出。
+ 
+ 讲师在相机采流后展开「讲师演示」，保存期初 ISP，保持机位和光照固定，再点「拍摄曝光对照」。工作台使用同一手动模拟增益拍摄调前、调后图，将曝光时间按传感器行周期缩短约一半，独立核对前后读值并恢复期初配置。看到「对照完成，原值已恢复」后，即可查看两张实拍并将证据导入个人成果包。曝光、增益、对比度、锐度和白平衡仍可选看归档实拍。
+ 
+diff --git a/mcp/bridge.mjs b/mcp/bridge.mjs
+--- a/mcp/bridge.mjs
++++ b/mcp/bridge.mjs
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env node
+ /** Bounded stdio MCP transport for the reviewed d-obs camera tools. Node >= 22. */
+-import { constants } from 'node:fs';
++import { constants, readFileSync } from 'node:fs';
+ import { access, open, realpath } from 'node:fs/promises';
+ import { homedir } from 'node:os';
+ import path from 'node:path';
+@@ -15,7 +15,7 @@
+ const modulePath = fileURLToPath(import.meta.url);
+ const protocols = new Set(['2024-11-05', '2025-03-26', '2025-06-18']);
+ const onboarding = process.env.RDK_CAMERA_WORKSHOP_ONBOARDING === '1';
+-const PLUGIN_VERSION = '1.5.7';
++const PLUGIN_VERSION = JSON.parse(readFileSync(new URL('../plugin.json', import.meta.url), 'utf8')).version;
+ const connectionTool = {
+   name: 'vision_connection_status', description: '检查本机相机服务连接配置。首次安装或远端工具缺失时先调用；仅验证配置，不表示设备在线。',
+   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+diff --git a/mcp/server.mjs b/mcp/server.mjs
+--- a/mcp/server.mjs
++++ b/mcp/server.mjs
+@@ -18,10 +18,10 @@
+   { name:'vision_course_view',description:'用于开始或继续 Workshop。取得当前原工位的工作台地址；请用 studio_open_url 打开，无法打开时提供可点链接。原工位和进度自动保留。',inputSchema:emptySchema,annotations:readOnly },
+   { name:'vision_course_sync',description:'同步当前 Studio 工作台。空参数读取最新进度；有 patch 时把本轮真实工具回执转交给学员界面。本工具只更新工位记录。',inputSchema:{type:'object',properties:{patch:guideSchema,clearBlockers:{type:'array',items:{type:'string'}}},additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false} },
+   { name:'vision_course_camera',description:'在当前已关联的相机实验里拍照、采集 RAW/ISP/渲染三图或重试渲染。用于「帮我拍张照」「采集基线图」。拍摄异步执行，调用回执仅表示开始。照片、三图和原件下载在返回的工作台，可通过只读 vision_course_camera_status 查询验收状态。',inputSchema:{type:'object',properties:{action:{type:'string',enum:['photo','baseline','retake','render']},scene:{type:'string',minLength:1,maxLength:100}},required:['action'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false} },
+-  { name:'vision_course_camera_status',description:'只读查询原工位实际相机实验关联（cameraBinding）、最近预检（latestPreflight）、照片和三图进度。绑定以工位记录为准；聊天的 device_boundary 是通用设备工具范围。查询不会重新探测或采图。',inputSchema:emptySchema,annotations:readOnly },
++  { name:'vision_course_camera_status',description:'只读查询原工位实际相机实验关联（cameraBinding）、最近预检（latestPreflight）、照片和三图进度。绑定以工位记录为准；聊天的 device_boundary 是通用设备工具范围。查询不会重新探测或采图。要展示照片、基线图请打开返回的 url，按 presentation.archivedFrames 说明已归档项。',inputSchema:emptySchema,annotations:readOnly },
+   { name:'vision_course_preflight',description:'检查工位相机服务、X5 板端连接、已开启相机流的实时帧。run:true 发起检查，空参数读取本轮状态。有 run:true 时会记录本轮设备回执。',inputSchema:{type:'object',properties:{run:{type:'boolean'}},additionalProperties:false},annotations:{...readOnly,readOnlyHint:false,idempotentHint:false} },
+   { name:'vision_course_isp',description:'课堂 Gamma 和单项 ISP。save 保存期初；gamma 执行两轮 Gamma；decision 记录 Gamma 取舍。learner_options 读取本工位可写项；learner_apply 仅接受一个 field、回读 expected 和候选 value；learner_decision 按 trial 记录取舍。revert 恢复原值；restore 恢复并停流。异步受理后查询 vision_course_isp_status。',inputSchema:{type:'object',properties:{action:{type:'string',enum:['save','gamma','decision','reload','revert','restore','learner_options','learner_apply','learner_decision']},goal:{type:'string',minLength:1,maxLength:180},round:{type:'integer',enum:[1,2]},choice:{type:'string',enum:['keep','restore']},reason:{type:'string',minLength:1,maxLength:180},field:{type:'string',pattern:'^[a-zA-Z]{1,40}$'},expected:{type:'number'},value:{type:'number'},trial:{type:'integer',minimum:1}},required:['action'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false} },
+-  { name:'vision_course_isp_status',description:'查询工位原始快照、单项实操、恢复、独立回读与停流进度，返回回执 ID、哈希和工位页面链接。',inputSchema:emptySchema,annotations:readOnly },
++  { name:'vision_course_isp_status',description:'只读查询原工位 ISP、恢复和 Gamma 对照。要「看图」用返回的 url 让 Studio 打开原工位；presentation.archivedFrames 列出本轮已归档图。归档与预览打开分别按实际回执报告。',inputSchema:emptySchema,annotations:readOnly },
+ ];
+ 
+ const content=data=>({content:[{type:'text',text:JSON.stringify(data)}],isError:false});
+diff --git a/mcp/workbench-session.mjs b/mcp/workbench-session.mjs
+--- a/mcp/workbench-session.mjs
++++ b/mcp/workbench-session.mjs
+@@ -103,7 +103,8 @@
+       target.searchParams.set('panel','capture');
+       return {url:target.href,...captureResult,
+         cameraBinding:{source:'workbench',status:experimentId?'bound':'unbound',experimentId},
+-        baselineRequested:Boolean(captureResult.capture?.scene),latestPreflight:preflight??null};
++        baselineRequested:Boolean(captureResult.capture?.scene),latestPreflight:preflight??null,
++        presentation:{panel:'capture',archivedFrames:Object.keys(captureResult.capture?.assets??{})}};
+     }
+     throw new Error('camera_status_changed');
+   },async preflight(run) {
+@@ -115,7 +116,13 @@
+     const url=await open();
+     const target=new URL(url);
+     target.searchParams.set('panel','isp');
+-    return {url:target.href,...await request(url,body,'/camera/isp')};
++    const result=await request(url,body,'/camera/isp');
++    if(body) return {url:target.href,...result};
++    const round=result.isp?.rounds?.findLast(item=>item.before&&item.after);
++    if(round) target.searchParams.set('round',String(round.number));
++    return {url:target.href,...result,presentation:{panel:'isp',
++      ...(round?{round:round.number}:{}),
++      archivedFrames:['before','after','restored'].filter(name=>round?.[name])}};
+   }};
+ }
+ 
+diff --git a/mcp/workbench.mjs b/mcp/workbench.mjs
+--- a/mcp/workbench.mjs
++++ b/mcp/workbench.mjs
+@@ -13,6 +13,7 @@
+ const cameraErrors=new Set(['camera_unconfigured','camera_configuration_invalid','camera_service_unreachable','camera_auth_required',
+   'camera_archive_missing','camera_response_invalid','camera_service_error','camera_frame_integrity_failed','camera_binding_invalid']);
+ const captureActions=new Set(['photo','baseline','retake','render']);
++const rawReplayCaptureMetadataRequired='vision_raw_replay_capture_metadata_required';
+ const unconfirmedCapture=new Set(['camera_capture_unconfirmed','vision_device_transport_failed']);
+ const evidenceErrors=new Set(['training_receipt_unconfigured','training_receipt_invalid','board_archive_unconfigured','board_receipt_pending',
+   'board_model_mismatch','board_receipt_changed','board_asset_missing','board_asset_integrity_failed','evidence_file_invalid']);
+@@ -500,6 +501,9 @@
+     if(action==='render'&&(!next.assets.raw||next.assets.render)) throw new Error('camera_render_raw_required');
+     if(action==='baseline'&&next.scene!==scene.trim()) throw new Error('camera_scene_changed');
+     if(action==='baseline'&&next.assets.raw&&next.assets.isp&&next.assets.render&&!next.recording) return previous;
++    if((action==='baseline'||action==='render')&&next.errors.render===rawReplayCaptureMetadataRequired) {
++      throw new Error(next.errors.render);
++    }
+     if(action==='baseline'&&['raw','isp','render'].some(kind=>unconfirmedCapture.has(next.errors[kind]))||
+        action==='render'&&unconfirmedCapture.has(next.errors.render)) throw new Error('camera_capture_unconfirmed');
+     delete next.recording;
+@@ -734,7 +738,7 @@
+         const capture=queueCapture(body.action,body.scene);
+         res.writeHead(202).end(JSON.stringify({capture}));
+       } catch(error) {
+-        const code=/^camera_[a-z0-9_]{1,90}$/.test(error.message)?error.message:'camera_service_error';
++        const code=error.message===rawReplayCaptureMetadataRequired||/^camera_[a-z0-9_]{1,90}$/.test(error.message)?error.message:'camera_service_error';
+         res.setHeader('Content-Type','application/json; charset=utf-8');
+         res.writeHead(code==='camera_archive_missing'?404:code==='camera_capture_busy'?409:422).end(JSON.stringify({error:code}));
+       }
+diff --git a/skills/rdk-camera-workshop/SKILL.md b/skills/rdk-camera-workshop/SKILL.md
+--- a/skills/rdk-camera-workshop/SKILL.md
++++ b/skills/rdk-camera-workshop/SKILL.md
+@@ -1,7 +1,7 @@
+ ---
+ name: rdk-camera-workshop
+ description: 在 RDK Studio 或兼容 MCP 宿主中，将新型号资料核对、适配缺口、点亮、稳定性检查、看图 ISP 调试和恢复交付串成有证据的 AI 相机流程。用于“新相机适配”“相机全流程 AI 化”“从 Datasheet 点亮相机”“自然语言相机调试”“ISP 调优”“camera bringup”，也处理已支持相机、USB 最小闭环、MIPI 失败及相关闪连排查。通用方法可复用；实际驱动和可执行能力取当前适配器与回执，不宣称自动支持任意 Sensor。不用于 YOLO 或 VLM 部署。
+-trigger: RDK Camera AI, 开始 Workshop, 开始Workshop, 继续 Workshop, 继续Workshop, 调节 ISP, 调节ISP, 带我调ISP, 帮我拍张照, 相机拍照, 相机点亮, 新相机适配, 新sensor, 相机全流程AI, Datasheet点亮, 相机调试, ISP, IMX415, MIPI, USB 闪连, RAW, camera bringup, camera tuning
++trigger: RDK Camera AI, 开始 Workshop, 开始Workshop, 继续 Workshop, 继续Workshop, 调节 ISP, 调节ISP, 带我调ISP, 帮我拍张照, 相机拍照, 查看相机原件, Gamma 对照图, 展示 Gamma 实拍, 相机点亮, 新相机适配, 新sensor, 相机全流程AI, Datasheet点亮, 相机调试, ISP, IMX415, MIPI, USB 闪连, RAW, camera bringup, camera tuning
+ version: 1.2.0
+ risk: medium
+ requires_board: false
+@@ -15,10 +15,12 @@
+ ## Studio 对话入口
+ 
+ - 使用 Studio 已启用的插件技能。按本轮目录调用完整工具名，`rdk-camera-workshop` 是插件名称。课堂工具使用 `mcp__rdk-vision-workshop__` 前缀，相机服务工具使用 `mcp__rdk-camera-workshop__` 前缀。延迟加载时给 `load_tools` 传目录里的完整工具名。找不到对应工具就报告缺失能力；等待审批时保留同一操作。禁止通过终端或 SSH 读取连接凭据、直接调用后台，或要求用户把插件安装目录绑定成项目。
+-- 用户说「开始 Workshop」「继续 Workshop」时，先调用 `mcp__rdk-vision-workshop__vision_course_view({})` 取得原工位，立即用 `studio_open_url` 打开。宿主网页工具不可用时提供可点击的原工位链接。之后调用 `mcp__rdk-vision-workshop__vision_course_camera_status({})`，按课程技能推进当前一步。工具仅返回地址时称工作台链接已准备好，宿主返回加载回执后称已打开。
++- 用户说「开始 Workshop」「继续 Workshop」时，先调用 `mcp__rdk-vision-workshop__vision_course_view({})` 取得原工位，立即用 `studio_open_url({url,target:'local'})` 请求打开。宿主网页工具不可用时提供可点击的原工位链接。之后调用 `mcp__rdk-vision-workshop__vision_course_camera_status({})`，按课程技能推进当前一步。工具仅返回地址时称工作台链接已准备好，宿主返回加载回执后称已打开。
+ - 查询连接或绑定时，工位以 `cameraBinding` 为准；通用工具的聊天 `device_boundary`、设备库的 SSH 探测和工位预检各有自己的回执。按 `latestPreflight` 的时间、阶段及错误说明最近一次检查。已有旧容量阻塞回执时，可在服务更新后通过授权的预检重查同一实验。`vision_device_archive_capacity` 表示实际归档空间不足且本次设备操作尚未执行；保留相机回执，核对存储额度。无实时预检则说明待查。
+ - 用户要调 ISP 时检查原工位的 `mcp__rdk-vision-workshop__vision_course_isp_status({})` 和本实验 `mcp__rdk-camera-workshop__vision_camera_readiness`。课堂调参通过 `mcp__rdk-vision-workshop__vision_course_isp` 及其状态工具。日常自主调参使用已绑定实验的 AI Debug 原子工具。始终使用当前工位关联的实验；有恢复阻塞、快照变化或缺工具时先处理实际阻塞。生成候选使用与保存的基线哈希匹配的新帧，应用后核对参数回读和新帧。不可用读回摘要冒充完整配置或切到其他旧实验继续。
+ - 日常拍照用原工位的 `vision_course_camera` 动作 `photo`。展示照片用 `vision_course_camera_status`，沿用已归档的图。进入课堂基线阶段或用户要求采三图时才用 `baseline` 采集 RAW、ISP、重渲染。`baselineRequested:false` 表示三图尚未发起。
++- 用户要看 Gamma 调前、调后或恢复图时，调用只读 `vision_course_isp_status`，按 `presentation.archivedFrames` 核对本轮已有图；照片和基线走 `vision_course_camera_status`。用返回的 `url` 请求打开原工位，对照区可逐张下载原件。缺图时说明缺哪一张；「看图」本身不发起采集或写 ISP。
++- 用户明确要自制拼图或 HTML 文件时，在当前会话工作区产出对应文件；仅当宿主目录提供 `studio_open_local_preview` 时，分别用 `studio_open_local_preview({path: 成品路径, openSystemApp:false})` 交付用户要求的成品。仅采信 `__type:'studio_local_preview'`、`ok:true`、`fileName`、`bytes` 均匹配的回执。图片还须有 `previewKind:'image'` 和 `imageUrl`，HTML 须有 `previewKind:'file'` 和 `fileUrl`。可根据回执说明已提供图片预览或 HTML 下载入口。写脚本、运行命令、文件落盘或请求打开的回执只证明各自阶段。没有对应交付回执时说明原因并提供原工位链接；不要把脚本卡当作图片或报告，也不要承诺用户界面已加载。
+ - 查询相机服务时用 `mcp__rdk-camera-workshop__vision_workshop_runtime_status({})`；服务工具缺失时用同一前缀的 `vision_connection_status` 做连接自检。适配、恢复或资格条件取实际 readiness、workflow 和工具回执。
+ 
+ ## 能力与操作范围
+diff --git a/skills/rdk-vision-workshop/SKILL.md b/skills/rdk-vision-workshop/SKILL.md
+--- a/skills/rdk-vision-workshop/SKILL.md
++++ b/skills/rdk-vision-workshop/SKILL.md
+@@ -2,7 +2,7 @@
+ name: rdk-vision-workshop
+ description: 在 Studio 按 180 分钟方案带学员完成 X5 + IMX415 点亮、Gamma 调优、RoboGO 异步训练、A/B/C 分流、实时检测和个人成果打包。
+ version: 0.7.4
+-trigger: 开始 Workshop, 开始Workshop, 继续 Workshop, 继续Workshop, 打开课堂工作台, 视觉 Workshop,视觉 Pipeline,相机与 BPU 工作坊,继续视觉任务,相机训练部署全流程,采集基线图,三张基线图,展示基线图
++trigger: 开始 Workshop, 开始Workshop, 继续 Workshop, 继续Workshop, 打开课堂工作台, 视觉 Workshop,视觉 Pipeline,相机与 BPU 工作坊,继续视觉任务,相机训练部署全流程,采集基线图,三张基线图,展示基线图,查看 Gamma 对照图,展示 Gamma 实拍
+ risk: medium
+ requires_board: false
+ permissions: network
+@@ -14,7 +14,7 @@
+ 
+ 本课程依据 [飞书方案](https://horizonrobotics.feishu.cn/docx/UdhhdVXYXoPLgfxmZ32cJBSAnRb)。课程执行方法见 [操作稿](references/course-runbook.md)，实机交接见 [检测交接](references/tuning-handoff.md)。
+ 
+-1. 用户要开始或继续时先调用 `mcp__rdk-vision-workshop__vision_course_view({})` 取得原工位，并调用 `studio_open_url` 打开。宿主没有网页工具时给出可点击的原工位链接。然后调用 `vision_course_camera_status` 读取工位绑定及最近预检，再使用 `vision_course_next` 推进当前一步。已知课堂开始时间时传实际经过的 `elapsedMinutes`，明确彩排时标注模拟时间。查看总课表用 `vision_course_plan`。
++1. 用户要开始或继续时先调用 `mcp__rdk-vision-workshop__vision_course_view({})` 取得原工位，并调用 `studio_open_url({url,target:'local'})` 请求打开。宿主没有网页工具时给出可点击的原工位链接。然后调用 `vision_course_camera_status` 读取工位绑定及最近预检，再使用 `vision_course_next` 推进当前一步。已知课堂开始时间时传实际经过的 `elapsedMinutes`，明确彩排时标注模拟时间。查看总课表用 `vision_course_plan`。
+ 2. 工作台打开后，用 `vision_course_sync` 的空参数读取当前记录。完成实际工具操作后，用 `{patch:{evidence:{...}}}` 把本轮实际回执引用同步到工作台；确实解决的阻塞放入 `clearBlockers`。根据宿主对本地记录更新的权限执行。每轮只给学员当前一步，说明完成条件和证据。宿主有可用且已授权的工具时，从相机、GPU 或板端工具执行当前一步。实际工具缺失时指出哪项配置或操作需要用户或助教处理。不要把课程工具的规划回执当成执行回执。
+ 3. 相机工具返回实际实验 ID 后，把 `camera:{experimentId}` 写入 `vision_course_sync` 的 `patch`。有实际相机 AI Run 后同步 `{camera:{experimentId,runId}}`。提示学员在工作台核对这轮新帧、实际回读和采集时间，再附入成果包。
+ 4. 开场第 35–45 分钟采三种基线，第 45–50 分钟按组提交 RoboGO。收到已有 Run ID 后只查询原 Run。茶歇由助教核对，第 110 分钟个人盲选，第 120 分钟助教预检，第 130 分钟按实际产物与设备状态做 A/B/C 选择。
+@@ -23,6 +23,8 @@
+ 
+ 确认相机可用时先读 `vision_course_camera_status` 的 `cameraBinding` 和 `latestPreflight`，工位关联以实际实验记录为准。需要实时检查时按宿主审批调用 `vision_course_preflight({run:true})`，随后通过 `vision_course_camera_status` 查询进度。分别报告服务、板卡和两帧推进的回执。工位未关联时打开关联入口，相机未开流时在原实验点亮，历史条数上限回执可在服务更新后重查原实验；`vision_device_archive_capacity` 时核对实际归档空间，保留旧回执。预检通过后才报告本轮实时画面。
+ 
++用户只要看图时，从 `vision_course_isp_status`（Gamma）或 `vision_course_camera_status`（照片、基线）拿原工位链接，按 `presentation.archivedFrames` 说明本轮已归档项和缺项，在工作台逐张下载。无需生成脚本或运行设备操作。请求打开和实际加载按各自回执报告。自制图片和 HTML 分别用宿主 `studio_open_local_preview({path: 成品路径, openSystemApp:false})` 交付，仅在工具可用时调用。核对 `__type:'studio_local_preview'`、`ok:true`、文件名、字节数以及图片的 `imageUrl` 或 HTML 的 `fileUrl`；有对应回执才报告入口已提供。
++
+ 课堂 Gamma 使用工位 ISP 工具。先 `vision_course_isp` 的 `save` 保存原始版本，再按已确认的学员观察目标执行 `gamma`。使用 `vision_course_isp_status` 查看实际应用、回读和前后图；学员记录保留或恢复理由。先 `revert` 取得恢复后新图，再用 `reload` 验证同一个候选。最后按课堂授权调用 `restore` 恢复并停流。候选不符合单模块要求时按失败回执说明缺项；恢复结果不明确时继续核对同一个原始快照。
+ 
+ 拍照和基线图先读取 `vision_course_camera_status`。`baselineRequested:false` 只表示未发起三图。用户说「看基线图」「这几张展示给我看」时，打开工具返回的工作台链接，展示当前工位已归档的图，保持只读。用户明确要拍照时，用 `vision_course_camera` 的 `photo`。采三图用 `baseline`，传学员确认的固定场景；场景变更用 `retake`。需要实验绑定时先打开工作台关联本工位。操作后查询原状态，确定哪一项成功，再展示带原件下载的入口。工具不可用时指出缺失工具和工作台入口，通过 Studio 插件载入技能；不得用终端、SSH、读取凭据或绑定插件安装目录绕过本轮权限。只读排查禁止调用烧录、写设备或修改 ISP 的工具。
+diff --git a/web/app.mjs b/web/app.mjs
+--- a/web/app.mjs
++++ b/web/app.mjs
+@@ -46,6 +46,8 @@
+   return label;
+ }
+ const key=location.hash.slice(1);
++const pageParams=new URLSearchParams(location.search);
++const initialPanel=pageParams.get('panel');
+ const storageKey='rdk-vision-classroom-v2:'+key;
+ const response=await fetch('/course.json?view='+encodeURIComponent(key));
+ if (!response.ok) throw new Error('课程数据无法读取');
+@@ -110,7 +112,7 @@
+   $('frame-dialog').showModal();
+ }
+ const ispPanel=createIspPanel({key,$,element,button,openDialog,field,notify,getBinding:()=>report?.resume.camera,
+-  compareFrames,onEvidenceChange:renderDeliveryChecklist,
++  compareFrames,onEvidenceChange:renderDeliveryChecklist,initialRound:initialPanel==='isp'?Number(pageParams.get('round')):null,
+   pick:(pair,readback)=>{
+     for(const photo of Object.values(photos)) URL.revokeObjectURL(photo.url);
+     photos=Object.fromEntries(pair.map((file,index)=>[index?'candidate':'original',{file,url:URL.createObjectURL(file)}]));
+@@ -559,6 +561,12 @@
+   }
+   if(['data','check_run','train','break'].includes(next?.stageId)) footer.append(roboGoLink(report.training.source==='robogo'?report.training.receipt:undefined),
+     button('记录 RoboGO Run',editRun,next?.stageId==='check_run'?'primary':'ghost'));
++  if(['data','train'].includes(next?.stageId)&&!report.training.id&&!roboGoStatus.uncertainTraining) {
++    footer.append(button('跳过本组训练',()=>openDialog('跳过本组训练',[
++      element('p','继续相机和 ISP 步骤。到分流时，可使用课程预置模型或记录讲师演示。'),
++    ],()=>save({blockers:{training_image_unavailable:'本工位本次不提交训练，分流时使用预置模型或讲师演示。'}},
++      '已跳过训练，继续当前课堂步骤'),'跳过训练'),'plain'));
++  }
+   if(next?.stageId==='await_route') footer.append(backupButton());
+   if(['resolve_blocker','recovery'].includes(next?.kind)) footer.append(button('更新阻塞回执',editBlockers,'primary'));
+   if(next && next.stageId!=='route') footer.append(button('复制给 Studio 助手',async()=>{
+@@ -591,7 +599,7 @@
+   if(!training) return;
+   const elapsed=report.resume.elapsedMinutes;
+   const panel=$('parallel-training');
+-  panel.hidden=!training.id&&(elapsed===undefined||elapsed<training.submitStart);
++  panel.hidden=!training.id||!['submitted','queued','running'].includes(training.state);
+   if(panel.hidden) return;
+   $('parallel-training-title').textContent=(training.id?'RoboGO 原 Run':'RoboGO 训练')+' · '+(runStatus[training.state]??'待核对');
+   if(training.source==='external') $('parallel-training-title').textContent='本组外部训练 · '+(runStatus[training.state]??'待核对');
+@@ -610,13 +618,15 @@
+   const currentProof=Boolean(model&&boardProof?.receipt.modelSha256===model&&
+     (path==='A'||path==='B')&&boardProof.path===path);
+   const demoRecorded=Boolean(path==='C'&&evidence.demo_reference);
++  const demoWithoutDevice=Boolean(path==='C'&&!evidence.original_snapshot&&evidence.device_unused);
+   const rows=[
+-    ['两轮 Gamma 实拍与回读',summary.rounds===2,summary.rounds+' / 2 轮已齐备'],
++    ...(path!=='C'||evidence.original_snapshot||summary.rounds?[['两轮 Gamma 实拍与回读',summary.rounds===2,summary.rounds+' / 2 轮已齐备']]:[]),
+     [path==='C'?'讲师演示':'板端检测',demoRecorded||Boolean(currentProof&&target&&target!=='未验证'),path==='C'?
+       (demoRecorded?'已记录演示来源':'等待演示来源'):currentProof?
+         (target&&target!=='未验证'?target:'已有板端回执，待记录目标判定'):'等待本工位板端回执'],
+-    ['期初 ISP 恢复与停流',summary.restored||Boolean(evidence.restoration_and_release),
+-      summary.restored?'独立回读一致，已停止采流':evidence.restoration_and_release?'已登记恢复回执':'等待恢复与停流回执'],
++    ['期初 ISP 恢复与停流',summary.restored||Boolean(evidence.restoration_and_release)||demoWithoutDevice,
++      summary.restored?'独立回读一致，已停止采流':evidence.restoration_and_release?'已登记恢复回执':
++        demoWithoutDevice?'已记录本工位未启用设备':'等待恢复与停流回执'],
+   ];
+   $('delivery-checklist').replaceChildren(...rows.map(([title,complete,detail])=>{
+     const row=element('li');
+@@ -827,6 +837,5 @@
+ setInterval(capturePanel.poll,1800);
+ setInterval(preflightPanel.poll,1800);
+ setInterval(ispPanel.poll,1800);
+-const initialPanel=new URLSearchParams(location.search).get('panel');
+ if(['capture','preflight','isp'].includes(initialPanel)) showPanel('camera-'+initialPanel);
+ setInterval(boardPanel.poll,900);
+diff --git a/web/board-panel.mjs b/web/board-panel.mjs
+--- a/web/board-panel.mjs
++++ b/web/board-panel.mjs
+@@ -4,7 +4,7 @@
+ const liveWindowMs=3500;
+ const errors={board_archive_unconfigured:'请用 Studio 在本工位运行课程检测入口并配置其结果目录。',
+   board_receipt_pending:'板端尚未写出回执。请确认本组任务已启动，再刷新。',
+-  board_model_mismatch:'板上模型与本工位训练产物的哈希不一致，请核对实际 .bin。',
++  board_model_mismatch:'板端模型与本工位所选模型的 SHA-256 不一致，请核对当前路径使用的 .bin 文件。',
+   board_receipt_changed:'板端已写出新的运行回执。请刷新板端结果后再对照或留证。',
+   board_asset_integrity_failed:'文件字节或配置回读和板端回执不一致，请检查原始制品。',
+   board_asset_missing:'这份证据还没有归档，请刷新或核对板端结果。'};
+diff --git a/web/capture-panel.mjs b/web/capture-panel.mjs
+--- a/web/capture-panel.mjs
++++ b/web/capture-panel.mjs
+@@ -1,5 +1,5 @@
+ const labels={photo:'本轮照片',raw:'Bayer RAW',isp:'ISP 显示图',render:'RAW 重渲染'};
+-const descriptions={raw:'传感器采样的灰度预览，可下载原始 Bayer 文件。',isp:'相机经当前 ISP 输出的画面。',render:'使用这组 RAW 和已回读配置重渲染。'};
++const descriptions={raw:'传感器 Bayer 采样的预览，可下载原始文件。',isp:'相机经当前 ISP 输出的画面。',render:'使用这组 RAW 和已回读配置重渲染。'};
+ const messages={
+   camera_binding_invalid:'先关联本工位的相机实验。',
+   camera_capture_busy:'相机正在采集。请先等待当前操作结束。',
+@@ -143,7 +143,8 @@
+     grid.replaceChildren();actions.replaceChildren();
+     const active=busy||Boolean(capture?.running);
+     const complete=['raw','isp','render'].every(kind=>capture?.assets[kind]);
+-    status.textContent=active?'正在采集':complete?'三图已归档':!bindingId?'未关联':'待采集或补齐';
++    const replayNeedsNewRaw=capture?.errors.render==='vision_raw_replay_capture_metadata_required';
++    status.textContent=active?'正在采集':complete?'三图已归档':!bindingId?'未关联':replayNeedsNewRaw?'重渲染需重新采集 RAW':'待采集或补齐';
+     status.className='status-tag'+(complete&&!active?' ok':'');
+     help.textContent=note||(capture?.recording?'已取到部分回执，课程记录保存失败。请保留原件。':!bindingId?'先在上方关联本工位相机实验。'
+       :capture?.scene?'固定场景 · '+capture.scene+'。RAW 与 ISP 分次采集，渲染使用同组 RAW。'
+@@ -156,9 +157,9 @@
+     actions.append(button('拍一张照片',()=>start('photo'),'ghost'));
+     if(capture?.scene&&!complete) {
+       const unconfirmed=['raw','isp','render'].some(kind=>unconfirmedCapture.has(capture.errors[kind]));
+-      if(!unconfirmed) actions.append(button('继续补齐三图',()=>start('baseline',capture.scene),'primary'));
+-      actions.append(button('重采三图',()=>askScene('retake','重采一组基线'),unconfirmed?'primary':'plain'));
+-      if(capture.assets.raw&&!capture.assets.render&&!unconfirmedCapture.has(capture.errors.render)) {
++      if(!unconfirmed&&!replayNeedsNewRaw) actions.append(button('继续补齐三图',()=>start('baseline',capture.scene),'primary'));
++      actions.append(button('重采三图',()=>askScene('retake','重采一组基线'),unconfirmed||replayNeedsNewRaw?'primary':'plain'));
++      if(capture.assets.raw&&!capture.assets.render&&!replayNeedsNewRaw&&!unconfirmedCapture.has(capture.errors.render)) {
+         actions.append(button('重试本组渲染',()=>start('render'),'plain'));
+       }
+     } else actions.append(button(complete?'重采三图':'采集三张基线图',()=>askScene(complete?'retake':'baseline','固定场景并采集'),'primary'));
+diff --git a/web/index.html b/web/index.html
+--- a/web/index.html
++++ b/web/index.html
+@@ -55,8 +55,8 @@
+         <section id="camera-capture" class="box" aria-labelledby="capture-title">
+           <div class="action-head"><h2 id="capture-title">照片与三张基线图</h2><span id="capture-status" class="status-tag" role="status"></span></div>
+           <p id="capture-help" class="action-copy"></p>
++          <div id="capture-actions" class="button-row"></div>
+           <div id="capture-grid"></div>
+-          <div id="capture-actions" class="button-row"></div>
+         </section>
+         <section id="camera-isp" class="box" aria-labelledby="isp-title">
+           <div class="action-head"><h2 id="isp-title">ISP 调参 · 两轮 Gamma 与单项练习</h2><span id="isp-status" class="status-tag" role="status"></span></div>
+diff --git a/web/isp-panel.mjs b/web/isp-panel.mjs
+--- a/web/isp-panel.mjs
++++ b/web/isp-panel.mjs
+@@ -62,9 +62,9 @@
+   ...exposureEntries(status?.exposure,['before','after',...exposureReceipts]),
+   ...(status?.adjustments??[]).flatMap(item=>learnerEntries(item,['before','after','restored',...learnerReceipts]))];
+ 
+-export function createIspPanel({key,$,element,button,openDialog,field,notify,getBinding,pick,compareFrames,onEvidenceChange}) {
++export function createIspPanel({key,$,element,button,openDialog,field,notify,getBinding,pick,compareFrames,onEvidenceChange,initialRound}) {
+   let binding, status, posting=false, polling=false, bindingRevision=0;
+-  let imageReads=Promise.resolve();
++  let imageReads=Promise.resolve(), focusedRound=false;
+   const previews=new Map();
+   const proofOpen=new Map();
+   async function request(path='/camera/isp',body) {
+@@ -219,6 +219,12 @@
+     }
+     const caption=element('figcaption',names[name]+(value?' · '+value:''));
+     caption.append(element('small','SDK '+entry.asset.sdkTimestampNs,'isp-demo-receipt'));
++    if(cached?.file&&cached.url) {
++      const download=element('a','下载原件','button plain isp-original-download');
++      download.setAttribute('aria-label','下载'+names[name]+'原件');
++      download.href=cached.url;download.download=cached.file.name;
++      caption.append(download);
++    }
+     card.append(caption);
+     return card;
+   }
+@@ -273,6 +279,7 @@
+   }
+   function roundCard(number,round,done,busy) {
+     const card=element('article','','isp-round');
++    card.id='isp-gamma-round-'+number;
+     const current=done===number-1;
+     const head=element('div','','action-head');
+     const state=round?.decision?'已验收':round?'待记录取舍':current?'待实拍与回读':'等待上一轮';
+@@ -286,8 +293,8 @@
+       }
+       return card;
+     }
+-    const frames=element('div','','capture-cards isp-pair');
+-    for(const entry of roundEntries(round,['before','after'])) frames.append(imageCard(entry));
++    const frames=element('div','','capture-cards isp-pair'+(round.restored?' isp-triplet':''));
++    for(const entry of roundEntries(round,['before','after','restored'])) frames.append(imageCard(entry));
+     const content=element('div');
+     content.append(frames);
+     const actions=element('div','','button-row');
+@@ -302,10 +309,10 @@
+     if(round.decision) content.append(element('p','取舍 · '+(round.decision.choice==='keep'?'保留调整':'恢复原值')+' · '+round.decision.reason,'isp-decision'));
+     if(round.curveChange) content.append(curvePlot(round.curveChange));
+     const receipts=roundEntries(round,receiptFields);
+-    const restored=roundEntries(round,['restored']).map(entry=>imageCard(entry));
+-    if(receipts.length||restored.length) content.append(disclosure('round'+number,
+-      round.gammaReadback?'已核对 SDK 回读 · 查看详情':'查看本轮证据',...restored,receiptsList(receipts)));
+-    card.append(number===1&&round.decision?disclosure('completed-1','查看第 1 轮实拍与取舍',content):content);
++    if(receipts.length) content.append(disclosure('round'+number,
++      round.gammaReadback?'已核对 SDK 回读 · 查看详情':'查看本轮证据',receiptsList(receipts)));
++    card.append(number===1&&round.decision&&initialRound!==number
++      ?disclosure('completed-1','查看第 1 轮实拍与取舍',content):content);
+     return card;
+   }
+   function renderExposure(busy) {
+@@ -475,6 +482,11 @@
+     const cards=element('div','','isp-rounds');
+     for(const number of [1,2]) cards.append(roundCard(number,rounds.find(round=>round.number===number),done,busy));
+     summary.append(cards);
++    if(!focusedRound&&rounds.some(round=>round.number===initialRound)) {
++      focusedRound=true;
++      const id='isp-gamma-round-'+initialRound;
++      requestAnimationFrame(()=>$(id)?.scrollIntoView({block:'start'}));
++    }
+     if(!binding) return;
+     if(!status?.original) {
+       const save=button('保存原始 ISP',()=>start({action:'save'}),'primary');save.disabled=busy;actions.append(save);return;
+diff --git a/web/style.css b/web/style.css
+--- a/web/style.css
++++ b/web/style.css
+@@ -51,6 +51,7 @@
+ .ghost{border-color:#cbd8ed;background:#f5f8fe;color:#214476}.plain{background:transparent;color:#2851a0}
+ .button:disabled{opacity:.58;cursor:default}
+ .button-row{flex-wrap:wrap;margin-top:13px}
++#capture-actions:has(button){margin-bottom:14px}
+ .tool-hint,.run-ref{display:block;border-radius:8px;padding:9px 11px;background:#f0f5fc;color:#345378;font-family:"IBM Plex Mono",monospace;font-size:11px;overflow-wrap:anywhere;margin:10px 0}
+ .tool-details{margin:16px 0 0;color:#345378;font-size:12px}.tool-details code{display:block;margin-top:8px;overflow-wrap:anywhere}
+ .last-checked{display:block;color:var(--muted);font-size:12px;margin-bottom:8px}
+@@ -114,6 +115,9 @@
+ .isp-round h3{font-size:16px;margin:0}
+ .isp-round .action-copy{margin:8px 0}
+ .isp-pair{grid-template-columns:repeat(2,minmax(0,1fr))}
++.isp-pair.isp-triplet{grid-template-columns:repeat(3,minmax(0,1fr))}
++.isp-original-download{display:block;width:max-content;max-width:100%;margin-top:2px;padding:4px 0}
++@media(max-width:540px){.isp-pair.isp-triplet{grid-template-columns:1fr}}
+ .isp-receipt small,.isp-demo-receipt{display:block;color:var(--muted);font-size:11px;overflow-wrap:anywhere}
+ .isp-decision,.isp-demo-observation{margin:12px 0;color:#2f4e6f;font-size:13px}
+ .isp-demo summary{cursor:pointer;font-size:17px;font-weight:700}
