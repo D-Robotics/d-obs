@@ -74,7 +74,7 @@ export const OPS_OBSERVABILITY_SIMPLE_PRESENTATION_SCRIPT = `
           const body=add(options,'div');body.appendChild(check);add(body,'p','','重新运行巡检。刷新只读取当前数据。');
         }
       }
-      const simpleTabDefaults={signals:['signals/metrics','signals/logs','signals/promql'],alerts:['alerts/center'],platform:['platform/model-pool'],devices:['devices/list'],tenants:['tenants/list']};
+      const simpleTabDefaults={signals:['signals/metrics','signals/logs','signals/promql'],alerts:['alerts/center'],gateway:['gateway/overview','gateway/model-pool'],platform:['platform/general'],devices:['devices/list'],tenants:['tenants/list']};
       const simpleTabGroups=[];
       function simpleVisibleTab(tab){
         if(tab.hidden||tab.disabled||tab.getAttribute('aria-disabled')==='true'||tab.classList.contains('hidden')||tab.classList.contains('simple-role-hidden'))return false;

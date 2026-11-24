@@ -186,7 +186,7 @@ function harness(mobile = true, authGate = false) {
   return { body, document, tabs, navMain, primary, buttons, originalOrder, main, more, byId, resize, routeCalls, active: () => active, scheduled: () => scheduled };
 }
 
-const PRIMARY_VIEWS = ['overview', 'collection/tasks', 'data/assets', 'alerts/center', 'traces', 'signals', 'devices'];
+const PRIMARY_VIEWS = ['overview', 'collection/tasks', 'data/assets', 'alerts/center', 'traces', 'gateway', 'signals', 'devices'];
 const MOBILE_PRIMARY_VIEWS = ['overview', 'alerts/center', 'traces', 'signals', 'devices'];
 
 function assertClosed(h: ReturnType<typeof harness>) {
@@ -195,7 +195,7 @@ function assertClosed(h: ReturnType<typeof harness>) {
   assert.equal(h.more.getAttribute('aria-expanded'), 'false');
 }
 
-test('实际页面提供七个直接工作区，其余路由与看板高级操作按需展开', () => {
+test('实际页面提供八个直接工作区，其余路由与看板高级操作按需展开', () => {
   const h = harness(false);
   // Application links have href; only workspace route buttons have data-view.
   assert.deepEqual(h.navMain.querySelectorAll('.module-tab').filter(button => button.dataset.view).map(button => button.dataset.view), PRIMARY_VIEWS);

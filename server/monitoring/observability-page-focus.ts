@@ -24,7 +24,6 @@ export const OPS_OBSERVABILITY_SCRIPT_FOCUS = `
         'alerts/strategies':'advanced','alerts/metrics':'advanced','alerts/objects':'advanced',
         'alerts/channels':'advanced','alerts/silence':'advanced'
       });
-      moduleNavKey['platform/model-pool']='platform';
       function syncFocusContext(){
         const overview=state.view==='overview';
         const incidentFact=$('globalIncidentFact');

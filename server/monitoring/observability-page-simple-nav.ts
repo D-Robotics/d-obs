@@ -30,7 +30,7 @@ export const OPS_OBSERVABILITY_SIMPLE_NAV_SCRIPT = String.raw`
         const nav=document.querySelector('.module-tabs');
         if(!nav||nav.dataset.simpleNavVersion==='1')return;
         if(!nav.id&&!document.getElementById('moduleTabs'))nav.id='moduleTabs';
-        const primaryRoutes=['overview','alerts/center','traces','signals','devices'];
+        const primaryRoutes=['overview','alerts/center','traces','gateway','signals','devices'];
         const groupedRoutes={
           data:['investigate','operator-metrics','signals/panels','signals/quality','service-levels','skill-loop','evolution'],
           infra:['data-health','database'],
@@ -134,7 +134,7 @@ export const OPS_OBSERVABILITY_SIMPLE_NAV_SCRIPT = String.raw`
           Object.keys(groups).forEach(key=>groups[key].items.querySelectorAll('.module-tab[data-view]').forEach(tab=>{navGroupByView[route(tab)]=key}));
         }
         if(typeof moduleNavKey!=='undefined')Object.assign(moduleNavKey,{
-          'platform/model-pool':'platform','platform/general':'platform','platform/probing':'platform',
+          'gateway/overview':'gateway','gateway/model-pool':'gateway','platform/general':'platform','platform/probing':'platform',
           'platform/logs':'platform','platform/heal':'platform','platform/accounts':'platform',
           'signals/metrics':'signals','signals/logs':'signals','signals/promql':'signals',
           'signals/catalog':'signals','signals/tokens':'signals',
