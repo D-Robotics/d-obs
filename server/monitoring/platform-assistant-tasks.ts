@@ -22,7 +22,7 @@ const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const stamp = z.string().datetime();
 const statusSchema = z.enum(['running', 'awaiting_confirmation', 'completed', 'failed', 'interrupted']);
 const feedbackSchema = z.enum(['helpful', 'not_helpful']);
-const contextSchema = z.record(z.unknown());
+const contextSchema = z.record(z.string(), z.unknown());
 const historySchema = z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(8_000) }).strict()).max(12);
 const operationSchema = z.object({ id: z.string().min(1).max(512), description: z.string().max(500),
   status: z.number().int().min(100).max(599), ok: z.boolean(), data: z.unknown() }).strict();

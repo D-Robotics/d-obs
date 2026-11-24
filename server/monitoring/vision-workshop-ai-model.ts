@@ -30,7 +30,7 @@ type VisionMessage = { role: 'system' | 'user'; content: string | Array<{ type: 
 export type VisionDebugModelCaller = (request: { messages: VisionMessage[]; tools: unknown[]; tool_choice: unknown; signal?: AbortSignal }) => Promise<{ model: string; toolCalls: Array<{ name: string; arguments: string }> }>;
 const decisionSchema = z.object({
   action: z.enum(['adjust', 'keep', 'restore', 'stop']),
-  values: z.record(z.union([z.number().finite(), z.boolean()])).optional(),
+  values: z.record(z.string(), z.union([z.number().finite(), z.boolean()])).optional(),
   patches: z.array(z.object({ path: z.string(), value: z.number().finite(), reason: z.string().trim().min(1).max(240) }).strict()).min(1).max(3).optional(),
   notes: z.string().trim().min(1).max(1600),
   assessment: z.object({ improved: z.boolean(), sceneUsable: z.boolean(), goalSatisfied: z.boolean(),

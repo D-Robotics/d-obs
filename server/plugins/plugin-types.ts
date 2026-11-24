@@ -9,7 +9,7 @@ export type JsonSchema = {
 };
 const id = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
 const version = z.string().regex(/^\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9.-]{0,63})?$/).max(100);
-const jsonRecord = z.record(z.unknown());
+const jsonRecord = z.record(z.string(), z.unknown());
 const schema = z.custom<JsonSchema>((v) => !!v && typeof v === 'object' && !Array.isArray(v));
 export const pluginManifestSchema = z.object({
   schemaVersion: z.literal(1), id, version, label: z.string().min(1).max(120), description: z.string().max(4000),

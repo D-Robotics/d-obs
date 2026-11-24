@@ -15,7 +15,7 @@ const textSchema = z.string().trim().min(1).max(160).refine((value) => !/[\x00-\
 const operationSchema = z.enum(EDGE_LLM_JOB_OPERATIONS);
 const runnerStatusSchema = z.enum(['queued', 'running', 'succeeded', 'failed', 'unknown']);
 const timestampSchema = z.string().max(40).refine((value) => /^\d{4}-\d\d-\d\dT/.test(value) && Number.isFinite(Date.parse(value)));
-const jsonObjectSchema = z.record(z.unknown());
+const jsonObjectSchema = z.record(z.string(), z.unknown());
 const terminal = (status: string) => status === 'succeeded' || status === 'failed' || status === 'superseded';
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function canonical(value: unknown): unknown { if (Array.isArray(value)) return value.map(canonical); if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)])); return value; }
