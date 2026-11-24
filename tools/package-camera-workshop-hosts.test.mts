@@ -36,7 +36,7 @@ test('host distributions remain relocatable with complete hashed payloads and se
       const child = spawnSync(process.execPath, args, { cwd: temporary, input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26' } }) + '\n', encoding: 'utf8' });
       assert.equal(child.status, 0); assert.equal(JSON.parse(child.stdout).result.protocolVersion, '2025-03-26');
       const onboarding = spawnSync(process.execPath, args, { cwd: temporary, env: { ...process.env, ...config.env, RDK_CAMERA_WORKSHOP_CONFIG: path.join(temporary, 'missing-config') }, input: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) + '\n', encoding: 'utf8' });
-      assert.equal(onboarding.status, 0); assert.deepEqual(JSON.parse(onboarding.stdout).result.tools.map((tool: {name: string}) => tool.name), ['vision_connection_status']);
+      assert.equal(onboarding.status, 0); assert.deepEqual(JSON.parse(onboarding.stdout).result.tools.map((tool: {name: string}) => tool.name), ['vision_connection_status', 'vision_plugin_version']);
       const fallback = spawnSync(process.execPath, [path.join(relocated, 'mcp/setup.mjs'), 'client-config'], { cwd: temporary, encoding: 'utf8' });
       assert.equal(fallback.status, 0); assert.ok(JSON.parse(fallback.stdout).mcpServers['rdk-camera-workshop'].args[0].endsWith(path.join(host, 'mcp/bridge.mjs')));
       assert.ok(!(await readdir(plugin)).includes('plugin.json'));

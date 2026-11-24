@@ -30,14 +30,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
-      - name: Tool and plugin regressions
-        run: node --import tsx --test tools/*.test.mjs tools/*.test.mts plugins/rdk-camera-workshop/mcp/*.test.mjs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install numerical fixture dependency
-        run: python3 -m pip install 'numpy>=1.24,<3'
+      - name: Install Python test dependencies
+        run: python3 -m pip install 'numpy>=1.24,<3' Pillow
+      - run: npm test
+      - name: Tool and plugin regressions
+        run: node --import tsx --test tools/*.test.mjs tools/*.test.mts plugins/rdk-camera-workshop/mcp/*.test.mjs
       - name: Python camera and release controller regressions
         run: |
           set -eu

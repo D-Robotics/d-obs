@@ -806,7 +806,7 @@ const alertConfigSchema = z
         postgres: z.array(z.string().trim().min(2).max(160)).max(30),
       })
       .strict(),
-    rules: z.record(z.enum(ruleKeys), ruleSchema),
+    rules: z.partialRecord(z.enum(ruleKeys), ruleSchema),
     preservedRules: z.record(z.string(), z.unknown()).default({}),
   })
   .strict()

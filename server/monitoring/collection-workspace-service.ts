@@ -83,7 +83,7 @@ function safeConfig(value: unknown): boolean {
   };
   return !!value && typeof value === 'object' && !Array.isArray(value) && visit(value, 0) && Buffer.byteLength(JSON.stringify(value)) <= 16 * 1024;
 }
-const configSchema = z.record(z.unknown()).refine(safeConfig);
+const configSchema = z.record(z.string(), z.unknown()).refine(safeConfig);
 const filterSchema = z.object({ keywords: z.array(short(100)).min(1).max(20), mode: z.enum(['include', 'exclude']) }).strict();
 const qualitySchema = z.object({ minBytes: z.number().int().min(0).max(MAX_ARTIFACT_BYTES) }).strict();
 const recipeSchema = z.object({ name: short(160), project: short(120), source: z.enum(['cloud', 'edge']), moduleId: opaque, moduleVersion: z.literal('1.0.0'), config: configSchema, filter: filterSchema.optional(), quality: qualitySchema.optional(), createDataset: z.boolean() }).strict();

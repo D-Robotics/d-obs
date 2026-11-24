@@ -25,7 +25,7 @@ export async function disposeConfiguredPlugins(): Promise<void> {
 }
 type Options = { runtime?: PluginRuntime; mcp?: PluginMcpClient; access?: RequestHandler; owner?: (req: Request) => string };
 const revisionSchema = z.object({ expectedRevision: z.number().int().min(1) }).strict();
-const argsSchema = z.record(z.unknown());
+const argsSchema = z.record(z.string(), z.unknown());
 const queryArgs = (req: Request) => {
   if (Object.keys(req.query).some(key => !['args', 'tenant'].includes(key)) || (req.query.tenant !== undefined && (typeof req.query.tenant !== 'string' || req.query.tenant.length > 128)) || (req.query.args !== undefined && (typeof req.query.args !== 'string' || req.query.args.length > 8192))) throw new PluginError('plugin_invalid_arguments', 400);
   if (req.query.args === undefined) return {};
