@@ -103,7 +103,9 @@ function harness() {
   const state: { overview: typeof overview; actions: unknown[] | null; remediation: null; view: string; viewSource: string; viewChild: string; actionLoop?: ActionState } = { overview, actions: [], remediation: null, view: 'overview', viewSource: 'overview', viewChild: '' };
   const viewMeta: Record<string, string[]> = {};
   const navGroupByView: Record<string, string> = { overview: 'primary', signals: 'data', devices: 'infra' };
-  const moduleNavKey: Record<string, string> = { 'platform/model-pool': 'model-pool' };
+  const moduleNavDeclaration = OPS_OBSERVABILITY_SCRIPT_A.split('\n').find(line => line.includes('const moduleNavKey ='));
+  assert.ok(moduleNavDeclaration);
+  const moduleNavKey: Record<string, string> = vm.runInNewContext(moduleNavDeclaration + '\nmoduleNavKey');
   const viewCalls: Array<{ requested: string; updateHash: boolean }> = [];
   const context = vm.createContext({
     document, make, add, $: byId, state, viewMeta, navGroupByView, moduleNavKey,
@@ -251,13 +253,18 @@ test('产品无快照时只需一次展开，有数据后保留相同外层披�
   assert.equal(h.byId('overviewProductHealthEmpty'), null);
 });
 
-test('新导航分组复用真实路由解析，旧别名与平台高亮继续可用', () => {
+test('新导航分组复用真实路由解析，旧模型池入口高亮独立网关', () => {
   const h = harness();
-  for (const view of ['overview', 'alerts/center', 'traces', 'signals', 'devices']) assert.equal(h.navGroupByView[view], undefined);
-  assert.equal(h.moduleNavKey['platform/model-pool'], 'platform');
-  for (const [request, group] of [['investigate', 'data'], ['signals/panels', 'data'], ['learning', 'data'], ['postgres', 'infra'], ['rules', 'advanced'], ['model-pool', 'advanced']] as const) {
+  for (const view of ['overview', 'alerts/center', 'traces', 'gateway', 'signals', 'devices']) assert.equal(h.navGroupByView[view], undefined);
+  assert.equal(h.moduleNavKey['gateway/model-pool'], 'gateway');
+  for (const [request, group] of [['investigate', 'data'], ['signals/panels', 'data'], ['learning', 'data'], ['postgres', 'infra'], ['rules', 'advanced']] as const) {
     vm.runInContext('setView(' + JSON.stringify(request) + ',false)', h.context);
     assert.equal(h.groups.find(node => node.open)?.dataset.navGroup, group);
+  }
+  for (const route of ['model-pool', 'platform/model-pool']) {
+    vm.runInContext('setView(' + JSON.stringify(route) + ',false)', h.context);
+    assert.equal(h.state.viewSource, 'gateway/model-pool');
+    assert.equal(h.groups.some(node => node.open), false);
   }
   vm.runInContext('setView("signals",false)', h.context);
   assert.equal(h.groups.some(node => node.open), false);
