@@ -582,7 +582,6 @@ export class VisionWorkshopService {
       const experiment = this.owned(store, owner, experimentId);
       const parsed = object(input, ['operation', 'adapterId', ...CAMERA_FIELDS, 'status', 'candidateId', 'sampleId', 'evidence'], 'device run');
       if (!['probe', 'pipeline_validate', 'bringup', 'capture_raw', 'process_raw', 'apply_tuning', 'preview_start', 'preview_stop', 'preview_frame', 'capture_frame', 'controls_get', 'controls_set', 'restore_tuning', 'tuning_get', 'tuning_load', 'tuning_export', 'calibration_apply'].includes(input.operation) || !['completed', 'failed'].includes(input.status)) fail('invalid_input', '板端操作类型或状态无效');
-      if (experiment.deviceRuns.length >= 128) fail('quota_exceeded', '板端操作记录已达到上限', 409);
       if (input.candidateId !== undefined && !experiment.candidates.some((entry) => entry.id === id(input.candidateId))) fail('not_found', '板端操作引用的候选不存在', 404);
       if (input.sampleId !== undefined && !experiment.samples.some((entry) => entry.id === id(input.sampleId))) fail('not_found', '板端操作引用的样本不存在', 404);
       const evidence = boundedEvidence(input.evidence);

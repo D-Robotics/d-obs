@@ -22,6 +22,28 @@ async function fixture(options: VisionWorkshopOptions = {}) {
   return { dataDir, service: new VisionWorkshopService({ ...options, dataDir }), cleanup: () => rm(dataDir, { recursive: true, force: true }) };
 }
 
+test('device receipts can pass 128 operations and still respect the experiment byte quota', async () => {
+  const env = await fixture({ maxExperimentBytes: 48 * 1024 });
+  try {
+    const experiment = await env.service.createExperiment('account-a', input);
+    const receipt = { operation: 'probe' as const, adapterId: 'test', sensorModel: 'IMX415', status: 'completed' as const, evidence: {} };
+    const first = await env.service.recordDeviceRun('account-a', experiment.id, receipt);
+    for (let index = 1; index < 132; index += 1) await env.service.recordDeviceRun('account-a', experiment.id, receipt);
+    const stop = await env.service.recordDeviceRun('account-a', experiment.id, { ...receipt, operation: 'preview_stop' });
+    const manifestPath = join(env.dataDir, 'manifest.json');
+    const before = await readFile(manifestPath);
+    await assert.rejects(env.service.recordDeviceRun('account-a', experiment.id, {
+      ...receipt, evidence: { details: Array(9).fill('x'.repeat(4096)) },
+    }), errorCode('quota_exceeded'));
+    assert.deepEqual(await readFile(manifestPath), before);
+    const reopened = new VisionWorkshopService({ dataDir: env.dataDir });
+    const saved = await reopened.getExperiment('account-a', experiment.id);
+    assert.equal(saved.deviceRuns.length, 133);
+    assert.equal(saved.deviceRuns[0].id, first.id);
+    assert.equal(saved.deviceRuns.at(-1)?.id, stop.id);
+  } finally { await env.cleanup(); }
+});
+
 function png(width = 4, height = 2, compressedPixels?: Buffer, pixel = 0): Buffer {
   const chunk = (name: string, payload: Buffer) => {
     const body = Buffer.concat([Buffer.from(name), payload]); let crc = 0xffffffff;
