@@ -55,12 +55,12 @@ const TOOL_ARGUMENTS = new Map(Object.entries({
   vision_calibration_apply: ['experimentId', 'taskId', 'options'],
 }));
 const READ_ONLY = new Set([
-  'vision_workshop_capabilities', 'vision_workshop_runtime_status', 'vision_experiment_list', 'vision_experiment_get',
-  'vision_camera_knowledge_search', 'vision_camera_knowledge_get', 'vision_ai_debug_status', 'vision_camera_readiness',
-  'vision_camera_workflow', 'vision_camera_stream_analyze', 'vision_camera_response_analyze',
-  'vision_workshop_delivery', 'vision_camera_probe', 'vision_pipeline_validate', 'vision_camera_preview_frame', 'vision_camera_controls_get', 'vision_workshop_export',
-  'vision_isp_tuning_get', 'vision_isp_tuning_export', 'vision_calibration_asset_list', 'vision_calibration_task_list',
-  'vision_calibration_task_get', 'vision_calibration_task_result', 'vision_calibration_apply_plan',
+  'vision_ai_debug_status', 'vision_calibration_apply_plan', 'vision_calibration_asset_list',
+  'vision_calibration_task_get', 'vision_calibration_task_list', 'vision_calibration_task_result',
+  'vision_camera_knowledge_get', 'vision_camera_knowledge_search', 'vision_camera_readiness',
+  'vision_camera_response_analyze', 'vision_camera_stream_analyze', 'vision_camera_workflow',
+  'vision_experiment_get', 'vision_experiment_list', 'vision_workshop_capabilities',
+  'vision_workshop_delivery', 'vision_workshop_runtime_status',
 ]);
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const onlyKeys = (value, allowed) => record(value) && Object.keys(value).every(key => allowed.includes(key));

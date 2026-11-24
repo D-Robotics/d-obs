@@ -1,7 +1,7 @@
 ---
 name: rdk-camera-workshop
 description: 在 RDK Studio 或兼容 MCP 宿主中，将新型号资料核对、适配缺口、点亮、稳定性检查、看图 ISP 调试和恢复交付串成有证据的 AI 相机流程。用于“新相机适配”“相机全流程 AI 化”“从 Datasheet 点亮相机”“自然语言相机调试”“ISP 调优”“camera bringup”，也处理已支持相机、USB 最小闭环、MIPI 失败及相关闪连排查。通用方法可复用；实际驱动和可执行能力取当前适配器与回执，不宣称自动支持任意 Sensor。不用于 YOLO 或 VLM 部署。
-trigger: 相机点亮, 新相机适配, 新sensor, 相机全流程AI, Datasheet点亮, 相机调试, ISP, IMX415, MIPI, USB 闪连, RAW, camera bringup, camera tuning
+trigger: RDK Camera AI, 开始 Workshop, 开始Workshop, 继续 Workshop, 继续Workshop, 调节 ISP, 调节ISP, 带我调ISP, 帮我拍张照, 相机拍照, 相机点亮, 新相机适配, 新sensor, 相机全流程AI, Datasheet点亮, 相机调试, ISP, IMX415, MIPI, USB 闪连, RAW, camera bringup, camera tuning
 version: 1.2.0
 risk: medium
 requires_board: false
@@ -11,6 +11,17 @@ enabled: true
 ---
 
 # 相机点亮与 ISP 调优
+
+## Studio 对话入口
+
+以下课堂入口要求安装合并版。独立相机版按本轮实际工具目录执行相机原子能力。
+
+- 使用 Studio 已启用的插件技能。按本轮目录调用完整工具名，`rdk-camera-workshop` 是插件名称。课堂工具使用 `mcp__rdk-vision-workshop__` 前缀，相机服务工具使用 `mcp__rdk-camera-workshop__` 前缀。延迟加载时给 `load_tools` 传目录里的完整工具名。找不到对应工具就报告缺失能力；等待审批时保留同一操作。禁止通过终端或 SSH 读取连接凭据、直接调用后台，或要求用户把插件安装目录绑定成项目。
+- 用户说「开始 Workshop」「继续 Workshop」时，先调用 `mcp__rdk-vision-workshop__vision_course_view({})` 取得原工位，立即用 `studio_open_url` 打开。宿主网页工具不可用时提供可点击的原工位链接。之后调用 `mcp__rdk-vision-workshop__vision_course_camera_status({})`，按课程技能推进当前一步。工具仅返回地址时称工作台链接已准备好，宿主返回加载回执后称已打开。
+- 查询连接或绑定时，工位以 `cameraBinding` 为准；通用工具的聊天 `device_boundary`、设备库的 SSH 探测和工位预检各有自己的回执。按 `latestPreflight` 的时间、阶段及错误说明最近一次检查。已有旧容量阻塞回执时，可在服务更新后通过授权的预检重查同一实验。`vision_device_archive_capacity` 表示实际归档空间不足且本次设备操作尚未执行；保留相机回执，核对存储额度。无实时预检则说明待查。
+- 用户要调 ISP 时检查原工位的 `mcp__rdk-vision-workshop__vision_course_isp_status({})` 和本实验 `mcp__rdk-camera-workshop__vision_camera_readiness`。课堂调参通过 `mcp__rdk-vision-workshop__vision_course_isp` 及其状态工具。日常自主调参使用已绑定实验的 AI Debug 原子工具。始终使用当前工位关联的实验；有恢复阻塞、快照变化或缺工具时先处理实际阻塞。生成候选使用与保存的基线哈希匹配的新帧，应用后核对参数回读和新帧。不可用读回摘要冒充完整配置或切到其他旧实验继续。
+- 日常拍照用原工位的 `vision_course_camera` 动作 `photo`。展示照片用 `vision_course_camera_status`，沿用已归档的图。进入课堂基线阶段或用户要求采三图时才用 `baseline` 采集 RAW、ISP、重渲染。`baselineRequested:false` 表示三图尚未发起。
+- 查询相机服务时用 `mcp__rdk-camera-workshop__vision_workshop_runtime_status({})`；服务工具缺失时用同一前缀的 `vision_connection_status` 做连接自检。适配、恢复或资格条件取实际 readiness、workflow 和工具回执。
 
 使用当前运行中发现的 `vision_*` 工具；Studio 原生桥的名称前缀为
 `mcp__rdk-camera-workshop__`。安装插件不安装 Sensor 驱动或原生 ISP adapter。

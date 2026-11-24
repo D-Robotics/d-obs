@@ -3,7 +3,33 @@
     "rdk-camera-workshop": {
       "transport": "stdio",
       "command": "node",
-      "args": ["mcp/bridge.mjs"]
+      "args": [
+        "mcp/bridge.mjs"
+      ],
+      "permissions": {
+        "default": "approval",
+        "tools": {
+          "vision_ai_debug_status": "readonly",
+          "vision_calibration_apply_plan": "readonly",
+          "vision_calibration_asset_list": "readonly",
+          "vision_calibration_task_get": "readonly",
+          "vision_calibration_task_list": "readonly",
+          "vision_calibration_task_result": "readonly",
+          "vision_camera_knowledge_get": "readonly",
+          "vision_camera_knowledge_search": "readonly",
+          "vision_camera_readiness": "readonly",
+          "vision_camera_response_analyze": "readonly",
+          "vision_camera_stream_analyze": "readonly",
+          "vision_camera_workflow": "readonly",
+          "vision_connection_status": "readonly",
+          "vision_experiment_get": "readonly",
+          "vision_experiment_list": "readonly",
+          "vision_plugin_version": "readonly",
+          "vision_workshop_capabilities": "readonly",
+          "vision_workshop_delivery": "readonly",
+          "vision_workshop_runtime_status": "readonly"
+        }
+      }
     }
   }
 }

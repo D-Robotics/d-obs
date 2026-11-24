@@ -1,0 +1,218 @@
+diff --git a/.mcp.json b/.mcp.json
+--- a/.mcp.json
++++ b/.mcp.json
+@@ -5,7 +5,31 @@
+       "command": "node",
+       "args": [
+         "mcp/bridge.mjs"
+-      ]
++      ],
++      "permissions": {
++        "default": "approval",
++        "tools": {
++          "vision_ai_debug_status": "readonly",
++          "vision_calibration_apply_plan": "readonly",
++          "vision_calibration_asset_list": "readonly",
++          "vision_calibration_task_get": "readonly",
++          "vision_calibration_task_list": "readonly",
++          "vision_calibration_task_result": "readonly",
++          "vision_camera_knowledge_get": "readonly",
++          "vision_camera_knowledge_search": "readonly",
++          "vision_camera_readiness": "readonly",
++          "vision_camera_response_analyze": "readonly",
++          "vision_camera_stream_analyze": "readonly",
++          "vision_camera_workflow": "readonly",
++          "vision_connection_status": "readonly",
++          "vision_experiment_get": "readonly",
++          "vision_experiment_list": "readonly",
++          "vision_plugin_version": "readonly",
++          "vision_workshop_capabilities": "readonly",
++          "vision_workshop_delivery": "readonly",
++          "vision_workshop_runtime_status": "readonly"
++        }
++      }
+     },
+     "rdk-vision-workshop": {
+       "transport": "stdio",
+@@ -24,7 +48,7 @@
+           "vision_course_sync": "approval",
+           "vision_course_camera": "approval",
+           "vision_course_camera_status": "readonly",
+-          "vision_course_preflight": "readonly",
++          "vision_course_preflight": "approval",
+           "vision_course_isp": "approval",
+           "vision_course_isp_status": "readonly"
+         }
+diff --git a/mcp/bridge.mjs b/mcp/bridge.mjs
+--- a/mcp/bridge.mjs
++++ b/mcp/bridge.mjs
+@@ -15,7 +15,7 @@
+ const modulePath = fileURLToPath(import.meta.url);
+ const protocols = new Set(['2024-11-05', '2025-03-26', '2025-06-18']);
+ const onboarding = process.env.RDK_CAMERA_WORKSHOP_ONBOARDING === '1';
+-const PLUGIN_VERSION = '1.3.0';
++const PLUGIN_VERSION = '1.5.7';
+ const connectionTool = {
+   name: 'vision_connection_status', description: '检查本机相机服务连接配置。首次安装或远端工具缺失时先调用；仅验证配置，不表示设备在线。',
+   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+@@ -55,12 +55,12 @@
+   vision_calibration_apply: ['experimentId', 'taskId', 'options'],
+ }));
+ const READ_ONLY = new Set([
+-  'vision_workshop_capabilities', 'vision_workshop_runtime_status', 'vision_experiment_list', 'vision_experiment_get',
+-  'vision_camera_knowledge_search', 'vision_camera_knowledge_get', 'vision_ai_debug_status', 'vision_camera_readiness',
+-  'vision_camera_workflow', 'vision_camera_stream_analyze', 'vision_camera_response_analyze',
+-  'vision_workshop_delivery', 'vision_camera_probe', 'vision_pipeline_validate', 'vision_camera_preview_frame', 'vision_camera_controls_get', 'vision_workshop_export',
+-  'vision_isp_tuning_get', 'vision_isp_tuning_export', 'vision_calibration_asset_list', 'vision_calibration_task_list',
+-  'vision_calibration_task_get', 'vision_calibration_task_result', 'vision_calibration_apply_plan',
++  'vision_ai_debug_status', 'vision_calibration_apply_plan', 'vision_calibration_asset_list',
++  'vision_calibration_task_get', 'vision_calibration_task_list', 'vision_calibration_task_result',
++  'vision_camera_knowledge_get', 'vision_camera_knowledge_search', 'vision_camera_readiness',
++  'vision_camera_response_analyze', 'vision_camera_stream_analyze', 'vision_camera_workflow',
++  'vision_experiment_get', 'vision_experiment_list', 'vision_workshop_capabilities',
++  'vision_workshop_delivery', 'vision_workshop_runtime_status',
+ ]);
+ const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+ const onlyKeys = (value, allowed) => record(value) && Object.keys(value).every(key => allowed.includes(key));
+diff --git a/mcp/server.mjs b/mcp/server.mjs
+--- a/mcp/server.mjs
++++ b/mcp/server.mjs
+@@ -15,11 +15,11 @@
+   { name:'vision_course_plan',description:'读取飞书 180 分钟课堂时间表、并行训练窗口与阶段要求。',inputSchema:emptySchema,annotations:readOnly },
+   { name:'vision_course_stage',description:'查看当前阶段的操作和所需回执。',inputSchema:{type:'object',properties:{stageId:{type:'string',enum:stageIds}},required:['stageId'],additionalProperties:false},annotations:readOnly },
+   { name:'vision_course_next',description:'按时钟、已有回执和 RoboGO Run 引导下一步，记录 A/B/C 完成路径。只读规划。',inputSchema:guideSchema,annotations:readOnly },
+-  { name:'vision_course_view',description:'在本机打开当前工位的可视化工作台。传入保存的 resume 可继续之前的进度。',inputSchema:guideSchema,annotations:readOnly },
++  { name:'vision_course_view',description:'用于开始或继续 Workshop。取得当前原工位的工作台地址；请用 studio_open_url 打开，无法打开时提供可点链接。原工位和进度自动保留。',inputSchema:emptySchema,annotations:readOnly },
+   { name:'vision_course_sync',description:'同步当前 Studio 工作台。空参数读取最新进度；有 patch 时把本轮真实工具回执转交给学员界面。本工具只更新工位记录。',inputSchema:{type:'object',properties:{patch:guideSchema,clearBlockers:{type:'array',items:{type:'string'}}},additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false} },
+   { name:'vision_course_camera',description:'在当前已关联的相机实验里拍照、采集 RAW/ISP/渲染三图或重试渲染。用于「帮我拍张照」「采集基线图」。拍摄异步执行，调用回执仅表示开始。照片、三图和原件下载在返回的工作台，可通过只读 vision_course_camera_status 查询验收状态。',inputSchema:{type:'object',properties:{action:{type:'string',enum:['photo','baseline','retake','render']},scene:{type:'string',minLength:1,maxLength:100}},required:['action'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false} },
+-  { name:'vision_course_camera_status',description:'查看刚才在课堂工位采集的照片或 RAW、ISP、重渲染三张基线。返回逐项进度、产物回执及并排展示的本机工作台地址，无需板端命令。',inputSchema:emptySchema,annotations:readOnly },
+-  { name:'vision_course_preflight',description:'检查工位相机服务、X5 板端连接、已开启相机流的实时帧。run:true 发起检查，空参数读取本轮状态。仅查询相机，不调参、不启动采流、不重启或烧录。',inputSchema:{type:'object',properties:{run:{type:'boolean'}},additionalProperties:false},annotations:readOnly },
++  { name:'vision_course_camera_status',description:'只读查询原工位实际相机实验关联（cameraBinding）、最近预检（latestPreflight）、照片和三图进度。绑定以工位记录为准；聊天的 device_boundary 是通用设备工具范围。查询不会重新探测或采图。',inputSchema:emptySchema,annotations:readOnly },
++  { name:'vision_course_preflight',description:'检查工位相机服务、X5 板端连接、已开启相机流的实时帧。run:true 发起检查，空参数读取本轮状态。有 run:true 时会记录本轮设备回执。',inputSchema:{type:'object',properties:{run:{type:'boolean'}},additionalProperties:false},annotations:{...readOnly,readOnlyHint:false,idempotentHint:false} },
+   { name:'vision_course_isp',description:'课堂 Gamma 和单项 ISP。save 保存期初；gamma 执行两轮 Gamma；decision 记录 Gamma 取舍。learner_options 读取本工位可写项；learner_apply 仅接受一个 field、回读 expected 和候选 value；learner_decision 按 trial 记录取舍。revert 恢复原值；restore 恢复并停流。异步受理后查询 vision_course_isp_status。',inputSchema:{type:'object',properties:{action:{type:'string',enum:['save','gamma','decision','reload','revert','restore','learner_options','learner_apply','learner_decision']},goal:{type:'string',minLength:1,maxLength:180},round:{type:'integer',enum:[1,2]},choice:{type:'string',enum:['keep','restore']},reason:{type:'string',minLength:1,maxLength:180},field:{type:'string',pattern:'^[a-zA-Z]{1,40}$'},expected:{type:'number'},value:{type:'number'},trial:{type:'integer',minimum:1}},required:['action'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false} },
+   { name:'vision_course_isp_status',description:'查询工位原始快照、单项实操、恢复、独立回读与停流进度，返回回执 ID、哈希和工位页面链接。',inputSchema:emptySchema,annotations:readOnly },
+ ];
+@@ -57,11 +57,10 @@
+     }
+     if (name==='vision_course_next') return respond(content(guideCourse(plan,args)));
+     if (name==='vision_course_view') {
+-      guideCourse(plan,args);
++      if (Object.keys(args).length) throw new Error('invalid_arguments');
+       const url=await session.open();
+-      if (Object.keys(args).length) await session.sync({patch:args});
+       return respond(content({url,title:'视觉 Pipeline · 课堂工作台',scope:'this_computer',
+-        instruction:'使用 Studio 网页入口打开此地址，也可在本机浏览器打开。结束对话后仍可回到同一工位。'}));
++        instruction:'请调用 studio_open_url 打开工作台；无法调用时提供可点击链接。看到加载回执后再报告已打开。'}));
+     }
+     if (name==='vision_course_sync') {
+       if (Object.keys(args).some(key=>!['patch','clearBlockers'].includes(key))) throw new Error('invalid_arguments');
+@@ -75,7 +74,7 @@
+     }
+     if (name==='vision_course_camera_status') {
+       if (Object.keys(args).length) throw new Error('invalid_arguments');
+-      return respond(content(await session.camera()));
++      return respond(content(await session.cameraStatus()));
+     }
+     if (name==='vision_course_preflight') {
+       if(Object.keys(args).some(k=>k!=='run')||args.run!==undefined&&typeof args.run!=='boolean') throw new Error('invalid_arguments');
+diff --git a/mcp/studio-config.mjs b/mcp/studio-config.mjs
+--- a/mcp/studio-config.mjs
++++ b/mcp/studio-config.mjs
+@@ -10,7 +10,7 @@
+  return {mcpServers:{'rdk-vision-workshop':{transport:'stdio',command:node,args:[fileURLToPath(new URL('./server.mjs',import.meta.url))],
+    ...(Object.keys(env).length?{env}:{}),requestTimeoutMs:30000,
+    permissions:{default:'deny',tools:{vision_course_plan:'readonly',vision_course_stage:'readonly',vision_course_next:'readonly',vision_course_view:'readonly',
+-     vision_course_sync:'approval',vision_course_camera:'approval',vision_course_camera_status:'readonly',vision_course_preflight:'readonly',
++     vision_course_sync:'approval',vision_course_camera:'approval',vision_course_camera_status:'readonly',vision_course_preflight:'approval',
+      vision_course_isp:'approval',vision_course_isp_status:'readonly'}}}}};
+ }
+ const entry = process.argv[1];
+diff --git a/mcp/workbench-session.mjs b/mcp/workbench-session.mjs
+--- a/mcp/workbench-session.mjs
++++ b/mcp/workbench-session.mjs
+@@ -89,6 +89,23 @@
+     const target=new URL(url);
+     target.searchParams.set('panel','capture');
+     return {url:target.href,...await request(url,body,'/camera/capture')};
++  },async cameraStatus() {
++    const url=await open();
++    for (let attempt=0;attempt<2;attempt++) {
++      const [{resume,revision},captureResult,{preflight}]=await Promise.all([
++        request(url),request(url,undefined,'/camera/capture'),request(url,undefined,'/camera/preflight'),
++      ]);
++      const experimentId=resume.camera?.experimentId??null;
++      if (revision!==captureResult.recordingRevision||
++          captureResult.capture&&captureResult.capture.experimentId!==experimentId||
++          preflight&&preflight.experimentId!==experimentId) continue;
++      const target=new URL(url);
++      target.searchParams.set('panel','capture');
++      return {url:target.href,...captureResult,
++        cameraBinding:{source:'workbench',status:experimentId?'bound':'unbound',experimentId},
++        baselineRequested:Boolean(captureResult.capture?.scene),latestPreflight:preflight??null};
++    }
++    throw new Error('camera_status_changed');
+   },async preflight(run) {
+     const url=await open();
+     const target=new URL(url);
+diff --git a/skills/rdk-camera-workshop/SKILL.md b/skills/rdk-camera-workshop/SKILL.md
+--- a/skills/rdk-camera-workshop/SKILL.md
++++ b/skills/rdk-camera-workshop/SKILL.md
+@@ -1,7 +1,7 @@
+ ---
+ name: rdk-camera-workshop
+ description: 在 RDK Studio 或兼容 MCP 宿主中，将新型号资料核对、适配缺口、点亮、稳定性检查、看图 ISP 调试和恢复交付串成有证据的 AI 相机流程。用于“新相机适配”“相机全流程 AI 化”“从 Datasheet 点亮相机”“自然语言相机调试”“ISP 调优”“camera bringup”，也处理已支持相机、USB 最小闭环、MIPI 失败及相关闪连排查。通用方法可复用；实际驱动和可执行能力取当前适配器与回执，不宣称自动支持任意 Sensor。不用于 YOLO 或 VLM 部署。
+-trigger: RDK Camera AI, 帮我拍张照, 相机拍照, 相机点亮, 新相机适配, 新sensor, 相机全流程AI, Datasheet点亮, 相机调试, ISP, IMX415, MIPI, USB 闪连, RAW, camera bringup, camera tuning
++trigger: RDK Camera AI, 开始 Workshop, 开始Workshop, 继续 Workshop, 继续Workshop, 调节 ISP, 调节ISP, 带我调ISP, 帮我拍张照, 相机拍照, 相机点亮, 新相机适配, 新sensor, 相机全流程AI, Datasheet点亮, 相机调试, ISP, IMX415, MIPI, USB 闪连, RAW, camera bringup, camera tuning
+ version: 1.2.0
+ risk: medium
+ requires_board: false
+@@ -12,11 +12,14 @@
+ 
+ # 相机点亮与 ISP 调优
+ 
+-## Studio 拍照和课程基线
++## Studio 对话入口
+ 
+-- 查询插件能做什么时，从本轮工具目录加载 `vision_workshop_runtime_status`；有已绑定实验才读取 `vision_camera_workflow`。按目录、适配器和实际回执回答。连接失败时用 `vision_connection_status` 说明配置缺口。
+-- 合并版工位拍照用 `vision_course_camera` 的 `photo`。展示已拍照片或基线图时用只读的 `vision_course_camera_status` 打开工作台结果。只有用户明确要求重拍才新采图。
+-- 独立相机版使用实际绑定实验的 `vision_camera_capture_frame`，从相机服务的归档入口查看、下载原件。能力缺失时给出未完成项，禁止改用板端脚本猜路径、下载整段命令输出或临时切换 ISP 模式。只读请求保持只读。
++- 使用 Studio 已启用的插件技能。按本轮目录调用完整工具名，`rdk-camera-workshop` 是插件名称。课堂工具使用 `mcp__rdk-vision-workshop__` 前缀，相机服务工具使用 `mcp__rdk-camera-workshop__` 前缀。延迟加载时给 `load_tools` 传目录里的完整工具名。找不到对应工具就报告缺失能力；等待审批时保留同一操作。禁止通过终端或 SSH 读取连接凭据、直接调用后台，或要求用户把插件安装目录绑定成项目。
++- 用户说「开始 Workshop」「继续 Workshop」时，先调用 `mcp__rdk-vision-workshop__vision_course_view({})` 取得原工位，立即用 `studio_open_url` 打开。宿主网页工具不可用时提供可点击的原工位链接。之后调用 `mcp__rdk-vision-workshop__vision_course_camera_status({})`，按课程技能推进当前一步。工具仅返回地址时称工作台链接已准备好，宿主返回加载回执后称已打开。
++- 查询连接或绑定时，工位以 `cameraBinding` 为准；通用工具的聊天 `device_boundary`、设备库的 SSH 探测和工位预检各有自己的回执。按 `latestPreflight` 的时间、阶段及错误说明最近一次检查。已有旧容量阻塞回执时，可在服务更新后通过授权的预检重查同一实验。`vision_device_archive_capacity` 表示实际归档空间不足且本次设备操作尚未执行；保留相机回执，核对存储额度。无实时预检则说明待查。
++- 用户要调 ISP 时检查原工位的 `mcp__rdk-vision-workshop__vision_course_isp_status({})` 和本实验 `mcp__rdk-camera-workshop__vision_camera_readiness`。课堂调参通过 `mcp__rdk-vision-workshop__vision_course_isp` 及其状态工具。日常自主调参使用已绑定实验的 AI Debug 原子工具。始终使用当前工位关联的实验；有恢复阻塞、快照变化或缺工具时先处理实际阻塞。生成候选使用与保存的基线哈希匹配的新帧，应用后核对参数回读和新帧。不可用读回摘要冒充完整配置或切到其他旧实验继续。
++- 日常拍照用原工位的 `vision_course_camera` 动作 `photo`。展示照片用 `vision_course_camera_status`，沿用已归档的图。进入课堂基线阶段或用户要求采三图时才用 `baseline` 采集 RAW、ISP、重渲染。`baselineRequested:false` 表示三图尚未发起。
++- 查询相机服务时用 `mcp__rdk-camera-workshop__vision_workshop_runtime_status({})`；服务工具缺失时用同一前缀的 `vision_connection_status` 做连接自检。适配、恢复或资格条件取实际 readiness、workflow 和工具回执。
+ 
+ ## 能力与操作范围
+ 
+diff --git a/skills/rdk-vision-workshop/SKILL.md b/skills/rdk-vision-workshop/SKILL.md
+--- a/skills/rdk-vision-workshop/SKILL.md
++++ b/skills/rdk-vision-workshop/SKILL.md
+@@ -2,7 +2,7 @@
+ name: rdk-vision-workshop
+ description: 在 Studio 按 180 分钟方案带学员完成 X5 + IMX415 点亮、Gamma 调优、RoboGO 异步训练、A/B/C 分流、实时检测和个人成果打包。
+ version: 0.7.4
+-trigger: 视觉 Workshop,视觉 Pipeline,相机与 BPU 工作坊,继续视觉任务,相机训练部署全流程,采集基线图,三张基线图,展示基线图
++trigger: 开始 Workshop, 开始Workshop, 继续 Workshop, 继续Workshop, 打开课堂工作台, 视觉 Workshop,视觉 Pipeline,相机与 BPU 工作坊,继续视觉任务,相机训练部署全流程,采集基线图,三张基线图,展示基线图
+ risk: medium
+ requires_board: false
+ permissions: network
+@@ -14,15 +14,15 @@
+ 
+ 本课程依据 [飞书方案](https://horizonrobotics.feishu.cn/docx/UdhhdVXYXoPLgfxmZ32cJBSAnRb)。课程执行方法见 [操作稿](references/course-runbook.md)，实机交接见 [检测交接](references/tuning-handoff.md)。
+ 
+-1. 用户要开始或继续时调用 `vision_course_next`。带回已有 `resume`，并更新当前实际回执。如果知道课堂开始时间，传入实际经过的 `elapsedMinutes`。用户明确彩排时可以使用彩排时钟，标注模拟时间。展示工作台时调用 `vision_course_view`，把返回的本机地址交给实际可用的 Studio 网页工具打开。用户看总课表时调用 `vision_course_plan`。
++1. 用户要开始或继续时先调用 `mcp__rdk-vision-workshop__vision_course_view({})` 取得原工位，并调用 `studio_open_url` 打开。宿主没有网页工具时给出可点击的原工位链接。然后调用 `vision_course_camera_status` 读取工位绑定及最近预检，再使用 `vision_course_next` 推进当前一步。已知课堂开始时间时传实际经过的 `elapsedMinutes`，明确彩排时标注模拟时间。查看总课表用 `vision_course_plan`。
+ 2. 工作台打开后，用 `vision_course_sync` 的空参数读取当前记录。完成实际工具操作后，用 `{patch:{evidence:{...}}}` 把本轮实际回执引用同步到工作台；确实解决的阻塞放入 `clearBlockers`。根据宿主对本地记录更新的权限执行。每轮只给学员当前一步，说明完成条件和证据。宿主有可用且已授权的工具时，从相机、GPU 或板端工具执行当前一步。实际工具缺失时指出哪项配置或操作需要用户或助教处理。不要把课程工具的规划回执当成执行回执。
+ 3. 相机工具返回实际实验 ID 后，把 `camera:{experimentId}` 写入 `vision_course_sync` 的 `patch`。有实际相机 AI Run 后同步 `{camera:{experimentId,runId}}`。提示学员在工作台核对这轮新帧、实际回读和采集时间，再附入成果包。
+ 4. 开场第 35–45 分钟采三种基线，第 45–50 分钟按组提交 RoboGO。收到已有 Run ID 后只查询原 Run。茶歇由助教核对，第 110 分钟个人盲选，第 120 分钟助教预检，第 130 分钟按实际产物与设备状态做 A/B/C 选择。
+ 5. A 使用本人训练和量化产物。B 记录预置模型来源，完成本人板端操作。C 只归档已观看的演示记录。切换路径保留原 Run 和实际来源。板端模型需核对三类输出与实际 SHA-256。检测流须读取实际生效的 ISP 配置和本轮新帧。
+ 6. 操作相机前保存原始配置。ISP 未恢复时按相机插件的恢复状态继续处理。交付时保存个人手册、tuning、媒体、实际模型来源、待完成项及终态恢复记录，并打开 ZIP 核对。传给用户的文件从真实制品取，未完成的路径保留说明。
+ 
+-学员要开场、接回板卡或确认相机可用时，先打开原工位，读取实际实验绑定，调用 `vision_course_preflight({run:true})`。空参数查询进度。工具逐项回报服务、板卡和两帧推进。未绑定时打开工位关联，相机未开流时由学员在相机实验点亮后重试。预检通过后才报告实时画面有本轮证据；本机记录时间和 SDK 帧时间分别读取。
++确认相机可用时先读 `vision_course_camera_status` 的 `cameraBinding` 和 `latestPreflight`，工位关联以实际实验记录为准。需要实时检查时按宿主审批调用 `vision_course_preflight({run:true})`，随后通过 `vision_course_camera_status` 查询进度。分别报告服务、板卡和两帧推进的回执。工位未关联时打开关联入口，相机未开流时在原实验点亮，历史条数上限回执可在服务更新后重查原实验；`vision_device_archive_capacity` 时核对实际归档空间，保留旧回执。预检通过后才报告本轮实时画面。
+ 
+ 课堂 Gamma 使用工位 ISP 工具。先 `vision_course_isp` 的 `save` 保存原始版本，再按已确认的学员观察目标执行 `gamma`。使用 `vision_course_isp_status` 查看实际应用、回读和前后图；学员记录保留或恢复理由。先 `revert` 取得恢复后新图，再用 `reload` 验证同一个候选。最后按课堂授权调用 `restore` 恢复并停流。候选不符合单模块要求时按失败回执说明缺项；恢复结果不明确时继续核对同一个原始快照。
+ 
+-拍照和基线图先读取 `vision_course_camera_status`。用户说「看基线图」「这几张展示给我看」时，打开工具返回的工作台链接，展示当前工位已归档的图，保持只读。用户明确要拍照时，用 `vision_course_camera` 的 `photo`。采三图用 `baseline`，传学员确认的固定场景；场景变更用 `retake`。需要实验绑定时先打开工作台关联本工位。操作后查询原状态，确定哪一项成功，再展示带原件下载的入口。工具不可用时指出缺失工具和工作台入口，禁止改用批量终端命令或自动改 AE/AWB。只读排查禁止调用烧录、写设备或修改 ISP 的工具。
++拍照和基线图先读取 `vision_course_camera_status`。`baselineRequested:false` 只表示未发起三图。用户说「看基线图」「这几张展示给我看」时，打开工具返回的工作台链接，展示当前工位已归档的图，保持只读。用户明确要拍照时，用 `vision_course_camera` 的 `photo`。采三图用 `baseline`，传学员确认的固定场景；场景变更用 `retake`。需要实验绑定时先打开工作台关联本工位。操作后查询原状态，确定哪一项成功，再展示带原件下载的入口。工具不可用时指出缺失工具和工作台入口，通过 Studio 插件载入技能；不得用终端、SSH、读取凭据或绑定插件安装目录绕过本轮权限。只读排查禁止调用烧录、写设备或修改 ISP 的工具。

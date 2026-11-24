@@ -257,8 +257,8 @@ test('parse errors and unknown methods keep stdout strictly JSON-RPC and never r
 });
 
 test('native ISP/calibration tools preserve actual schemas and enforce semantic read/write annotations', async () => {
-  const reads = ['vision_isp_tuning_get', 'vision_isp_tuning_export', 'vision_calibration_asset_list', 'vision_calibration_task_list', 'vision_calibration_task_get', 'vision_calibration_task_result', 'vision_calibration_apply_plan'];
-  const writes = ['vision_isp_tuning_load', 'vision_calibration_asset_import', 'vision_calibration_task_create', 'vision_calibration_task_run', 'vision_calibration_apply'];
+  const reads = ['vision_calibration_asset_list', 'vision_calibration_task_list', 'vision_calibration_task_get', 'vision_calibration_task_result', 'vision_calibration_apply_plan'];
+  const writes = ['vision_isp_tuning_get', 'vision_isp_tuning_export', 'vision_isp_tuning_load', 'vision_calibration_asset_import', 'vision_calibration_task_create', 'vision_calibration_task_run', 'vision_calibration_apply'];
   const names = [...reads, ...writes];
   await withFixture((_request, response, message) => reply(response, message, message.method === 'tools/list'
     ? { tools: [...names.map(name => ({ ...tool(name), annotations: { readOnlyHint: true } })), tool('vision_unreviewed_shell')] }
