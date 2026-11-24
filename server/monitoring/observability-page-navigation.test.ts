@@ -129,9 +129,9 @@ function setup(options: { tenantToken?: string; session?: string; tenant?: strin
   return { shell, body, hooks, calls, renders, storage, dispatchDocument, byId: document.getElementById, reloads: () => reloads };
 }
 
-test('真实壳保留七个日常入口和三个分类菜单，每个强绑定 ID 唯一存在', () => {
+test('真实壳保留八个日常入口和三个分类菜单，每个强绑定 ID 唯一存在', () => {
   const shell = parseShell(); const primary = shell.querySelector('.nav-main')!;
-  assert.deepEqual(primary.querySelectorAll('.module-tab[data-view]').map(node => node.dataset.view), ['overview', 'collection/tasks', 'data/assets', 'alerts/center', 'traces', 'signals', 'devices']);
+  assert.deepEqual(primary.querySelectorAll('.module-tab[data-view]').map(node => node.dataset.view), ['overview', 'collection/tasks', 'data/assets', 'alerts/center', 'traces', 'gateway', 'signals', 'devices']);
   const groups = shell.querySelectorAll('.nav-group');
   assert.deepEqual(groups.map(node => node.dataset.navGroup), ['data', 'infra', 'advanced']);
   for (const group of groups) { assert.equal(group.tagName, 'DETAILS'); assert.equal(group.id, 'nav-group-' + group.dataset.navGroup); }
@@ -152,7 +152,7 @@ test('主导航与更多入口按实际目标高亮，旧深链仍定位正确�
     ['overview', 'overview', 'overview'], ['alerts', 'alerts/center', 'alerts/center'],
     ['signals/logs', 'signals', 'signals/logs'], ['agent-traces', 'traces', 'traces/runs'],
     ['session-traces', 'traces', 'traces/session'], ['signals/panels', 'signals/panels', 'signals/panels'],
-    ['model-pool', 'platform', 'platform/model-pool'], ['platform/probing', 'platform', 'platform/probing'],
+    ['model-pool', 'gateway', 'gateway/model-pool'], ['platform/model-pool', 'gateway', 'gateway/model-pool'], ['gateway', 'gateway', 'gateway/overview'], ['platform/probing', 'platform', 'platform/probing'],
     ['rules', 'alerts/rules', 'alerts/rules'], ['objects', 'alerts/rules', 'alerts/objects'],
     ['devices/logs', 'devices', 'devices/logs'], ['tenants/create', 'tenants', 'tenants/create'],
   ];

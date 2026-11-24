@@ -184,7 +184,7 @@ function setup(options: { tenantToken?: string; member?: boolean } = {}) {
 test('实际页面默认只铺开三个查询入口、一个平台配置入口和一个告警入口', () => {
   const h = setup();
   assert.deepEqual(h.directRoutes('signals'), ['signals/metrics', 'signals/logs', 'signals/promql']);
-  assert.deepEqual(h.directRoutes('platform'), ['platform/model-pool']);
+  assert.deepEqual(h.directRoutes('platform'), ['platform/general']);
   assert.deepEqual(h.directRoutes('alerts'), ['alerts/center']);
   for (const name of ['signals', 'platform', 'alerts']) {
     const menus = h.list(name).querySelectorAll('details'); assert.equal(menus.length, 1);
@@ -242,7 +242,7 @@ test('更多菜单内部可操作，Escape 关闭后焦点回到摘要，外部�
 
 test('同一路由轮询保留展开的更多菜单和菜单内焦点，真正换页才关闭', () => {
   const h = setup();
-  for (const [route, name] of [['signals/metrics', 'signals'], ['platform/model-pool', 'platform'], ['alerts/rules', 'alerts']] as const) {
+  for (const [route, name] of [['signals/metrics', 'signals'], ['platform/general', 'platform'], ['alerts/rules', 'alerts']] as const) {
     h.hooks.setView(route, false);
     const menu = h.menu(name); const summary = menu.querySelector('summary')!;
     const tabs = h.list(name).querySelectorAll('[data-module-tab]');

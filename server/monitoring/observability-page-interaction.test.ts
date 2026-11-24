@@ -351,6 +351,7 @@ function setup(): Harness {
       "renderOperatorMetrics:typeof renderOperatorMetrics!=='undefined'?renderOperatorMetrics:null," +
       "resolveViewRequest:typeof resolveViewRequest!=='undefined'?resolveViewRequest:null," +
       "renderSettings:typeof renderSettings!=='undefined'?renderSettings:null," +
+      "loadModelPool:typeof loadModelPool!=='undefined'?loadModelPool:null," +
       "renderModelPool:typeof renderModelPool!=='undefined'?renderModelPool:null," +
       "renderBoardPanels:typeof renderBoardPanels!=='undefined'?renderBoardPanels:null," +
       "renderObjects:typeof renderObjects!=='undefined'?renderObjects:null," +
@@ -446,7 +447,7 @@ test('两级路由：旧 hash 别名规范化为 视图/子模块，未知视图
   const resolve = h.obs.resolveViewRequest as (r: string) => Record<string, string>;
   assert.equal(typeof resolve, 'function', '应能取到 resolveViewRequest');
   const canon = (r: string) => JSON.stringify(resolve(r));
-  assert.equal(canon('model-pool'), JSON.stringify({ name: 'platform', child: 'model-pool', source: 'platform/model-pool' }));
+  assert.equal(canon('model-pool'), JSON.stringify({ name: 'gateway', child: 'model-pool', source: 'gateway/model-pool' }));
   assert.equal(canon('settings/probing'), JSON.stringify({ name: 'platform', child: 'probing', source: 'platform/probing' }));
   assert.equal(canon('platform'), JSON.stringify({ name: 'platform', child: 'general', source: 'platform/general' }));
   assert.equal(canon('alerts'), JSON.stringify({ name: 'alerts', child: 'center', source: 'alerts/center' }), '裸 #alerts 默认落在告警中心（响应队列优先）');
@@ -807,8 +808,8 @@ test('模型池：拓扑与指标条按真实夹具渲染，保存权重走 PUT 
   const h = setup();
   const obs = h.obs;
   assert.equal(typeof obs.renderModelPool, 'function', '应能取到 renderModelPool');
-  (obs.setObsState as (p: Record<string, unknown>) => unknown)({ modelPool: MODEL_POOL_FIXTURE });
-  (obs.renderModelPool as () => void)();
+  h.setJsonResponse(MODEL_POOL_FIXTURE);
+  await (obs.loadModelPool as () => Promise<void>)();
   const root = h.byIdNode('modelPoolContent');
   assert.ok(root, 'modelPoolContent 应已渲染');
 

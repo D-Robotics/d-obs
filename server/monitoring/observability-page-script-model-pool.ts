@@ -1,7 +1,30 @@
 /** 模型池控制面：路由拓扑可视化 + 权重/备用顺序就地调整；替换与回滚收在高级操作。 */
 export const OPS_OBSERVABILITY_SCRIPT_MODEL_POOL = `
+      let modelPoolIdentity=null;
+      let modelPoolPending=null;
+      let modelPoolReadFailed=false;
+      function syncModelPoolIdentity(){
+        const identity=alertEvidenceIdentityContext();
+        if(identity!==modelPoolIdentity){modelPoolIdentity=identity;state.modelPool=null;modelPoolReadFailed=false}
+        return identity;
+      }
       async function loadModelPool(){
-        try{const data=await request('/api/ops/observability/model-pool');state.modelPool=data;renderModelPool()}catch(error){if(error.message!=='not_authorized')toast('模型池加载失败：'+friendlyError(error.message),false)}}
+        if(!gatewayPlatformAvailable())return;
+        const identity=syncModelPoolIdentity();
+        if(modelPoolPending?.identity===identity)return;
+        const pending={identity};modelPoolPending=pending;modelPoolReadFailed=false;
+        const current=()=>modelPoolPending===pending&&gatewayPlatformAvailable()&&identity===alertEvidenceIdentityContext();
+        try{
+          const data=await request('/api/ops/observability/model-pool');
+          if(!Array.isArray(data?.health?.targets)||!data?.config?.modelMapping)throw new Error('model_pool_incomplete');
+          if(current())state.modelPool=data;
+        }catch{
+          if(current()){state.modelPool=null;modelPoolReadFailed=true}
+        }finally{
+          const render=current();if(modelPoolPending===pending)modelPoolPending=null;
+          if(render)renderModelPool();
+        }
+      }
       function modelStateName(value){return ({healthy:'正常',half_open:'半开',cooldown:'冷却',degraded:'退化'})[value]||value||'未知'}
       function modelStateClass(value){return value==='healthy'?'good':(value==='cooldown'?'bad':(value==='half_open'?'warn':''))}
       function modelTargetName(target){return (target.frontendModels&&target.frontendModels[0])||target.label||target.model}
@@ -115,7 +138,10 @@ export const OPS_OBSERVABILITY_SCRIPT_MODEL_POOL = `
       }
       function renderModelPool(){
         const root=$('modelPoolContent');if(!root)return;root.replaceChildren();
-        if(!state.modelPool){add(root,'div','empty','正在读取模型池状态…');loadModelPool();return}
+        syncModelPoolIdentity();
+        if(!gatewayPlatformAvailable()){gatewayScopeNotice(root);return}
+        if(modelPoolReadFailed){OpsUI.state(root,{kind:'error',title:'模型池读取失败',hint:'重试后确认当前模型目标和路由。',retry:()=>{loadModelPool();renderModelPool()}});return}
+        if(!state.modelPool){OpsUI.state(root,{kind:'loading',title:'正在读取模型池状态…'});loadModelPool();return}
         const health=state.modelPool.health||{};const config=state.modelPool.config||{};const allTargets=health.targets||[];const summary=health.summary||{};const mapping=config.modelMapping||{};const protectedFrontendModel=state.modelPool.protectedFrontendModel||'';
         const cleanupTargets=allTargets.filter(modelCleanupCandidate);const filter=state.modelPoolFilter||'all';const targets=filter==='cleanup'?cleanupTargets:filter==='attention'?allTargets.filter(target=>target.state!=='healthy'):allTargets;
         const head=make('div','model-pool-toolbar');const copy=make('div');add(copy,'h2','','模型池');add(copy,'p','','常用操作直接在列表完成；路由权重与备用顺序在拓扑下方就地调整，替换与回滚收在高级操作。');head.appendChild(copy);const headActions=make('div','model-pool-actions');const refresh=add(headActions,'button','btn','刷新');refresh.type='button';refresh.addEventListener('click',()=>loadModelPool());if(cleanupTargets.length){const cleanAll=add(headActions,'button','btn danger','清理 '+cleanupTargets.length+' 个无用目标');cleanAll.type='button';cleanAll.addEventListener('click',async()=>{if(!window.confirm('确认清理 '+cleanupTargets.length+' 个没有路由引用的模型目标？此操作会从网关模型池移除目标。'))return;cleanAll.disabled=true;let count=0;for(const target of cleanupTargets){if(await cleanupModelTarget(target))count++}toast(count?'已清理 '+count+' 个模型目标':'没有模型被清理',Boolean(count));await loadModelPool()})}head.appendChild(headActions);root.appendChild(head);

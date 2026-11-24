@@ -61,7 +61,7 @@ export const OPS_OBSERVABILITY_RESTRAINT_STYLE = `
 
 export const OPS_OBSERVABILITY_SCRIPT_RESTRAINT = OPS_OBSERVABILITY_SCRIPT_OVERVIEW_RESTRAINT + String.raw`
       const restraintTabGroups=[];
-      const restraintPrimaryTabs={signals:['signals/metrics','signals/logs','signals/promql'],platform:['platform/model-pool'],alerts:['alerts/center']};
+      const restraintPrimaryTabs={signals:['signals/metrics','signals/logs','signals/promql'],platform:['platform/general'],alerts:['alerts/center']};
       function restraintPermissionVisible(node){return !node.hidden&&!node.classList.contains('hidden')&&!node.disabled}
       function restraintTabVisible(node){
         if(!restraintPermissionVisible(node))return false;

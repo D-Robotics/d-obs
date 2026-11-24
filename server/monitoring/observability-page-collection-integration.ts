@@ -6,14 +6,14 @@ body.ops-observability:has(#view-collection:not(.hidden)) .page-head :is(.worksp
 function once(script:string,before:string,after:string){if(script.split(before).length!==2)throw new Error('collection_shell_baseline_mismatch');return script.replace(before,after);}
 export function integrateCollectionScriptA(script:string):string{
   let result=once(script,"const viewNames = ['overview'","const viewNames = ['collection','data','overview'");
-  result=once(result,'const viewModuleChildren = {platform:',"const viewModuleChildren = {collection:['tasks','sources','modules','runs'],data:['assets','datasets','loops','tasks','overview'],platform:");
+  result=once(result,'const viewModuleChildren = {',"const viewModuleChildren = {collection:['tasks','sources','modules','runs'],data:['assets','datasets','loops','tasks','overview'],");
   result=once(result,'const viewMeta = {overview:',"const viewMeta = {collection:['数据与可观测中心 / 采集','统一采集工作区','配置现有云端与终端采集，固定流程版本，跟踪每个模块的实际运行与结果。'],data:['数据与可观测中心 / 数据','数据资产与改善闭环','从采集结果追溯资产和固定数据集，以真实证据验证改善。'],overview:");
   result=once(result,'const moduleNavKey = {',"const moduleNavKey = {'collection/tasks':'collection/tasks','collection/sources':'collection/tasks','collection/modules':'collection/tasks','collection/runs':'collection/tasks','data/assets':'data/assets','data/datasets':'data/assets','data/loops':'data/assets','data/tasks':'data/assets','data/overview':'data/assets',");
   result=once(result,"else if(name!=='devices'&&state.domain==='edge')","else if(!['devices','collection','data'].includes(name)&&state.domain==='edge')");
   result=once(result,'applyViewModules(name,source);',"applyViewModules(name,source);const collectionDomainSwitcher=$('domainSwitcher');if(collectionDomainSwitcher)collectionDomainSwitcher.hidden=['collection','data'].includes(name);if(typeof collectionWorkspace!=='undefined'&&name!=='collection')collectionWorkspace.hide();if(typeof dataCenterWorkspace!=='undefined'&&name!=='data')dataCenterWorkspace.hide();if(name==='collection'&&typeof collectionWorkspace!=='undefined')collectionWorkspace.show(resolved.child);if(name==='data'&&typeof dataCenterWorkspace!=='undefined')dataCenterWorkspace.show(resolved.child);");
   return result;
 }
-export function integrateCollectionNavScript(script:string):string{return once(script,"const primaryRoutes=['overview','alerts/center','traces','signals','devices'];","const primaryRoutes=['overview','collection/tasks','data/assets','alerts/center','traces','signals','devices'];");}
+export function integrateCollectionNavScript(script:string):string{return once(script,"const primaryRoutes=['overview',","const primaryRoutes=['overview','collection/tasks','data/assets',");}
 export const COLLECTION_SHELL_IDENTITY_SCRIPT=String.raw`
       function collectionShellContext(){return JSON.stringify([obsAuthState.me&&obsAuthState.me.user&&obsAuthState.me.user.id,Boolean(obsAuthState.me&&obsAuthState.me.admin),obsActiveTenant(),apiHeaders(false)])}
       let collectionShellIdentity=null;
