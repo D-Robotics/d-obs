@@ -1,0 +1,1013 @@
+#!/usr/bin/env node
+import { createServer } from 'node:http';
+import { readFileSync, realpathSync, existsSync, lstatSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { isAbsolute } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { plan as defaultPlan } from './course.mjs';
+import { guideCourse, guideSchema, normalizedModelHash, presetModelHash } from './guide.mjs';
+import { createCameraSource } from './camera-source.mjs';
+import { boardEvidence, externalTrainingReceipt } from './course-evidence.mjs';
+import { createBoardLauncher } from './board-launcher.mjs';
+import { createRoboGo, trainingProfile } from './robogo.mjs';
+import { readWorkbenchState, writeWorkbenchState } from './workbench-state.mjs';
+
+const cameraErrors=new Set(['camera_unconfigured','camera_credential_missing','camera_configuration_invalid','camera_service_unreachable','camera_auth_required',
+  'camera_archive_missing','camera_response_invalid','camera_service_error','camera_frame_integrity_failed','camera_binding_invalid']);
+const captureActions=new Set(['photo','baseline','retake','render']);
+const rawReplayCaptureMetadataRequired='vision_raw_replay_capture_metadata_required';
+const unconfirmedCapture=new Set(['camera_capture_unconfirmed','vision_device_transport_failed']);
+const evidenceErrors=new Set(['training_receipt_unconfigured','training_receipt_invalid','board_archive_unconfigured','board_receipt_pending',
+  'board_model_mismatch','board_receipt_changed','board_asset_missing','board_asset_integrity_failed','evidence_file_invalid',
+  'board_comparison_unavailable','board_comparison_region_invalid','training_receipt_task_unverified']);
+
+function gammaCurveChange(before,after) {
+  const original=before?.config?.modules?.gamma;
+  const candidate=after?.config?.modules?.gamma;
+  if(!original||original.mode!==candidate?.mode||![0,1].includes(original.mode)) return;
+  const key=original.mode===0?'auto_attr.curve':'manual_attr.curve';
+  const source=original[key],target=candidate[key];
+  const valid=curve=>Array.isArray(curve)&&curve.length>=64&&curve.length<=4096&&curve.length%64===0&&
+    curve.every(node=>Number.isInteger(node)&&node>=0&&node<=1023);
+  if(!valid(source)||!valid(target)||source.length!==target.length) return;
+  let changed=0,mostChanged=0,selected=0;
+  for(let offset=0;offset<source.length;offset+=64) {
+    const count=source.slice(offset,offset+64).filter((value,index)=>value!==target[offset+index]).length;
+    changed+=count;
+    if(count>mostChanged) {mostChanged=count;selected=offset;}
+  }
+  if(!changed) return;
+  return {changed,row:selected/64+1,rows:source.length/64,
+    before:source.slice(selected,selected+64),after:target.slice(selected,selected+64)};
+}
+
+function comparisonEligible(before,after) {
+  if(!gammaCurveChange(before,after)) return false;
+  const withoutCurve=({config})=>{
+    const gamma={...config.modules.gamma};
+    delete gamma[gamma.mode===0?'auto_attr.curve':'manual_attr.curve'];
+    return {...config,modules:{...config.modules,gamma}};
+  };
+  return isDeepStrictEqual(withoutCurve(before),withoutCurve(after));
+}
+
+const routes = new Map([
+  ['/', ['text/html', '../web/index.html']],
+  ['/style.css', ['text/css', '../web/style.css']],
+  ['/app.mjs', ['text/javascript', '../web/app.mjs']],
+  ['/camera-panel.mjs', ['text/javascript', '../web/camera-panel.mjs']],
+  ['/capture-panel.mjs', ['text/javascript', '../web/capture-panel.mjs']],
+  ['/preflight-panel.mjs', ['text/javascript', '../web/preflight-panel.mjs']],
+  ['/isp-panel.mjs', ['text/javascript', '../web/isp-panel.mjs']],
+  ['/isp-demo.mjs', ['text/javascript', '../web/isp-demo.mjs']],
+  ['/isp-demo/manifest.json', ['application/json', '../web/isp-demo/manifest.json']],
+  ['/board-panel.mjs', ['text/javascript', '../web/board-panel.mjs']],
+  ['/zip.mjs', ['text/javascript', '../web/zip.mjs']],
+  ['/guide.mjs', ['text/javascript', './guide.mjs']],
+  ['/steps.mjs', ['text/javascript', './steps.mjs']],
+]);
+for(const name of ['exposure','gain','contrast','sharpness','white-balance']) {
+  for(const phase of ['before','after']) {
+    const asset='/isp-demo/'+name+'-'+phase+'.jpg';
+    routes.set(asset,['image/jpeg','../web'+asset]);
+  }
+}
+const files = new Map([...routes].map(([path,[type,name]])=>[path,[type,readFileSync(new URL(name,import.meta.url))]]));
+
+function readDeveloperMachineProfile(file=process.env.RDK_VISION_COURSE_DEVMACHINE_PROFILE) {
+  if(!file) return {status:'unconfigured'};
+  try {
+    if(!isAbsolute(file)) throw new Error();
+    const stat=lstatSync(file);
+    if(!stat.isFile()||stat.size>8192||process.platform!=='win32'&&(stat.uid!==process.getuid()||stat.mode&0o022)) throw new Error();
+    const document=JSON.parse(readFileSync(file,'utf8'));
+    const fields=['connection','dataset','startCommand','logPath','artifactPath'];
+    if(!document||Object.keys(document).length!==fields.length||!fields.every(key=>
+      typeof document[key]==='string'&&document[key].trim().length>0&&document[key].length<=1000&&!/[\u0000-\u001f\u007f]/.test(document[key]))) throw new Error();
+    return {status:'ready',...document};
+  } catch {return {status:'invalid'};}
+}
+
+export async function startWorkbench(input={}, port=0, cameraSource=createCameraSource(), {
+  idleMs,roboGo=createRoboGo(),stateFile,practiceReturnUrl,stationActions,isActiveStation,stationKind,lastStation,priorTraining,
+  classroomPlan:plan=defaultPlan
+}={}) {
+  const direct=plan.training.workflow==='devmachine';
+  const stored=readWorkbenchState(stateFile);
+  let verifiedRun=stored?.verifiedRun;
+  let lockedRun=stored?.lockedRun;
+  const initial={...(stored?.resume??input)};
+  if(initial.run?.modelSha256!==undefined&&(initial.run.id!==verifiedRun?.id||initial.run.modelSha256!==verifiedRun?.modelSha256)) {
+    initial.run={...initial.run};delete initial.run.modelSha256;
+  }
+  let resume=guideCourse(plan,initial).resume;
+  let revision=0;
+  let inspected;
+  let preflight;
+  let preflightRunning=false;
+  let cameraIsp=stored?.cameraIsp;
+  if(cameraIsp?.gamma&&!cameraIsp.rounds?.length&&cameraIsp.gammaReadback) {
+    cameraIsp={...cameraIsp,rounds:[{number:1,...cameraIsp.gamma,beforeReadback:cameraIsp.original,
+      gammaReadback:cameraIsp.gammaReadback,legacy:true}]};
+  }
+  if(cameraIsp?.running) {
+    const {running,...saved}=cameraIsp;
+    cameraIsp={...saved,error:saved.recoveryPending?'camera_isp_restore_unconfirmed':'camera_isp_operation_interrupted'};
+  }
+  let ispBusy=false;
+  let cameraCapture=stored?.cameraCapture;
+  if(cameraCapture?.running) {
+    const {running,...saved}=cameraCapture;
+    cameraCapture={...saved,errors:{...saved.errors,[running]:'camera_capture_unconfirmed'}};
+  }
+  let cameraJob=false;
+  const board=boardEvidence();
+  const presetBoard=process.env.RDK_VISION_COURSE_PRESET_BOARD_ARCHIVE?boardEvidence(process.env.RDK_VISION_COURSE_PRESET_BOARD_ARCHIVE):board;
+  const boardLauncher=createBoardLauncher();
+  let lastRoboGoCheck, checkingRoboGo;
+  let preparedTraining, submittingTraining=false, authorizationRound=0, submission=stored?.submission??'idle';
+  const persist=(next=resume)=>writeWorkbenchState(stateFile,{resume:next,submission,verifiedRun,lockedRun,cameraCapture,cameraIsp});
+  const selectedModelHash=()=>resume.path==='B'?presetModelHash(resume.evidence.preset_model)
+    :resume.path==='C'||resume.run?.source==='robogo'&&resume.run.modelSha256!==normalizedModelHash(resume.evidence.x5_model_hash)
+      ?undefined:normalizedModelHash(resume.evidence.x5_model_hash);
+  const boardBinding=()=>({path:resume.path,modelHash:selectedModelHash(),experimentId:resume.camera?.experimentId});
+  function boardSelection() {
+    const isp=storedIsp();
+    const readback=isp?.reloadReadback??isp?.rounds?.findLast(round=>round.decision)?.gammaReadback;
+    const approvedIsp=readback?.config&&isp?.original?.config&&readback.hash!==isp.original.hash?
+      {config:readback.config,hash:readback.hash,originalConfig:isp.original.config,originalHash:isp.original.hash}:undefined;
+    return {...boardBinding(),approvedIsp,comparisonEligible:Boolean(approvedIsp&&comparisonEligible(isp.original,readback)),
+      available:guideCourse(plan,resume).routing.choices.some(choice=>choice.id===resume.path&&choice.available),
+      cameraBusy:cameraJob||ispBusy||preflightRunning||cameraIsp?.recoveryPending||cameraIsp?.changesActive};
+  }
+  const selectedBoard=()=>boardLauncher.evidence(boardBinding())??(resume.path==='B'?presetBoard:board);
+  function checkTrainingWindow() {
+    if(!stateFile) throw new Error('robogo_state_required');
+    if(resume.run||resume.evidence.run_id) throw new Error('robogo_run_exists');
+    if(submittingTraining||submission!=='idle') throw new Error('robogo_submit_unconfirmed');
+    const minute=resume.elapsedMinutes;
+    if(minute===undefined||minute<plan.deadlines.submitStart||minute>=plan.deadlines.submitBy) throw new Error('robogo_submit_window');
+    const {training_image_unavailable:_,...remainingBlockers}=resume.blockers;
+    if(guideCourse(plan,{...resume,blockers:remainingBlockers}).nextStep?.stageId!=='train') throw new Error('robogo_training_step_required');
+  }
+  async function prepareTraining() {
+    checkTrainingWindow();
+    if(await priorTraining?.()) throw new Error('robogo_other_station_run');
+    const round=authorizationRound;
+    const profile=await trainingProfile();
+    const ref=await roboGo.prepare(profile.input);
+    checkTrainingWindow();
+    if(switchingStation||isActiveStation&&!await isActiveStation()) throw new Error('robogo_plan_changed');
+    if(round!==authorizationRound) throw new Error('robogo_plan_changed');
+    if(resume.blockers.training_image_unavailable) update({},['training_image_unavailable']);
+    const confirmationId=randomUUID();
+    preparedTraining={ref,confirmationId,expires:Date.now()+120000};
+    return {confirmationId,parameters:profile.input};
+  }
+  async function submitTraining(confirmationId) {
+    checkTrainingWindow();
+    const prepared=preparedTraining;
+    if(!prepared||Date.now()>=prepared.expires) throw new Error('robogo_plan_expired');
+    if(confirmationId!==prepared.confirmationId) throw new Error('robogo_plan_changed');
+    submittingTraining=true;
+    preparedTraining=undefined;
+    try {
+      if(await priorTraining?.()) throw new Error('robogo_other_station_run');
+      if(switchingStation||isActiveStation&&!await isActiveStation()) throw new Error('robogo_plan_changed');
+      submission='pending';
+      persist();
+      const run=await roboGo.submit(prepared.ref);
+      lockedRun=run;
+      submission='accepted';
+      verifiedRun=run;
+      return update({run:{...run,checkedAtMinute:resume.elapsedMinutes}});
+    } catch(error) {
+      if(submission==='idle') throw error;
+      if(!lockedRun) submission='pending';
+      throw new Error('robogo_submit_unconfirmed');
+    } finally {submittingTraining=false;}
+  }
+  async function refreshRoboGo() {
+    const run=resume.run;
+    if(run?.source!=='robogo') throw new Error('robogo_run_required');
+    if(checkingRoboGo?.id===run.id) return checkingRoboGo.promise;
+    if(lastRoboGoCheck?.id===run.id&&Date.now()-lastRoboGoCheck.time<15000) return read();
+    const promise=(async()=>{
+      const result=await roboGo.refresh(run.id,{name:run.name,receipt:run.receipt});
+      if(resume.run?.source!=='robogo'||resume.run.id!==result.id) throw new Error('run_receipt_mismatch');
+      const elapsedMinutes=resume.elapsedMinutes;
+      verifiedRun=result;
+      lockedRun=result;submission='accepted';
+      const next=update({run:{...result,...(elapsedMinutes!==undefined?{checkedAtMinute:elapsedMinutes}:{}),
+        ...(resume.run.etaMinute!==undefined?{etaMinute:resume.run.etaMinute}:{})},
+        ...(result.modelSha256&&!resume.evidence.x5_model_hash?{evidence:{x5_model_hash:'sha256:'+result.modelSha256}}:{})});
+      lastRoboGoCheck={id:run.id,time:Date.now()};
+      return next;
+    })();
+    checkingRoboGo={id:run.id,promise};
+    try {return await promise;}
+    finally {if(checkingRoboGo?.promise===promise) checkingRoboGo=undefined;}
+  }
+  function read() { return {resume,revision}; }
+  function readPreflight() {
+    return preflight?.experimentId===(resume.camera?.experimentId??null)?preflight:undefined;
+  }
+  function queuePreflight() {
+    if(preflightRunning||cameraJob||ispBusy) throw new Error('camera_capture_busy');
+    const binding=resume.camera;
+    const result={experimentId:binding?.experimentId??null,startedAt:new Date().toISOString(),running:true,
+      checks:{service:{status:'checking'},board:{status:'waiting'},frame:{status:'waiting'}}};
+    preflight=result;
+    preflightRunning=true;
+    void (async()=>{
+      try {
+        await cameraSource.preflight(binding,(layer,receipt)=>{
+          result.checks[layer]={...receipt,checkedAt:new Date().toISOString()};
+        });
+        if(binding?.experimentId&&binding.experimentId===resume.camera?.experimentId&&
+           Object.values(result.checks).every(check=>check.status==='passed')) {
+          const {board,sensorModel,mode,receiptId}=result.checks.board;
+          update({evidence:{plugin_tools_available:'本轮相机服务与实时帧预检通过',
+            current_device_identity:[board,sensorModel,mode,receiptId].filter(Boolean).join(' · ').slice(0,300)}},
+            ['vision_device_transport_failed']);
+        }
+      } catch {
+        result.checks.service={status:'blocked',code:'camera_service_error',checkedAt:new Date().toISOString()};
+      } finally {
+        result.running=false;
+        result.completedAt=new Date().toISOString();
+        preflightRunning=false;
+      }
+    })();
+    return result;
+  }
+  function storedIsp() {
+    return cameraIsp?.experimentId===resume.camera?.experimentId?cameraIsp:undefined;
+  }
+  function ispStatus() {
+    const status=storedIsp();
+    if(!status) return;
+    const {original,readback,gammaReadback,reloadReadback,exposure,rounds=[],adjustments=[],...details}=status;
+    const summary=({config,...metadata})=>{
+      const gamma=config?.modules?.gamma;
+      const curve=gamma?.mode===0?gamma['auto_attr.curve']:gamma?.mode===1?gamma['manual_attr.curve']:null;
+      const points=[0,16,32,48,63];
+      return {...metadata,...(Array.isArray(curve)&&points.every(index=>Number.isFinite(curve[index]))?
+        {curvePreview:{mode:gamma.mode,points:points.map(index=>curve[index])}}:{})};
+    };
+    const exposureSummary=()=>{
+      const {beforeReadback,afterReadback,restorationReadback,...demo}=exposure;
+      return {...demo,...(beforeReadback?{beforeReadback:summary(beforeReadback)}:{}),
+        ...(afterReadback?{afterReadback:summary(afterReadback)}:{}),
+        ...(restorationReadback?{restorationReadback:summary(restorationReadback)}:{})};
+    };
+    const trialSummaries=adjustments.map(item=>Object.fromEntries(Object.entries(item).map(([name,value])=>
+      [name,name.endsWith('Readback')?summary(value):value])));
+    return {...details,adjustments:trialSummaries,...(exposure?{exposure:exposureSummary()}:{}),
+      ...(original?{original:summary(original)}:{}),...(readback?{readback:summary(readback)}:{}),
+      ...(gammaReadback?{gammaReadback:summary(gammaReadback)}:{}),...(reloadReadback?{reloadReadback:summary(reloadReadback)}:{}),
+      rounds:rounds.map(({beforeReadback,gammaReadback,decisionReadback,resetReadback,...round})=>{
+        const curveChange=gammaCurveChange(beforeReadback,gammaReadback);
+        return {...round,...(curveChange?{curveChange}:{}),
+          ...(beforeReadback?{beforeReadback:summary(beforeReadback)}:{}),gammaReadback:summary(gammaReadback),
+          ...(decisionReadback?{decisionReadback:summary(decisionReadback)}:{}),...(resetReadback?{resetReadback:summary(resetReadback)}:{})};
+      })};
+  }
+  function saveIsp(value) {
+    const previous=cameraIsp;
+    cameraIsp=value;
+    try {persist();}
+    catch(error) {cameraIsp=previous;throw error;}
+  }
+  function queueIsp(action,goal,{round,choice,reason,field,expected,value,trial,candidateId}={}) {
+    const validText=(input,max)=>typeof input==='string'&&input.trim().length>0&&input.trim().length<=max&&!/[\u0000-\u001f\u007f]/u.test(input);
+    const isChoice=['keep','restore'].includes(choice)&&validText(reason,180);
+    if(!['save','gamma','gamma_prepare','gamma_apply','gamma_discard','decision','reload','revert','restore','exposure','learner_options','learner_apply','learner_decision'].includes(action)||
+      (['gamma','gamma_prepare'].includes(action)&&!validText(goal,180))||
+      (action==='gamma_apply'&&!/^[a-f0-9-]{36}$/u.test(candidateId??''))||
+      (action==='learner_apply'&&(goal!==undefined&&!validText(goal,180)||reason!==undefined&&!validText(reason,180)))||
+      (action==='decision'&&(![1,2].includes(round)||!isChoice))||
+      (action==='learner_apply'&&(!/^[a-zA-Z]{1,40}$/.test(field??'')||typeof field!=='string'||!Number.isFinite(expected)||!Number.isFinite(value)))||
+      (action==='learner_decision'&&(!Number.isSafeInteger(trial)||!isChoice))) {
+      throw new Error('camera_isp_action_invalid');
+    }
+    const binding=resume.camera;
+    if(!binding) throw new Error('camera_binding_invalid');
+    if(ispBusy||cameraJob||preflightRunning) throw new Error('camera_capture_busy');
+    if(cameraIsp?.recoveryPending&&cameraIsp.experimentId!==binding.experimentId) throw new Error('camera_recovery_required');
+    const current=storedIsp();
+    if(action==='save'&&current?.original) return ispStatus();
+    if(action!=='save'&&!current?.original) throw new Error('camera_isp_snapshot_missing');
+    if((action==='restore'||action==='revert')&&current.stop) return ispStatus();
+    if(['gamma','gamma_prepare','gamma_apply','reload','exposure','learner_apply','learner_options'].includes(action)&&(current.recoveryPending||current.changesActive||current.stop)) throw new Error('camera_recovery_required');
+    const rounds=current?.rounds??[];
+    const nextRound=rounds.length+1;
+    const selected=rounds.at(-1);
+    const adjustments=current?.adjustments??[];
+    const active=adjustments.find(item=>item.number===current?.activeAdjustment);
+    if(action==='learner_apply'&&selected&&!selected.decision) throw new Error('camera_gamma_round_locked');
+    if(action==='learner_apply'&&!current.learnerOptions?.some(item=>item.id===field&&!item.disabled&&item.value===expected)) {
+      throw new Error('camera_learner_control_changed');
+    }
+    if(action==='learner_decision'&&(!active||trial!==active.number||active.decision||!active.after||
+        !current.changesActive||current.recoveryPending||current.stop)) throw new Error('camera_learner_trial_locked');
+    if(action==='exposure'&&selected&&!selected.decision) throw new Error('camera_gamma_round_locked');
+    if(['gamma','gamma_prepare','gamma_apply'].includes(action)&&(nextRound>2||selected&&!selected.decision||round!==undefined&&round!==nextRound)) {
+      throw new Error('camera_gamma_round_locked');
+    }
+    if(action==='gamma_apply'&&(!current.gammaProposal||current.gammaProposal.candidateId!==candidateId||
+        current.gammaProposal.number!==nextRound)) throw new Error('camera_gamma_proposal_changed');
+    if(action==='gamma_discard') {
+      const next={...current,stage:'saved'};
+      delete next.gammaProposal;
+      delete next.error;
+      saveIsp(next);
+      return ispStatus();
+    }
+    if(action==='decision'&&(round!==selected?.number||selected.decision||current.stop||choice==='keep'&&
+      (!current.changesActive||current.recoveryPending||current.stage==='gamma_reloaded'))) throw new Error('camera_gamma_round_locked');
+    if(action==='reload'&&(!current.gamma?.candidateId||!current.gammaReadback||!current.restored)) {
+      throw new Error('camera_gamma_reload_required');
+    }
+    const status={...current,experimentId:binding.experimentId,running:action,
+      stage:action==='save'?'snapshot':'checking',
+      recoveryPending:['restore','revert'].includes(action)||['decision','learner_decision'].includes(action)&&choice==='restore'||current?.recoveryPending===true};
+    delete status.error;
+    if(action!=='gamma_apply') delete status.gammaProposal;
+    if(action==='learner_options') delete status.learnerOptions;
+    if(!['learner_options','learner_apply'].includes(action)) delete status.learnerOptions;
+    saveIsp(status);
+    ispBusy=true;
+    void (async()=>{
+      try {
+        if(action==='save') {
+          status.original=await cameraSource.saveOriginalIsp(binding);
+          status.stage='saved';
+          saveIsp({...status});
+          update({evidence:{original_snapshot:status.original.baselineId+' · sha256:'+status.original.hash}});
+        } else if(action==='learner_options') {
+          status.learnerOptions=await cameraSource.getLearnerOptions(binding,status.original);
+          status.stage='learner_ready';
+        } else if(action==='learner_apply') {
+          delete status.learnerOptions;
+          const number=(adjustments.at(-1)?.number??0)+1;
+          let record={number,field,...(goal?{goal:goal.trim()}:{}),...(reason?{reason:reason.trim()}:{}),
+            entry:goal||reason?'guided':'manual'};
+          await cameraSource.learnerTrial(binding,status.original,{field,expected,value},(stage,progress,writing)=>{
+            status.stage=stage;
+            if(progress) {
+              record={...record,...progress};
+              status.adjustments=[...adjustments,record];
+            }
+            if(writing) {
+              status.activeAdjustment=number;
+              status.recoveryPending=true;
+              delete status.readback;
+              delete status.stopPending;
+            }
+            saveIsp({...status});
+          });
+          Object.assign(status,{stage:'learner_saved',recoveryPending:false,changesActive:true});
+        } else if(action==='learner_decision'&&choice==='keep') {
+          const decisionReadback=await cameraSource.confirmIsp(binding,status.original,active.afterReadback.hash);
+          status.adjustments=adjustments.map(item=>item===active?{...item,decisionReadback,
+            decision:{choice,reason:reason.trim(),recordedAt:new Date().toISOString()}}:item);
+          status.stage='learner_saved';
+        } else if(action==='exposure') {
+          status.exposure={};
+          let writeStarted=false;
+          try {
+            await cameraSource.exposureTrial(binding,status.original,(stage,progress,writing)=>{
+              status.stage=stage;
+              if(progress) status.exposure={...status.exposure,...progress};
+              if(writing) {
+                status.recoveryPending=true;
+                status.exposure.recoveryPending=true;
+              }
+              saveIsp({...status});
+              if(writing) writeStarted=true;
+            });
+          } catch(error) {
+            status.exposure.error=/^(vision|camera)_[a-z0-9_]{1,90}$/.test(error.message)?error.message:'camera_isp_recording_failed';
+          } finally {
+            if(writeStarted) {
+              const {readback}=await cameraSource.restoreOriginalIsp(binding,status.original,{
+                stopStream:false,captureRestored:false,
+                onPhase(stage) {
+                  status.stage=stage;
+                  // Recovery must still run if the evidence disk became unavailable.
+                  try {saveIsp({...status});} catch {}
+                },
+              });
+              status.exposure={...status.exposure,restorationReadback:readback,recoveryPending:false};
+            }
+            status.recoveryPending=false;
+            status.stage=status.exposure.error?'exposure_incomplete':'exposure_restored';
+          }
+        } else if(action==='gamma_prepare'||action==='gamma'||action==='gamma_apply') {
+          delete status.pendingGamma;
+          const onPhase=(stage,progress,applyStarted)=>{
+            status.stage=stage;
+            if(progress) status.pendingGamma={...status.pendingGamma,...progress};
+            if(applyStarted) {
+              status.recoveryPending=true;
+              delete status.gammaProposal;
+              delete status.readback;
+              delete status.stopPending;
+              delete status.gammaReadback;
+            }
+            saveIsp({...status});
+          };
+          const proposal=action==='gamma_apply'?status.gammaProposal:{
+            ...await cameraSource.prepareGamma(binding,status.original,goal.trim(),onPhase),
+            number:nextRound,goal:goal.trim()};
+          if(action==='gamma_prepare') {
+            Object.assign(status,{gammaProposal:proposal,stage:'gamma_proposed'});
+            delete status.pendingGamma;
+            return;
+          }
+          const result=await cameraSource.applyPreparedGamma(binding,status.original,proposal,onPhase);
+          status.gamma={before:result.before,after:result.after,candidateId:result.candidateId};
+          status.gammaReadback=result.readback;
+          status.rounds=[...rounds,{number:nextRound,goal:proposal.goal,model:proposal.model,modelReasons:proposal.reasons,
+            ...status.gamma,beforeReadback:result.beforeReadback,
+            gammaReadback:result.readback}];
+          delete status.pendingGamma;
+          delete status.restored;
+          delete status.reloaded;
+          delete status.reloadReadback;
+          delete status.comparisonIssue;
+          Object.assign(status,{stage:'gamma_saved',recoveryPending:false,changesActive:true});
+          saveIsp({...status});
+          update({evidence:{[nextRound===1?'gamma_readback':'trial_readback']:'sha256:'+result.readback.hash+' · '+result.readback.receiptId,
+            [nextRound===1?'gamma_fresh_frame':'trial_fresh_frame']:result.after.id+' · SDK '+result.after.sdkTimestampNs}});
+        } else if(action==='decision'&&choice==='keep') {
+          const decisionReadback=await cameraSource.confirmIsp(binding,status.original,selected.gammaReadback.hash);
+          status.rounds=[...rounds.slice(0,-1),{...selected,decisionReadback,decision:{choice,reason:reason.trim(),recordedAt:new Date().toISOString()}}];
+          status.stage='gamma_saved';
+          saveIsp({...status});
+          update({evidence:{[round===1?'gamma_decision':'trial_decision']:'保留调整 · '+reason.trim()}});
+        } else if(action==='reload') {
+          const result=await cameraSource.reloadGamma(binding,status.original,
+            {id:status.gamma.candidateId,hash:status.gammaReadback.hash},status.restored,(stage,applyStarted)=>{
+              status.stage=stage;
+              if(applyStarted) status.recoveryPending=true;
+              saveIsp({...status});
+            });
+          Object.assign(status,{stage:'gamma_reloaded',recoveryPending:false,changesActive:true,
+            reloaded:result.after,reloadReadback:result.readback});
+          saveIsp({...status});
+          update({evidence:{selected_tuning:status.gamma.candidateId+' · sha256:'+result.readback.hash,
+            independent_readback:'sha256:'+result.readback.hash+' · '+result.readback.receiptId,
+            tuning_reload_frame:result.after.id+' · SDK '+result.after.sdkTimestampNs}});
+        } else {
+          const exposureRecovery=status.exposure?.recoveryPending===true;
+          const result=await cameraSource.restoreOriginalIsp(binding,status.original,{
+            previousReadback:status.stopPending?status.readback:undefined,
+            stopStream:action==='restore',
+            captureRestored:!exposureRecovery,
+            ...(active?{scene:'课堂单项对照 · '+active.label+' · 恢复后'}:{}),
+            onPhase(stage,readback) {
+              status.stage=stage;
+              if(readback) {
+                status.readback=readback;
+                status.stopPending=stage==='stop';
+              }
+              saveIsp({...status});
+            },
+          });
+          delete status.comparisonIssue;
+          delete status.gammaProposal;
+          Object.assign(status,result,{stage:action==='restore'?'stopped':'reverted',recoveryPending:false,changesActive:false,stopPending:false});
+          if(exposureRecovery) status.exposure={...status.exposure,restorationReadback:result.readback,recoveryPending:false};
+          if(active) {
+            const decision=action==='learner_decision'?{choice,reason:reason.trim(),recordedAt:new Date().toISOString()}:active.decision;
+            status.adjustments=adjustments.map(item=>item===active?{...item,restorationReadback:result.readback,
+              ...(decision?{decision}:{}),...(result.restored?{restored:result.restored}:{})}:item);
+            delete status.activeAdjustment;
+          }
+          if(selected&&action!=='restore'&&!exposureRecovery&&!active) {
+            const evidence=action==='decision'?{decisionReadback:result.readback,
+              decision:{choice,reason:reason.trim(),recordedAt:new Date().toISOString()}}:
+              selected.resetReadback?{}:{resetReadback:result.readback};
+            status.rounds=[...rounds.slice(0,-1),{...selected,...evidence,...(result.restored&&!selected.restored?{restored:result.restored}:{})}];
+          }
+          saveIsp({...status});
+          const evidence=action==='restore'?{restoration_and_release:'ISP sha256:'+result.readback.hash+' · 停流回执 '+result.stop.receiptId}:
+            !exposureRecovery&&!active&&result.restored&&status.gamma?.before&&status.gamma?.after?{A1_B_A2:[status.gamma.before.id,status.gamma.after.id,result.restored.id].join(' · ')}:{};
+          if(action==='decision') evidence[round===1?'gamma_decision':'trial_decision']='恢复原值 · '+reason.trim();
+          update({evidence},['recovery_unconfirmed']);
+        }
+      } catch(error) {
+        if(action==='gamma_apply'&&!status.recoveryPending&&error.message==='camera_isp_snapshot_changed') {
+          delete status.gammaProposal;
+          status.error='camera_gamma_baseline_moved';
+          return;
+        }
+        if(['decision','learner_decision'].includes(action)&&choice==='keep'&&error.message==='camera_isp_snapshot_changed') status.recoveryPending=true;
+        status.error=/^(vision|camera)_[a-z0-9_]{1,90}$/.test(error.message)?error.message:'camera_isp_recording_failed';
+        if(status.recoveryPending) {
+          try {update({blockers:{recovery_unconfirmed:'ISP 恢复与停流待核对 · '+status.error}});} catch {}
+        }
+      } finally {
+        delete status.running;
+        try {saveIsp({...status});} catch {}
+        ispBusy=false;
+      }
+    })();
+    return ispStatus();
+  }
+  function captureStatus() {
+    return cameraCapture?.experimentId===resume.camera?.experimentId?cameraCapture:undefined;
+  }
+  function saveCapture(value) {
+    const previous=cameraCapture;
+    cameraCapture=value;
+    try {persist();}
+    catch(error) {cameraCapture=previous;throw error;}
+  }
+  function recordCapture(action,value) {
+    const {photo,raw,isp,render}=value.assets;
+    const describe=asset=>asset.id+' · sha256:'+asset.sha256;
+    const evidence={};
+    if(action==='photo'&&photo) evidence.fresh_camera_image=describe(photo);
+    if(action!=='photo'&&raw&&isp&&render) Object.assign(evidence,{
+      baseline_images:'同一固定场景 · '+value.scene+' · RAW 与 ISP 分次采集，重渲染来自本组 RAW',
+      baseline_raw:describe(raw),baseline_isp:describe(isp),baseline_render:describe(render),
+    });
+    if(Object.keys(evidence).length) update({evidence});
+  }
+  async function captureParts(action,value,binding) {
+    try {
+      for(const kind of action==='photo'?['photo']:action==='render'?['render']:['raw','isp','render']) {
+        if(kind!=='photo'&&value.assets[kind]) continue;
+        if(kind==='render'&&!value.assets.raw) break;
+        value.running=kind;
+        delete value.errors[kind];
+        saveCapture(structuredClone(value));
+        try {
+          const asset=await cameraSource.capture(binding,kind,{scene:kind==='photo'?'当前相机场景':value.scene,raw:value.assets.raw});
+          value.assets[kind]=asset;
+          inspected=undefined;
+        } catch(error) {
+          value.errors[kind]=/^vision_[a-z0-9_]{1,90}$/.test(error.message)||cameraErrors.has(error.message)||
+            error.message==='camera_capture_unconfirmed'?error.message:'camera_service_error';
+        }
+        delete value.running;
+        saveCapture(structuredClone(value));
+        if(unconfirmedCapture.has(value.errors[kind])) break;
+      }
+      recordCapture(action,value);
+    } finally {cameraJob=false;}
+  }
+  function queueCapture(action,scene) {
+    if(!captureActions.has(action)) throw new Error('camera_capture_invalid');
+    if(!resume.camera) throw new Error('camera_binding_invalid');
+    if(cameraJob||preflightRunning||ispBusy) throw new Error('camera_capture_busy');
+    if(cameraIsp?.recoveryPending) throw new Error('camera_recovery_required');
+    if((action==='baseline'||action==='retake')&&
+        (typeof scene!=='string'||!scene.trim()||scene.trim().length>100||/[\u0000-\u001f\u007f]/u.test(scene))) throw new Error('camera_scene_required');
+    const binding=resume.camera;
+    const previous=captureStatus()??{experimentId:binding.experimentId,assets:{},errors:{}};
+    const next=structuredClone(previous);
+    if(action==='photo') {
+      next.photoRequestId=randomUUID();
+      delete next.assets.photo;
+      delete next.errors.photo;
+    }
+    else if(action==='retake'||!previous.scene) {
+      for(const kind of ['raw','isp','render']) {delete next.assets[kind];delete next.errors[kind];}
+      next.scene=scene?.trim();
+    }
+    if(action==='render'&&(!next.assets.raw||next.assets.render)) throw new Error('camera_render_raw_required');
+    if(action==='baseline'&&next.scene!==scene.trim()) throw new Error('camera_scene_changed');
+    if(action==='baseline'&&next.assets.raw&&next.assets.isp&&next.assets.render&&!next.recording) return previous;
+    if((action==='baseline'||action==='render')&&next.errors.render===rawReplayCaptureMetadataRequired) {
+      throw new Error(next.errors.render);
+    }
+    if(action==='baseline'&&['raw','isp','render'].some(kind=>unconfirmedCapture.has(next.errors[kind]))||
+       action==='render'&&unconfirmedCapture.has(next.errors.render)) throw new Error('camera_capture_unconfirmed');
+    delete next.recording;
+    cameraJob=true;
+    void captureParts(action,next,binding).catch(()=>{
+      if(cameraCapture?.experimentId===binding.experimentId) {
+        const {running,...saved}=cameraCapture;
+        cameraCapture={...saved,recording:'camera_recording_failed',
+          ...(running?{errors:{...saved.errors,[running]:'camera_capture_unconfirmed'}}:{})};
+      }
+    });
+    return captureStatus();
+  }
+  function update(patch, clearBlockers=[], replace=false) {
+    if (!patch || typeof patch!=='object' || Array.isArray(patch) || !Array.isArray(clearBlockers) ||
+        clearBlockers.some(code=>typeof code!=='string'||!Object.hasOwn(guideSchema.properties.blockers.properties,code))) {
+      throw new Error('invalid_session_update');
+    }
+    const current=replace?{}:resume;
+    const blockers={...current.blockers,...patch.blockers};
+    for (const code of clearBlockers) delete blockers[code];
+    const boundCloudRun=resume.run?.source==='robogo'?resume.run:undefined;
+    const previousId=boundCloudRun?.id??current.run?.id??current.evidence?.run_id;
+    const incomingId=patch.run?.id??patch.evidence?.run_id;
+    if (previousId&&incomingId&&previousId!==incomingId) throw new Error('run_receipt_mismatch');
+    if ((patch.evidence!==undefined&&(!patch.evidence||typeof patch.evidence!=='object'||Array.isArray(patch.evidence))) ||
+        (patch.blockers!==undefined&&(!patch.blockers||typeof patch.blockers!=='object'||Array.isArray(patch.blockers)))) {
+      throw new Error('invalid_session_update');
+    }
+    const candidate={...current,...patch,evidence:{...current.evidence,...patch.evidence},blockers};
+    if(direct&&resume.run?.source==='external') {
+      if(incomingId&&incomingId!==resume.run.id||candidate.run&&candidate.run.source!=='external') throw new Error('run_receipt_mismatch');
+      candidate.run??=resume.run;
+    }
+    if(lockedRun) {
+      if((incomingId&&incomingId!==lockedRun.id)||(candidate.run&&candidate.run.source!=='robogo')) throw new Error('run_receipt_mismatch');
+      candidate.run??=lockedRun;
+    }
+    if(boundCloudRun&&candidate.run&&candidate.run.source!=='robogo') throw new Error('run_receipt_mismatch');
+    candidate.run??=boundCloudRun;
+    if(!candidate.run) delete candidate.run;
+    if(candidate.run) {
+      const {modelSha256:_claimed,...run}=candidate.run;
+      if(run.source==='robogo'&&run.id===verifiedRun?.id&&verifiedRun.name) run.name=verifiedRun.name;
+      const verified=run.source==='robogo'&&run.id===verifiedRun?.id?verifiedRun.modelSha256:undefined;
+      candidate.run={...run,...(verified?{modelSha256:verified}:{})};
+    }
+    if (patch.path&&patch.path!==resume.path&&
+        (direct&&(candidate.elapsedMinutes===undefined||candidate.elapsedMinutes<plan.deadlines.deployAt)||
+        !direct&&!replace&&candidate.elapsedMinutes!==undefined&&candidate.elapsedMinutes<plan.deadlines.deployAt)) {
+      throw new Error('route_not_open');
+    }
+    if (practiceReturnUrl&&(candidate.camera||candidate.run||candidate.path)) throw new Error('practice_hardware_unavailable');
+    const next=guideCourse(plan,candidate).resume;
+    if((cameraJob||ispBusy||boardLauncher.running()||cameraIsp?.recoveryPending||cameraIsp?.changesActive)&&next.camera?.experimentId!==resume.camera?.experimentId) throw new Error('camera_capture_busy');
+    const changed=JSON.stringify(next)!==JSON.stringify(resume);
+    if(changed||submission!=='idle'||verifiedRun) persist(next);
+    if (changed) {
+      if(JSON.stringify(next.camera)!==JSON.stringify(resume.camera)) inspected=undefined;
+      if(next.camera?.experimentId!==resume.camera?.experimentId) preflight=undefined;
+      resume=next; revision++;
+    }
+    return read();
+  }
+  const key=randomUUID();
+  let idle;
+  let practice,switchingStation=false;
+  function keepAlive() {
+    if (!idleMs) return;
+    clearTimeout(idle);
+    idle=setTimeout(()=>server.close(),idleMs);
+    idle.unref();
+  }
+  const server=createServer(async (req,res)=>{
+    const host='127.0.0.1:'+server.address().port;
+    res.setHeader('Cache-Control','no-store');
+    res.setHeader('X-Content-Type-Options','nosniff');
+    res.setHeader('Referrer-Policy','no-referrer');
+    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob: data:; base-uri 'none'; form-action 'none'");
+    if (req.headers.host!==host) { res.writeHead(404).end(); return; }
+    const url=new URL(req.url,'http://'+host);
+    if (req.headers['x-workshop-session']===key||url.pathname==='/course.json'&&url.searchParams.get('view')===key) keepAlive();
+    if(req.method==='POST'&&req.headers['x-workshop-session']===key&&isActiveStation&&
+        (!await isActiveStation()||switchingStation)) {
+      res.writeHead(409,{'Content-Type':'application/json'}).end(JSON.stringify({error:'station_inactive'}));
+      return;
+    }
+    if(['/station/new','/station/original','/station/latest','/station/active'].includes(url.pathname)) {
+      const action=url.pathname.slice('/station/'.length);
+      if(!stationActions||req.method!==(action==='active'?'GET':'POST')||req.headers['x-workshop-session']!==key||
+          req.headers.origin&&req.headers.origin!=='http://'+host) {res.writeHead(404).end();return;}
+      if(action!=='active'&&(switchingStation||cameraJob||preflightRunning||ispBusy||cameraIsp?.recoveryPending||cameraIsp?.changesActive||
+          boardLauncher.running()||submittingTraining||submission==='pending')) {
+        res.writeHead(409,{'Content-Type':'application/json'}).end(JSON.stringify({error:'station_busy'}));return;
+      }
+      if(action!=='active') switchingStation=true;
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      try {
+        const next=await stationActions(action);
+        res.end(JSON.stringify({url:next}));
+      } catch {
+        res.writeHead(503).end(JSON.stringify({error:'station_unavailable'}));
+      } finally {if(action!=='active') switchingStation=false;}
+      return;
+    }
+    if (url.pathname==='/practice') {
+      if (practiceReturnUrl||req.headers['x-workshop-session']!==key) { res.writeHead(404).end(); return; }
+      if (req.method!=='POST'||req.headers.origin&&req.headers.origin!=='http://'+host) { res.writeHead(405).end(); return; }
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      try {
+        practice??=startWorkbench({},0,undefined,{idleMs:idleMs??8*60*60*1000,classroomPlan:plan,practiceReturnUrl:'http://'+host+'/#'+key}).then(view=>{
+          view.server.once('close',()=>{practice=undefined;});
+          return view;
+        });
+        const view=await practice;
+        res.end(JSON.stringify({url:view.url}));
+      } catch {
+        practice=undefined;
+        res.writeHead(503).end(JSON.stringify({error:'practice_unavailable'}));
+      }
+      return;
+    }
+    if (practiceReturnUrl && /^\/(?:camera|robogo|board|training)(?:\/|$)/.test(url.pathname)) { res.writeHead(404).end(); return; }
+    if(url.pathname==='/robogo/callback'&&req.method==='GET') {
+      res.setHeader('Content-Type','text/plain; charset=utf-8');
+      try {
+        if(isActiveStation&&(!await isActiveStation()||switchingStation)) throw new Error('station_inactive');
+        await roboGo.callback(url.searchParams);
+        authorizationRound++;preparedTraining=undefined;
+        res.writeHead(303,{Location:'/#'+key}).end();
+      } catch {
+        res.writeHead(400).end('RoboGO 授权未完成。请回课堂工作台重新连接。');
+      }
+      return;
+    }
+    if(['/robogo/connect','/robogo/state','/robogo/refresh','/robogo/prepare','/robogo/submit'].includes(url.pathname)) {
+      if(req.headers['x-workshop-session']!==key||req.headers.origin&&req.headers.origin!=='http://'+host) {
+        res.writeHead(404).end();return;
+      }
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      try {
+        if(direct&&(['/robogo/prepare','/robogo/submit'].includes(url.pathname)||
+            url.pathname==='/robogo/connect'&&resume.run?.source!=='robogo')) throw new Error('robogo_devmachine_classroom');
+        if(req.method==='GET'&&url.pathname==='/robogo/state') {
+          const profile=stateFile?await trainingProfile().then(()=>({profileConfigured:true}),
+            error=>({profileConfigured:false,profileIssue:error.message})):
+            {profileConfigured:false,profileIssue:'robogo_state_required'};
+          return res.end(JSON.stringify({connected:roboGo.connected(),...profile,uncertainTraining:submission==='pending',
+            otherStationTraining:await priorTraining?.()}));
+        }
+        if(req.method!=='POST') {res.writeHead(405).end();return;}
+        if(url.pathname==='/robogo/connect') {
+          authorizationRound++;preparedTraining=undefined;
+          return res.end(JSON.stringify(await roboGo.authorize('http://'+host)));
+        }
+        if(url.pathname==='/robogo/refresh') return res.end(JSON.stringify(await refreshRoboGo()));
+        if(url.pathname==='/robogo/prepare') return res.end(JSON.stringify(await prepareTraining()));
+        if(url.pathname==='/robogo/submit') {
+          const id=req.headers['x-workshop-confirmation'];
+          return res.end(JSON.stringify(await submitTraining(id)));
+        }
+        res.writeHead(405).end();
+      } catch(error) {
+        const code=/^robogo_[a-z_]+$/.test(error.message)?error.message:'robogo_unavailable';
+        res.writeHead(code==='robogo_login_required'?401:422).end(JSON.stringify({error:code}));
+      }
+      return;
+    }
+    if(url.pathname==='/board/launch') {
+      if(req.headers['x-workshop-session']!==key||req.headers.origin&&req.headers.origin!=='http://'+host) {
+        res.writeHead(404).end();return;
+      }
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      try {
+        if(req.method==='GET') return res.end(JSON.stringify(boardLauncher.status(boardSelection())));
+        if(req.method==='POST') {
+          if(req.headers['x-workshop-isp-mode']==='comparison'&&req.headers['x-workshop-fixed-scene']!=='1') {
+            throw new Error('board_launcher_comparison_scene_unconfirmed');
+          }
+          const job=boardLauncher.start(boardSelection(),req.headers['x-workshop-isp-mode']);
+          return res.writeHead(202).end(JSON.stringify(job));
+        }
+        res.writeHead(405).end();
+      } catch(error) {
+        const code=/^board_launcher_[a-z_]+$/.test(error.message)?error.message:'board_launcher_start_failed';
+        res.writeHead(409).end(JSON.stringify({error:code}));
+      }
+      return;
+    }
+    if(url.pathname==='/board/score') {
+      if(req.method!=='POST'||req.headers['x-workshop-session']!==key||req.headers['content-type']!=='application/json'||
+          req.headers.origin&&req.headers.origin!=='http://'+host) {res.writeHead(404).end();return;}
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      try {
+        let body='';
+        for await(const chunk of req) {
+          body+=chunk;
+          if(body.length>1024) throw new Error('board_comparison_region_invalid');
+        }
+        const request=JSON.parse(body);
+        if(!request||typeof request!=='object'||Array.isArray(request)) throw new Error('board_comparison_region_invalid');
+        const recorded=await selectedBoard().score(selectedModelHash(),request);
+        res.end(JSON.stringify(recorded));
+      } catch(error) {
+        const code=evidenceErrors.has(error.message)?error.message:'board_comparison_region_invalid';
+        res.writeHead(422).end(JSON.stringify({error:code}));
+      }
+      return;
+    }
+    if(req.method==='POST'&&url.pathname.startsWith('/camera/')&&boardLauncher.running()&&
+        req.headers['x-workshop-session']===key) {
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      res.writeHead(409).end(JSON.stringify({error:'camera_capture_busy'}));return;
+    }
+    if(url.pathname==='/training/receipt'||url.pathname==='/board/receipt'||url.pathname==='/board/preview'||url.pathname.startsWith('/board/file/')) {
+      if(req.method!=='GET'||req.headers['x-workshop-session']!==key) {res.writeHead(404).end();return;}
+      try {
+        if(url.pathname.startsWith('/board/file/')) {
+          const result=await selectedBoard().file(selectedModelHash(),url.pathname.slice('/board/file/'.length),url.searchParams.get('receipt'));
+          res.setHeader('Content-Type',result.type);res.end(result.bytes);return;
+        }
+        const result=url.pathname==='/training/receipt'?await externalTrainingReceipt():url.pathname==='/board/preview'?
+          await selectedBoard().preview(selectedModelHash(),url.searchParams.get('known'),url.searchParams.get('batch')==='1'):
+          (await selectedBoard().get(selectedModelHash())).view;
+        if(direct&&url.pathname==='/training/receipt'&&
+            (resume.run?.source!=='external'||result.runId!==resume.run.id)) throw new Error('training_receipt_task_unverified');
+        res.setHeader('Content-Type','application/json; charset=utf-8');res.end(JSON.stringify(result));
+      } catch(error) {
+        const code=evidenceErrors.has(error.message)?error.message:'evidence_file_invalid';
+        res.setHeader('Content-Type','application/json; charset=utf-8');res.writeHead(422).end(JSON.stringify({error:code}));
+      }
+      return;
+    }
+    if(url.pathname==='/camera/isp') {
+      if(req.headers['x-workshop-session']!==key||req.headers.origin&&req.headers.origin!=='http://'+host) {
+        res.writeHead(404).end();return;
+      }
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      if(req.method==='GET') {
+        const file=url.searchParams.get('file');
+        if(file) {
+          const round=url.searchParams.get('round');
+          const scope=url.searchParams.get('scope');
+          const exposure=scope==='exposure';
+          const learner=scope==='learner';
+          const trial=url.searchParams.get('trial');
+          const source=()=>{
+            const status=storedIsp();
+            if(scope==='gamma-proposal') return round===null?status?.gammaProposal:undefined;
+            if(exposure) return round===null?status?.exposure:undefined;
+            if(learner) return round===null?status?.adjustments?.find(item=>String(item.number)===trial):undefined;
+            if(scope!==null||trial!==null) return;
+            return round===null?status:status?.rounds?.find(item=>String(item.number)===round);
+          };
+          if(['before','after','restored','reloaded'].includes(file)) {
+            const match=()=>scope===null&&round===null&&['before','after'].includes(file)?source()?.gamma?.[file]:source()?.[file];
+            const asset=match();
+            if(!asset||asset.sha256!==url.searchParams.get('sha256')) {
+              res.writeHead(404).end(JSON.stringify({error:'camera_archive_missing'}));return;
+            }
+            try {
+              const bytes=await cameraSource.captureFile(resume.camera,'isp',asset);
+              if(match()?.sha256!==asset.sha256) throw new Error('camera_archive_missing');
+              res.setHeader('Content-Type',bytes.type);res.end(bytes.bytes);
+            } catch(error) {res.writeHead(422).end(JSON.stringify({error:'camera_isp_evidence_unavailable'}));}
+            return;
+          }
+          const value=['original','readback','gammaReadback','reloadReadback','beforeReadback','decisionReadback','resetReadback',
+            'afterReadback','restorationReadback'].includes(file)?source()?.[file]:undefined;
+          if(!value||value.hash!==url.searchParams.get('sha256')) {
+            res.writeHead(404).end(JSON.stringify({error:'camera_isp_snapshot_missing'}));return;
+          }
+          res.end(JSON.stringify(value,null,2));return;
+        }
+        res.end(JSON.stringify({isp:ispStatus()}));return;
+      }
+      if(req.method!=='POST'||req.headers['content-type']!=='application/json') {res.writeHead(405).end();return;}
+      try {
+        const chunks=[];
+        let size=0;
+        for await(const chunk of req) {
+          if((size+=chunk.length)>4096) {res.writeHead(413).end();return;}
+          chunks.push(chunk);
+        }
+        const body=JSON.parse(Buffer.concat(chunks));
+        if(!body||Array.isArray(body)||Object.keys(body).some(k=>!['action','goal','round','choice','reason','field','expected','value','trial','candidateId'].includes(k))) throw new Error('camera_isp_action_invalid');
+        const result=queueIsp(body.action,body.goal,body);
+        res.writeHead(202).end(JSON.stringify({isp:result}));
+      } catch(error) {
+        const code=/^camera_[a-z0-9_]{1,90}$/.test(error.message)?error.message:'camera_isp_action_invalid';
+        res.writeHead(code==='camera_capture_busy'?409:422).end(JSON.stringify({error:code}));
+      }
+      return;
+    }
+    if(url.pathname==='/camera/preflight') {
+      if(req.headers['x-workshop-session']!==key||req.headers.origin&&req.headers.origin!=='http://'+host) {
+        res.writeHead(404).end();return;
+      }
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      if(req.method==='GET') {res.end(JSON.stringify({preflight:readPreflight()}));return;}
+      if(req.method!=='POST'||req.headers['content-type']!=='application/json') {res.writeHead(405).end();return;}
+      try {
+        const result=queuePreflight();
+        res.writeHead(202).end(JSON.stringify({preflight:result}));
+      } catch(error) {res.writeHead(409).end(JSON.stringify({error:error.message}));}
+      return;
+    }
+    if(url.pathname==='/camera/capture'||url.pathname.startsWith('/camera/capture/file/')) {
+      if(req.headers['x-workshop-session']!==key||req.headers.origin&&req.headers.origin!=='http://'+host) {
+        res.writeHead(404).end();return;
+      }
+      try {
+        if(url.pathname.startsWith('/camera/capture/file/')&&req.method==='GET') {
+          const kind=url.pathname.slice('/camera/capture/file/'.length);
+          const capture=captureStatus();
+          const asset=capture&&Object.hasOwn(capture.assets,kind)?capture.assets[kind]:undefined;
+          if(!asset||asset.id!==url.searchParams.get('id')) throw new Error('camera_archive_missing');
+          const file=await cameraSource.captureFile(resume.camera,kind,asset,url.searchParams.get('preview')==='1');
+          if(asset.id!==captureStatus()?.assets[kind]?.id) throw new Error('camera_archive_missing');
+          res.setHeader('Content-Type',file.type);res.end(file.bytes);return;
+        }
+        if(url.pathname!=='/camera/capture') {res.writeHead(405).end();return;}
+        res.setHeader('Content-Type','application/json; charset=utf-8');
+        if(req.method==='GET') {res.end(JSON.stringify({capture:captureStatus(),recordingRevision:revision}));return;}
+        if(req.method!=='POST'||req.headers['content-type']!=='application/json') {res.writeHead(405).end();return;}
+        const chunks=[];
+        let size=0;
+        for await(const chunk of req) {
+          if((size+=chunk.length)>2048) {res.writeHead(413).end();return;}
+          chunks.push(chunk);
+        }
+        let body;
+        try {body=JSON.parse(Buffer.concat(chunks));} catch {throw new Error('camera_capture_invalid');}
+        if(!body||typeof body!=='object'||Array.isArray(body)||Object.keys(body).some(k=>!['action','scene'].includes(k))) throw new Error('camera_capture_invalid');
+        const capture=queueCapture(body.action,body.scene);
+        res.writeHead(202).end(JSON.stringify({capture}));
+      } catch(error) {
+        const code=error.message===rawReplayCaptureMetadataRequired||/^camera_[a-z0-9_]{1,90}$/.test(error.message)?error.message:'camera_service_error';
+        res.setHeader('Content-Type','application/json; charset=utf-8');
+        res.writeHead(code==='camera_archive_missing'?404:code==='camera_capture_busy'?409:422).end(JSON.stringify({error:code}));
+      }
+      return;
+    }
+    if (url.pathname==='/camera'||url.pathname==='/camera/experiments'||url.pathname.startsWith('/camera/frame/')) {
+      if(req.method!=='GET'||req.headers['x-workshop-session']!==key) { res.writeHead(404).end(); return; }
+      try {
+        if(url.pathname==='/camera/experiments') {
+          const experiments=await cameraSource.list();
+          res.setHeader('Content-Type','application/json; charset=utf-8');res.end(JSON.stringify({experiments}));return;
+        }
+        const binding=resume.camera;
+        if(!binding) throw new Error('camera_binding_invalid');
+        const report=url.pathname==='/camera'||!inspected?await cameraSource.inspect(binding):inspected;
+        if(binding!==resume.camera && JSON.stringify(binding)!==JSON.stringify(resume.camera)) throw new Error('camera_binding_invalid');
+        if(url.pathname==='/camera') {
+          inspected=report;
+          res.setHeader('Content-Type','application/json; charset=utf-8');res.end(JSON.stringify(report));return;
+        }
+        const file=await cameraSource.frame(binding,url.pathname.slice('/camera/frame/'.length),report);
+        if(JSON.stringify(binding)!==JSON.stringify(resume.camera)) throw new Error('camera_binding_invalid');
+        res.setHeader('Content-Type',file.type);res.end(file.bytes);
+      } catch(error) {
+        const code=cameraErrors.has(error.message)?error.message:'camera_service_error';
+        res.setHeader('Content-Type','application/json; charset=utf-8');res.writeHead(code==='camera_archive_missing'?404:422).end(JSON.stringify({error:code}));
+      }
+      return;
+    }
+    if (url.pathname==='/session') {
+      if (req.headers['x-workshop-session']!==key) { res.writeHead(404).end(); return; }
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      if (req.method==='GET') {
+        res.end(JSON.stringify({...read(),workbenchUi:2,...(isActiveStation?{stationActive:await isActiveStation()}:{})}));
+        return;
+      }
+      if (req.method!=='POST'||req.headers['content-type']!=='application/json' ||
+          req.headers.origin&&req.headers.origin!=='http://'+host) { res.writeHead(405).end(); return; }
+      try {
+        let size=0;
+        const chunks=[];
+        for await (const chunk of req) {
+          size+=chunk.length;
+          if (size>65536) { res.writeHead(413).end(); return; }
+          chunks.push(chunk);
+        }
+        const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        res.end(JSON.stringify(update(input.patch,input.clearBlockers,input.replace===true)));
+      } catch(error) { res.writeHead(400).end(JSON.stringify({error:error.message})); }
+      return;
+    }
+    if (req.method!=='GET') { res.writeHead(404).end(); return; }
+    if (url.pathname==='/course.json') {
+      res.setHeader('Content-Type','application/json; charset=utf-8');
+      const local=url.searchParams.get('view')===key;
+      const station=local&&stationKind?{stationKind,lastStation:await lastStation(),stationActive:await isActiveStation()}:{};
+      res.end(JSON.stringify({plan,...station,...(local?{...read(),...(practiceReturnUrl?{practiceReturnUrl}:direct?
+        {developerMachine:readDeveloperMachineProfile()}:{} )}:{})}));
+      return;
+    }
+    const file=files.get(url.pathname);
+    if (!file) { res.writeHead(404).end(); return; }
+    res.setHeader('Content-Type',file[0]+'; charset=utf-8');
+    res.end(file[1]);
+  });
+  await new Promise((resolve,reject)=>{
+    server.once('error',reject);
+    server.listen(port,'127.0.0.1',resolve);
+  });
+  server.once('close',()=>{
+    clearTimeout(idle);
+    if (practice) void practice.then(view=>view.server.close(),()=>{});
+  });
+  keepAlive();
+  return {server, read, update, url:'http://127.0.0.1:'+server.address().port+'/#'+key};
+}
+
+const entry=process.argv[1];
+if(entry && existsSync(entry) && import.meta.url===pathToFileURL(realpathSync(entry)).href) {
+  const supported=new Set(['--resume','--port']);
+  const flags=process.argv.slice(2);
+  if (flags.length%2 || flags.some((v,i)=>i%2===0&&!supported.has(v))) throw new Error('usage: node mcp/workbench.mjs [--resume FILE] [--port PORT]');
+  const opt=Object.fromEntries(flags.reduce((all,v,i)=>i%2===0?[...all,[v,flags[i+1]]]:all,[]));
+  const source=opt['--resume']?JSON.parse(readFileSync(opt['--resume'],'utf8')):{};
+  const result=await startWorkbench(source.resume??source, Number(opt['--port']??0));
+  console.log(result.url);
+}

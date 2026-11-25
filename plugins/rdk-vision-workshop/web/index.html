@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>视觉 Pipeline · 课堂工作台</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.mjs"></script>
+</head>
+<body>
+  <header class="top"><div class="top-inner">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">◩</span><div><strong>视觉 Pipeline</strong><span>RDK Workshop</span></div></div>
+    <div class="top-actions"><button id="station-link" class="button ghost" hidden>当前工位链接</button><button id="import" class="button ghost">导入进度</button><button id="resume" class="button ghost">下载进度</button></div>
+  </div></header>
+  <main class="shell">
+    <section class="hero">
+      <div><p class="eyebrow">RDK X5 + SONY IMX415</p><h1>从相机出图到板端检测</h1><p class="lede">跟着当前一步操作，保存回执后继续。</p></div>
+      <section class="clock" aria-label="课堂计时"><div><span id="clock-value">未开始</span><span class="clock-label">课堂进度 · 180 分钟</span></div><div><button id="start" class="button ghost">开始计时</button><button id="clock-config" class="button plain">设定进度</button></div></section>
+    </section>
+    <section id="entry-choice" class="box entry-choice" aria-labelledby="entry-title" hidden>
+      <div><h2 id="entry-title"></h2><p id="entry-summary" class="action-copy"></p></div>
+      <div class="button-row">
+        <button id="entry-continue" class="button primary" type="button">继续原工位</button>
+        <button id="entry-station" class="button ghost" type="button" hidden>新建空白工位</button>
+        <button id="entry-last-station" class="button ghost" type="button" hidden>打开已有新工位</button>
+        <button id="entry-practice" class="button ghost" type="button">进入案例练习</button>
+      </div>
+    </section>
+    <section id="practice-content" hidden>
+      <form id="practice-note" class="box">
+        <label class="field">你的观察<textarea id="practice-observation" required maxlength="300" placeholder="比较同一区域，写下细节变化和你的取舍理由。"></textarea></label>
+        <button id="practice-export" class="button primary" type="submit" disabled>下载案例观察记录</button>
+      </form>
+    </section>
+    <div class="grid">
+      <aside>
+        <details class="box timeline"><summary id="timeline-summary">课堂流程</summary><ol id="timeline"></ol></details>
+      </aside>
+      <div class="main-column">
+        <section class="parallel-training" id="parallel-training" hidden aria-label="并行训练">
+          <div><strong id="parallel-training-title"></strong><span id="parallel-training-detail"></span></div>
+          <div class="parallel-actions button-row">
+            <button class="button ghost" id="parallel-training-open" type="button">查看原 Run</button>
+            <button class="button primary" id="parallel-training-isp" type="button" hidden>去调 ISP</button>
+          </div>
+        </section>
+        <section class="box action" aria-labelledby="step-title">
+          <div class="action-head"><div class="section-label"><span class="focus-dot"></span>当前一步</div><span id="step-tag" class="status-tag"></span></div>
+          <h2 id="step-title">正在读取本工位进度…</h2><p id="step-help" class="action-copy"></p>
+          <aside id="training-preflight" class="training-preflight" hidden aria-label="训练预检"></aside>
+          <div id="step-form"></div><div id="route"></div>
+          <div id="step-footer" class="button-row"></div>
+          <details id="step-tools" class="tool-details"><summary>Studio 工具</summary><code id="tool-chain"></code></details>
+        </section>
+        <div id="step-workspace" class="workspace-panels"></div>
+        <details class="box station-tools" id="station-tools">
+          <summary>其他工位工具与记录</summary>
+          <div id="tool-panels" class="workspace-panels">
+        <section id="camera-preflight" class="box" aria-labelledby="camera-preflight-title">
+          <div class="action-head"><h2 id="camera-preflight-title">工位连接预检</h2><span id="preflight-status" class="status-tag" role="status">待检查</span></div>
+          <p class="action-copy" id="preflight-help">采集前检查相机服务、板卡连接和当前画面。只读取已开启的相机流。</p>
+          <div id="preflight-checks" class="preflight-checks"></div>
+          <div id="preflight-actions" class="button-row"></div>
+        </section>
+        <section id="camera" class="box" aria-labelledby="camera-title">
+          <div class="action-head"><div class="section-label">Camera Workshop</div><span id="camera-status" class="status-tag"></span></div>
+          <h2 id="camera-title">本工位相机实验</h2>
+          <p id="camera-help" class="action-copy"></p>
+          <div id="camera-evidence"></div>
+          <div id="camera-actions" class="button-row"></div>
+        </section>
+        <section id="camera-capture" class="box" aria-labelledby="capture-title">
+          <div class="action-head"><h2 id="capture-title">照片与三张基线图</h2><span id="capture-status" class="status-tag" role="status"></span></div>
+          <p id="capture-help" class="action-copy"></p>
+          <div id="capture-actions" class="button-row"></div>
+          <div id="capture-grid"></div>
+        </section>
+        <section id="camera-isp" class="box" aria-labelledby="isp-title">
+          <div class="action-head"><h2 id="isp-title">ISP 调参 · 两轮 Gamma 与单项练习</h2><span id="isp-status" class="status-tag" role="status"></span></div>
+          <p id="isp-help" class="action-copy"></p>
+          <div id="isp-detail"></div><div id="isp-actions" class="button-row"></div>
+          <section id="isp-learner" class="isp-learner" aria-labelledby="isp-learner-title">
+            <h3 id="isp-learner-title">单项 ISP 实操</h3>
+            <div id="isp-learner-content"></div>
+          </section>
+        </section>
+        <details id="isp-demo" class="box isp-demo" aria-labelledby="isp-demo-title">
+          <summary id="isp-demo-title">讲师演示 · 现场调曝光与五项实拍</summary>
+          <section id="isp-live-exposure" class="isp-round isp-live" aria-label="现场曝光对照"></section>
+          <h3 class="isp-demo-archive">五项归档对照</h3>
+          <div id="isp-demo-tabs" class="button-row" role="group" aria-label="演示参数"></div>
+          <div id="isp-demo-panel" aria-live="polite"></div>
+        </details>
+        <section id="comparison" class="box" hidden aria-labelledby="comparison-title">
+          <div class="action-head"><div class="section-label">相机证据</div><span id="comparison-state" class="status-tag"></span></div>
+          <h2 id="comparison-title">Gamma 实拍对照</h2>
+          <p class="action-copy" id="comparison-help"></p>
+          <div id="comparison-images" class="comparison-images"></div>
+          <div id="comparison-actions" class="button-row"></div>
+        </section>
+        <section id="board" class="box" hidden aria-labelledby="board-title">
+          <div class="action-head"><h2 id="board-title">本组模型检测</h2><span id="board-status" class="status-tag" role="status"></span></div>
+          <p class="action-copy" id="board-help"></p>
+          <figure id="board-frame" class="camera-archive-preview board-preview" hidden>
+            <img id="board-frame-image" alt="来自本工位 X5 的带框检测画面">
+            <figcaption id="board-frame-caption"></figcaption>
+          </figure>
+          <div id="board-frame-detail" class="board-frame-detail"></div>
+          <section id="detection" hidden aria-labelledby="detection-title">
+            <h3 id="detection-title">本次检测结果</h3>
+            <div id="detection-summary" class="milestones detection-summary"></div>
+            <details class="proof-details"><summary>查看本次模型和 ISP 证据</summary><ul id="detection-evidence" class="review-list"></ul></details>
+            <div id="detection-actions" class="button-row"></div>
+          </section>
+          <div id="board-actions" class="button-row"></div><div id="board-evidence"></div>
+        </section>
+        <section id="training" class="box training" aria-labelledby="training-title">
+          <div class="action-head"><div class="section-label">并行任务</div><span id="training-state" class="status-tag"></span></div>
+          <h2 id="training-title">训练与量化进度</h2><p id="training-help"></p>
+          <div class="milestones" id="milestones"></div>
+          <div id="training-readiness" class="preflight-checks" aria-label="训练提交条件"></div>
+          <p id="robogo-note" class="last-checked" aria-live="polite"></p><div id="robogo-actions" class="button-row"></div>
+          <div id="training-detail"></div><div class="button-row"><button id="run-edit" class="button ghost">记录已有 Run</button><button id="read-training" class="button plain">读取本组训练回执</button></div>
+        </section>
+        <section id="delivery" class="box evidence">
+          <div class="action-head"><div class="section-label">证据与交付</div><span id="evidence-count" class="status-tag"></span></div>
+          <h2>个人成果包</h2><p id="delivery-help"></p>
+          <ul class="delivery-checklist" id="delivery-checklist" aria-label="成果齐备情况"></ul>
+          <ul id="attachments"></ul>
+          <div class="button-row"><button id="attach" class="button ghost">添加实际文件</button><button id="export" class="button primary">下载成果包</button></div>
+          <details id="advanced"><summary>查看回执和处理阻塞</summary><div id="review"></div></details>
+        </section>
+          </div>
+        </details>
+      </div>
+    </div>
+  </main>
+  <dialog id="dialog"><form id="dialog-form"><h2 id="dialog-title"></h2><div id="dialog-fields"></div><div class="button-row"><button class="button primary" id="dialog-save" type="submit">保存</button><button class="button ghost" id="dialog-close" type="button">返回</button></div></form></dialog>
+  <dialog id="frame-dialog" class="frame-dialog" aria-labelledby="frame-dialog-title">
+    <div class="action-head"><h2 id="frame-dialog-title">同一区域对照</h2><form method="dialog"><button class="button ghost" autofocus>关闭</button></form></div>
+    <div id="frame-dialog-images" class="comparison-images"></div>
+    <div class="frame-controls">
+      <label>放大 <output id="frame-scale-value" for="frame-scale">1×</output><input id="frame-scale" type="range" min="1" max="4" step="0.25" value="1"></label>
+      <label>观察位置 · 左右<input id="frame-x" type="range" min="0" max="100" value="50"></label>
+      <label>观察位置 · 上下<input id="frame-y" type="range" min="0" max="100" value="50"></label>
+    </div>
+  </dialog>
+  <input id="progress-file" type="file" accept=".json" hidden>
+  <input id="evidence-file" type="file" multiple hidden>
+  <input id="comparison-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+  <output id="notice" role="status" aria-live="polite" hidden></output>
+</body>
+</html>

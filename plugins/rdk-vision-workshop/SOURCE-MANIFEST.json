@@ -1,0 +1,267 @@
+{
+  "version": "0.7.4",
+  "executionStatus": "planning_only",
+  "hardwareVerification": "unverified",
+  "files": [
+    {
+      "path": ".mcp.json",
+      "bytes": 163,
+      "sha256": "ca5dc5911942ca0a2b61bda3d10bc2579dbb8d246eb1cd6fd895b96455e5af6d"
+    },
+    {
+      "path": "README.md",
+      "bytes": 6543,
+      "sha256": "17af6a4bfe9328c2ed9cd18f72dbcb1c07fcc552a378e9c6d057ca70cc79c4f5"
+    },
+    {
+      "path": "device/README.md",
+      "bytes": 6098,
+      "sha256": "1060ea0d11e8b035d2faf38e3a757b9bde9a783d50fb08bf993b013d87eb01c2"
+    },
+    {
+      "path": "device/x5-course-detect.py",
+      "bytes": 20840,
+      "sha256": "a4c3fc4f29be32189bf7ca6d73f34be5c3447d53a57da216e8db479813b8a8a4"
+    },
+    {
+      "path": "device/x5-station-bridge.py",
+      "bytes": 7873,
+      "sha256": "0e04e38bbca441f83f070826a3c3e71c6cbbe9230278c2d403573deda92bbcba"
+    },
+    {
+      "path": "mcp/board-launcher.mjs",
+      "bytes": 8099,
+      "sha256": "9ae6658e28d97c26ae908ea4c4a2fba1df4343222eab1090132d1c8b5608af8d"
+    },
+    {
+      "path": "mcp/board-launcher.test.mjs",
+      "bytes": 5781,
+      "sha256": "b9b998f3e9d02e11e86c981624c867a1c4cdd1d2b837a17d1d8259e2a3b1953e"
+    },
+    {
+      "path": "mcp/camera-source.mjs",
+      "bytes": 36796,
+      "sha256": "d9a3d6a8edb3f2849f327a48bf5645e7f71a3f5544cb3b6056e96896954f7c87"
+    },
+    {
+      "path": "mcp/camera-source.test.mjs",
+      "bytes": 16098,
+      "sha256": "4fab007437d0a79357617cb2bf91195bc45d78f9cb0c0785b64f5b78734fe6e3"
+    },
+    {
+      "path": "mcp/course-evidence.mjs",
+      "bytes": 17359,
+      "sha256": "7570ddcb86efc21a30aa46a561ec02b4e9d5fd52eebc0b1ae06064c1dd006892"
+    },
+    {
+      "path": "mcp/course.mjs",
+      "bytes": 418,
+      "sha256": "eb535520727bc623cb07ee57677cdf9202573a086eda5a8dc166e7f624decb73"
+    },
+    {
+      "path": "mcp/ddc-classroom.test.mjs",
+      "bytes": 3375,
+      "sha256": "6f61d2cedd267a083dcfc3cf11fe4524cda8ef75f1ee674c112d6f22d30676fa"
+    },
+    {
+      "path": "mcp/guide.mjs",
+      "bytes": 21604,
+      "sha256": "52936677228380767ba1b416a3cbeb6e9ba4c6070250e170f806bfacb76c6b44"
+    },
+    {
+      "path": "mcp/isp-workshop.test.mjs",
+      "bytes": 11548,
+      "sha256": "abe0d33d148e18ee55a609ad5d8e40ea0fd7df5c482e6668b5e9af9e6a448871"
+    },
+    {
+      "path": "mcp/learner-isp.mjs",
+      "bytes": 4501,
+      "sha256": "cbde76ab302aa9e5720614ab5662c55b7b9c8c8954aa7c99d62c7e4c7fc51470"
+    },
+    {
+      "path": "mcp/release-regressions.test.mjs",
+      "bytes": 9830,
+      "sha256": "f76c1432994a057b7c11376fd1a83b959aa0e813321d8ba2a40910fd8554f6c4"
+    },
+    {
+      "path": "mcp/robogo.mjs",
+      "bytes": 12286,
+      "sha256": "1f8e187ed5962de5e9342527a1a9b30c22a0dce290b4e7b26f6067241ab108dc"
+    },
+    {
+      "path": "mcp/robogo.test.mjs",
+      "bytes": 3524,
+      "sha256": "dca1665250a76aa070afec524b026e198cfe558e101a324d9fe30884c61f2727"
+    },
+    {
+      "path": "mcp/server.mjs",
+      "bytes": 11869,
+      "sha256": "3e30f15755682f96d72a959dc1351b96bee4022939e5b55ca16c4226adf85152"
+    },
+    {
+      "path": "mcp/server.test.mjs",
+      "bytes": 23151,
+      "sha256": "47d4db93f3295f801f303072b46703b2c63a7b89df3e7b1eb1d6d6e7fe1bb786"
+    },
+    {
+      "path": "mcp/steps.mjs",
+      "bytes": 11152,
+      "sha256": "0755b4c0ca1b9402293b2b9e4ab4212a4d6f9cfc4b999c446c16d7c6454d223a"
+    },
+    {
+      "path": "mcp/studio-config.mjs",
+      "bytes": 1571,
+      "sha256": "8ed902a76316bcc8ea0333bf4b26dd1bc973c2fc16f679d44523ca32c58e5fa5"
+    },
+    {
+      "path": "mcp/workbench-session.mjs",
+      "bytes": 16600,
+      "sha256": "8801c48821d64529959494dae7c835f7090cf2279751c07e73dcfc3018b59743"
+    },
+    {
+      "path": "mcp/workbench-state.mjs",
+      "bytes": 908,
+      "sha256": "1f31ae11b96e296d75f18e52343c7b715679b53b08bde5df294f5b8940b7e6f3"
+    },
+    {
+      "path": "mcp/workbench.mjs",
+      "bytes": 58575,
+      "sha256": "180a5c5dee21def99c969a5aaffd2d075ae54612082dfba7cc9700476fdd1db8"
+    },
+    {
+      "path": "plugin.json",
+      "bytes": 504,
+      "sha256": "2219a99b1784d2d17f4d5b67c54d3832a75a45017eb8d3ea2996d5ae425c50d0"
+    },
+    {
+      "path": "skills/rdk-vision-workshop/SKILL.md",
+      "bytes": 7288,
+      "sha256": "64a5259b80a4ff70a08f801d2ec2f4d2b68341c2e06659e380440c5ae50ffbf3"
+    },
+    {
+      "path": "skills/rdk-vision-workshop/assets/course-plan.json",
+      "bytes": 3690,
+      "sha256": "b2fe930ce017124378b4ef707fee71d0f779e4f4ad892c8bd82f32f04759ffd2"
+    },
+    {
+      "path": "skills/rdk-vision-workshop/assets/ddc-2026-12-06.json",
+      "bytes": 3939,
+      "sha256": "90c84414d6a8f6a824369823e9ac6dcb05650c0b87ecafff7b8002ec63df37de"
+    },
+    {
+      "path": "skills/rdk-vision-workshop/references/course-runbook.md",
+      "bytes": 2814,
+      "sha256": "6b19bc2d9ed4f5ca26320d9a5de04adff7cd4ef41c3d78bd65d73f185b50a9f2"
+    },
+    {
+      "path": "skills/rdk-vision-workshop/references/tuning-handoff.md",
+      "bytes": 1600,
+      "sha256": "9af5f4243be8f6f1d15db73cb06fc6453226dd407d204b989cc873f8caa5587c"
+    },
+    {
+      "path": "web/app.mjs",
+      "bytes": 59711,
+      "sha256": "9909e215a91010b33a39a555f6f19de3e78aab677a184c7bc675269f3415f93c"
+    },
+    {
+      "path": "web/board-panel.mjs",
+      "bytes": 30516,
+      "sha256": "300260f205440fb7efd94acef170387a3486b9e71adea532909b67fd02d71584"
+    },
+    {
+      "path": "web/camera-panel.mjs",
+      "bytes": 9626,
+      "sha256": "0af1994677ca59747329d0f6efd4ac6737a7661b4dc64cf6ae8e04eb3f429cdf"
+    },
+    {
+      "path": "web/capture-panel.mjs",
+      "bytes": 10999,
+      "sha256": "e5cd71869634a3ce98e3105dd43eb38d962f90f487d1b12a2d0499cdb88d6e97"
+    },
+    {
+      "path": "web/index.html",
+      "bytes": 11387,
+      "sha256": "2e976c3a9986d8dda294fc874f64dc1974b2a13762f3df6c8586ee3bc6b3c2fc"
+    },
+    {
+      "path": "web/isp-demo/contrast-after.jpg",
+      "bytes": 71623,
+      "sha256": "5ffa615224277a31145ce79017ea32a6ca522259d6dc0efa01f41090ecf95342"
+    },
+    {
+      "path": "web/isp-demo/contrast-before.jpg",
+      "bytes": 71685,
+      "sha256": "d049f28cb84465f1de74d5b91c5f3c720a6d080d6f1a29d7ec8b6462bc7aa2ee"
+    },
+    {
+      "path": "web/isp-demo/exposure-after.jpg",
+      "bytes": 71180,
+      "sha256": "43f86325e054e203e7ec7cb8d7aa4fbde1daadf9698b915c48adb75b5e48022a"
+    },
+    {
+      "path": "web/isp-demo/exposure-before.jpg",
+      "bytes": 71176,
+      "sha256": "6a3819bc3240730bc325bcaaccd03e368e485a2ece29012e4ca9df7fc67d7a14"
+    },
+    {
+      "path": "web/isp-demo/gain-after.jpg",
+      "bytes": 60806,
+      "sha256": "96d97f39b2b17f067d431c9b2ef3172edd1450e953fc1372a4c12f69ca19ab84"
+    },
+    {
+      "path": "web/isp-demo/gain-before.jpg",
+      "bytes": 61299,
+      "sha256": "28123fcf673ac532002ca18bd8e26df52b01e09ba2d199f0783dedf305043664"
+    },
+    {
+      "path": "web/isp-demo/manifest.json",
+      "bytes": 8325,
+      "sha256": "c2aab897b9277f2468e008566481e71560e22a0f6e70462c74676bc2985f35f2"
+    },
+    {
+      "path": "web/isp-demo/sharpness-after.jpg",
+      "bytes": 13985,
+      "sha256": "a2e4e9c0fd6b30718bb5632e2c2f20f2b96dd3bd7530b21c88588b7299f2c23e"
+    },
+    {
+      "path": "web/isp-demo/sharpness-before.jpg",
+      "bytes": 13816,
+      "sha256": "28d3051d43296f3b81d0ab23574b76184e8caca0c427cbaf4589c2b4e8e7ec36"
+    },
+    {
+      "path": "web/isp-demo/white-balance-after.jpg",
+      "bytes": 15390,
+      "sha256": "c733e171fef81a28d0e4ff44d87a7b095aa51e725919599a9c2854ad9d1e3f7c"
+    },
+    {
+      "path": "web/isp-demo/white-balance-before.jpg",
+      "bytes": 15654,
+      "sha256": "0faf51c30f821ae471826eefdeae06d2f414bc8999c467700bb381c8266e060c"
+    },
+    {
+      "path": "web/isp-demo.mjs",
+      "bytes": 1930,
+      "sha256": "2f4b69ae6a5a4781a9c44db79014aba602c72b6e37c3db7f46a7ffbab798a887"
+    },
+    {
+      "path": "web/isp-panel.mjs",
+      "bytes": 36184,
+      "sha256": "478d993e094391a8e238cd7481bb015eb4b39c92951ee4c30add954e8e8d39cf"
+    },
+    {
+      "path": "web/preflight-panel.mjs",
+      "bytes": 5998,
+      "sha256": "991a1c338abc18a5b7e73fd81c32cc66bbae0c4ea2ac51bc2fe4f67f4b86e998"
+    },
+    {
+      "path": "web/style.css",
+      "bytes": 19661,
+      "sha256": "61e037bde774be8df936caf13ff4540064acf4ae87ae8a71b000b21801152011"
+    },
+    {
+      "path": "web/zip.mjs",
+      "bytes": 1748,
+      "sha256": "ef91dc431132e31b7624eaed7da4fb9e90c1f2cd54ba2e28a74e67b45457d33e"
+    }
+  ]
+}

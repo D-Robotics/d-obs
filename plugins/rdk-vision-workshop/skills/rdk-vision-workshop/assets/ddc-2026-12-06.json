@@ -1,0 +1,172 @@
+{
+  "schema": "rdk.vision-workshop-course.v2",
+  "executionStatus": "planning_only",
+  "course": "AI Native 工作坊 —— 视觉 Pipeline 开发",
+  "totalMinutes": 180,
+  "referenceStart": "09:30",
+  "source": "https://horizonrobotics.feishu.cn/docx/UdhhdVXYXoPLgfxmZ32cJBSAnRb",
+  "sourceRevision": "ddc-12-06-draft",
+  "kit": "RDK X5 + Sony IMX415",
+  "classSize": 30,
+  "deadlines": {
+    "submitBy": 45,
+    "runCheckpoint": 120,
+    "deployAt": 135,
+    "deliverAt": 160,
+    "perBoardMinutes": 2,
+    "submitStart": 40
+  },
+  "breakPolicy": {
+    "startMinute": 105,
+    "endMinute": 115
+  },
+  "training": {
+    "platform": "直连开发机",
+    "dataset": "课堂固定数据集，以本组连接卡为准",
+    "model": "YOLOv8s",
+    "classes": [
+      "park",
+      "qrcode",
+      "obstacle"
+    ],
+    "imgsz": 640,
+    "epochs": 100,
+    "opset": 11,
+    "target": "X5 Bayes-e",
+    "input": "NV12",
+    "workflow": "devmachine"
+  },
+  "schedule": [
+    {
+      "id": "intro",
+      "topic": "开场与目标",
+      "start": 0,
+      "end": 10,
+      "minutes": 10,
+      "lane": "class",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "connect",
+      "topic": "连接与点亮",
+      "start": 10,
+      "end": 30,
+      "minutes": 20,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "baseline",
+      "topic": "三张基线与启动训练",
+      "start": 30,
+      "end": 45,
+      "minutes": 15,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "formats",
+      "topic": "ISP 原理与五参数",
+      "start": 45,
+      "end": 70,
+      "minutes": 25,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "gamma_demo",
+      "topic": "第 1 轮跟做 Gamma",
+      "start": 70,
+      "end": 90,
+      "minutes": 20,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "gamma_trial",
+      "topic": "第 2 轮自主 Gamma",
+      "start": 90,
+      "end": 105,
+      "minutes": 15,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "break",
+      "topic": "茶歇与助教核对任务",
+      "start": 105,
+      "end": 115,
+      "minutes": 10,
+      "lane": "class",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "blind",
+      "topic": "盲选与记录偏好",
+      "start": 115,
+      "end": 120,
+      "minutes": 5,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "reproduce",
+      "topic": "保存与个人复现",
+      "start": 120,
+      "end": 135,
+      "minutes": 15,
+      "lane": "camera",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "deploy",
+      "topic": "11:45 分流与模型部署",
+      "start": 135,
+      "end": 160,
+      "minutes": 25,
+      "lane": "model",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "deliver",
+      "topic": "恢复、分享与打包",
+      "start": 160,
+      "end": 180,
+      "minutes": 20,
+      "lane": "class",
+      "executionStatus": "not_executed"
+    }
+  ],
+  "parallel": [
+    {
+      "id": "train",
+      "topic": "核对数据集并启动本组开发机任务",
+      "start": 30,
+      "end": 45,
+      "minutes": 15,
+      "lane": "model",
+      "executionStatus": "not_executed"
+    },
+    {
+      "id": "wait_run",
+      "topic": "后台训练与助教核对",
+      "start": 40,
+      "end": 135,
+      "minutes": 95,
+      "lane": "model",
+      "executionStatus": "not_executed"
+    }
+  ],
+  "limitations": [
+    "课程进度引用由学员、助教或宿主提供。真实设备和算力操作由各自执行工具完成。"
+  ],
+  "groupCount": 15,
+  "classroomId": "ddc-2026-12-06-shanghai",
+  "date": "2026-12-06",
+  "instructor": {
+    "intro": 45,
+    "expertStart": 55,
+    "expertEnd": 65,
+    "practiceReady": 70
+  }
+}

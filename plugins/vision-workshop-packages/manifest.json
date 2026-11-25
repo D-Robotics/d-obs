@@ -2,27 +2,16 @@
   "schema": "rdk.vision-plugin-packages.v1",
   "packages": [
     {
-      "kind": "platform",
-      "name": "RDK Camera Workshop",
-      "version": "1.2.1",
-      "bytes": 835127,
-      "sha256": "ae285588e54f545510986ce3f9c8805bf29b42d07a48ddceb92e30fc332beaa2",
-      "requirements": [
-        "Matching Studio native camera build and configured account bridge",
-        "Knowledge 2.0.3; hardware and quality require current-device acceptance"
-      ]
-    },
-    {
       "kind": "studio",
       "name": "RDK Camera AI",
-      "version": "1.3.0",
-      "bytes": 163823,
-      "sha256": "1ca77a4d9632ed115a0826808286ad73a39b1ed08a84ce401dafcf67b6e9a880",
+      "version": "1.5.8",
+      "bytes": 752995,
+      "sha256": "63f3229f07c0d20622fe48b863f9d7cbd59587893ca7b16ce604b2e67ead1e63",
       "requirements": [
         "Node.js 22+",
         "RDK Studio 1.4+ 或兼容 MCP 宿主",
-        "d-obs 相机服务访问权限（用户自备凭据文件）",
-        "已登记的开发板与相机适配器（服务端配置）"
+        "已配置 d-obs 相机连接时可接续设备工位",
+        "仅训练路径需要 RoboGO 账号与匹配的训练资源"
       ]
     }
   ]

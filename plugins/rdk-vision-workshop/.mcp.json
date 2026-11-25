@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rdk-vision-workshop": {
+      "transport": "stdio",
+      "command": "node",
+      "args": [
+        "mcp/server.mjs"
+      ]
+    }
+  }
+}

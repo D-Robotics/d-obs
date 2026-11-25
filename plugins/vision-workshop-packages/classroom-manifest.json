@@ -1,0 +1,11 @@
+{
+  "schema": "rdk.vision-workshop-classroom.v1",
+  "lesson": {
+    "bytes": 16052618,
+    "sha256": "77571458d93c70e92d71ed1b51cbbf4a0bfb381bdfdb14e6b7114d26f9842731"
+  },
+  "plugin": {
+    "bytes": 779596,
+    "sha256": "c99dcbfc958afdea6df36a7f2c3f732d5260dd2898ae7b3900c0470f468baca7"
+  }
+}

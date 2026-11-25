@@ -58,3 +58,62 @@ test('plugin package list degrades per entry when a declared package file is mis
   assert.equal((await fetch(base + '/studio/download')).status, 200);
   assert.equal((await fetch(base + '/platform/download')).status, 404);
 });
+
+test('classroom lesson and ZIP use the existing identity gate and verify each payload', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'vision-classroom-download-'));
+  const lesson = Buffer.from('<!doctype html><meta charset="utf-8"><p>视觉课件</p>');
+  const plugin = Buffer.from('fixture workshop ZIP');
+  const digest = (bytes: Buffer) => ({ bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+  await writeFile(join(dir, 'classroom.html'), lesson);
+  await writeFile(join(dir, 'classroom.zip'), plugin);
+  await writeFile(join(dir, 'classroom-manifest.json'), JSON.stringify({
+    schema: 'rdk.vision-workshop-classroom.v1',
+    lesson: digest(lesson), plugin: digest(plugin),
+  }));
+  const app = express();
+  const router = express.Router();
+  registerVisionPluginPackageRoutes(router, {
+    packageDir: dir,
+    access: (req, res, next) => {
+      if (!req.header('x-fixture-owner')) { res.sendStatus(401); return; }
+      next();
+    },
+    owner: req => req.header('x-fixture-owner') ?? 'ops-admin',
+  });
+  app.use(router);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await rm(dir, { recursive: true, force: true });
+  });
+  const url = 'http://127.0.0.1:' + address.port + VISION_WORKSHOP_API + '/classroom';
+  const headers = { 'x-fixture-owner': 'alice' };
+  for (const suffix of ['', '/plugin']) {
+    assert.equal((await fetch(url + suffix)).status, 401);
+    assert.equal((await fetch(url + suffix, { headers: { 'x-fixture-owner': 'ops-admin' } })).status, 403);
+  }
+  const page = await fetch(url, { headers });
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-type') ?? '', /^text\/html/);
+  assert.equal(page.headers.get('cache-control'), 'private, no-store');
+  assert.equal(page.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(page.headers.get('content-security-policy') ?? '', /sandbox allow-scripts/);
+  assert.doesNotMatch(page.headers.get('content-security-policy') ?? '', /allow-same-origin/);
+  assert.deepEqual(Buffer.from(await page.arrayBuffer()), lesson);
+
+  const download = await fetch(url + '/plugin', { headers });
+  assert.equal(download.status, 200);
+  assert.match(download.headers.get('content-disposition') ?? '', /^attachment;.*RDK-Camera-AI-Workshop\.zip/);
+  assert.deepEqual(Buffer.from(await download.arrayBuffer()), plugin);
+
+  await writeFile(join(dir, 'classroom.html'), Buffer.alloc(lesson.length));
+  assert.equal((await fetch(url, { headers })).status, 503);
+  assert.equal((await fetch(url + '/plugin', { headers })).status, 200);
+  await rm(join(dir, 'classroom.zip'));
+  await symlink(join(dir, 'classroom-manifest.json'), join(dir, 'classroom.zip'));
+  assert.equal((await fetch(url + '/plugin', { headers })).status, 503);
+});
